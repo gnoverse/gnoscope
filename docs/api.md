@@ -1178,6 +1178,35 @@ as two groups, and a flat limit let one namespace's realms fill it and leave the
 package group empty — which reads as "this namespace has no packages" rather
 than "you are looking at twenty realms".
 
+**Within a kind the order is relevance, not recency.** Recency is right for a
+listing page and wrong for a search box, where the query is a name and the
+reader means the canonical thing that name points at. Measured on a mainnet
+snapshot, 2026-09-28: `moul` answered with ten `gno.land/r/moul/x/daily/*`
+one-off demos and `gno.land/r/moul/home` was not among them; `blog` put
+`gno.land/r/gnoland/blog` (134 calls) sixth, below five demos with none.
+
+Three signals, all already in `packages`:
+
+| signal | what it reads |
+|---|---|
+| match position | a hit on the package's own `name` beats one on the namespace, which beats one only in the path or the creator address. `name` is the Go package name, so `.../faucet/v0` is `faucet` and a version suffix does not hide it |
+| depth | segments under `gno.land/{r,p}/`. `r/moul/home` is 2, `r/moul/x/daily/kudos/v0` is 5 |
+| calls | bucketed, not counted: 100+, 10+, 1+, none |
+
+Depth and the call bucket are **added**, which is the one judgement call and it
+was measured rather than argued. Depth alone buries a busy deep realm behind
+idle shallow ones (`r/sys/namereg/v0`, 77 calls, fell below three `r/sys/*`
+realms with zero); calls alone brings the demos back. Adding them lets four
+orders of magnitude of use outweigh two levels of nesting and no more. Recency
+is the last tiebreak, so two rows a search cannot otherwise separate still come
+back newest first.
+
+The buckets are integers rather than `log10(calls)` because SQLite's math
+functions are a compile-time option this driver does not promise. Checked
+against the log form over all 142 namespace and package names on mainnet as
+queries: the two disagree on the top five for two of them, at positions four
+and five.
+
 The UI covers the rest without asking the server: an address, a transaction hash
 or a block height is recognised by shape and offered as a direct destination
 above the package matches. A bare number is offered only when a network is

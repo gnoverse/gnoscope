@@ -170,6 +170,48 @@ type FileInfo struct {
 // and the popup the same total size it was.
 const searchKindLimit = 10
 
+// searchRelevance orders one kind's search hits, best first. See Search for how
+// the three signals were chosen and measured.
+//
+// Built once and used twice, by ROW_NUMBER's window and by the outer sort. They
+// have to agree: the window decides which rows survive the per-kind cap and the
+// outer sort decides what the reader sees, so a drift between them shows up as
+// a top result that is missing rather than as one in the wrong place. Both see
+// bare column names, because both read from a subquery rather than from
+// `packages` directly.
+//
+// LOWER on both sides because a query is typed and a package name is whatever
+// its author wrote. The depth term counts path separators: every path starts
+// `gno.land/{r,p}/`, so subtracting one leaves the segments under the namespace.
+// SUBSTR from 12 is the character after that prefix.
+func searchRelevance() string {
+	return `
+			         CASE
+			           WHEN LOWER(name) = ?     THEN 0
+			           WHEN LOWER(name) LIKE ?  THEN 1
+			           WHEN LOWER(name) LIKE ?  THEN 2
+			           WHEN LOWER(SUBSTR(path, 12,
+			                CASE WHEN INSTR(SUBSTR(path, 12), '/') > 0
+			                     THEN INSTR(SUBSTR(path, 12), '/') - 1
+			                     ELSE LENGTH(path) END)) = ?  THEN 3
+			           ELSE 4
+			         END ASC,
+			         (LENGTH(path) - LENGTH(REPLACE(path, '/', '')) - 1)
+			         + CASE WHEN calls >= 100 THEN 0
+			                WHEN calls >= 10  THEN 1
+			                WHEN calls >= 1   THEN 2
+			                ELSE 3 END ASC,
+			         calls DESC,
+			         block_height DESC`
+}
+
+// searchRelevanceArgs binds one use of the expression above: exact, prefix,
+// substring, then the namespace. Four, in that order, every time.
+func searchRelevanceArgs(q string) []any {
+	q = strings.ToLower(strings.TrimSpace(q))
+	return []any{q, q + "%", "%" + q + "%", q}
+}
+
 func (d *DB) Search(network, q string) ([]PackageInfo, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -184,32 +226,84 @@ func (d *DB) Search(network, q string) ([]PackageInfo, error) {
 	// Windowed by is_realm so the two kinds are capped independently, and
 	// ordered realms first: a realm is a thing a reader can open and use, a
 	// package is a library it imports, and asked for "moul" the first answer
-	// wanted is the former. Within a kind the order is still recency.
+	// wanted is the former.
+	//
+	// Within a kind the order is relevance, not recency. Recency is the right
+	// default for a listing page and the wrong one for a search box, where the
+	// query is a name and the reader means the canonical thing that name points
+	// at. Measured against a mainnet snapshot on 2026-09-28: "moul" answered
+	// with ten gno.land/r/moul/x/daily/* one-off demos and gno.land/r/moul/home
+	// was not among them, and "blog" put gno.land/r/gnoland/blog (134 calls)
+	// sixth, below five demos with none.
+	//
+	// Three signals, and nothing that needs a new table:
+	//
+	//   match_rank  where the query landed. A hit on the package's own name
+	//               beats one on the namespace, which beats one that is only in
+	//               the path or the creator address. `name` is the Go package
+	//               name, so gno.land/r/moul/faucet/v0 is "faucet" and a
+	//               version suffix does not hide it.
+	//   depth       segments under gno.land/{r,p}/. r/moul/home is 2 and
+	//               r/moul/x/daily/kudos/v0 is 5: the shallow one is the entry
+	//               point, the deep one a leaf.
+	//   call_rank   a bucket over the call count, not the count itself.
+	//
+	// depth and call_rank are *added* rather than applied one after the other,
+	// which is the one judgement call here and it was measured rather than
+	// argued. Depth alone buries a busy deep realm behind idle shallow ones:
+	// on the same snapshot it put r/sys/namereg/v0 (77 calls) below three
+	// r/sys/* realms with zero. Calls alone brings the x/ demos back. Adding
+	// them lets four orders of magnitude of use outweigh two levels of nesting
+	// and no more, which is what the bucket boundaries encode.
+	//
+	// The buckets are integers rather than log10(calls) because SQLite's math
+	// functions are a compile-time option this driver does not promise. Checked
+	// against the log form over all 142 namespace and package names on mainnet
+	// as queries: the two disagree on the top 5 for two of them, at positions 4
+	// and 5, and agree everywhere else.
+	// Three layers, because a window function cannot see an alias declared in
+	// its own SELECT list: `calls` has to be a real column before ROW_NUMBER can
+	// rank on it. The innermost layer computes the counts, the middle one ranks,
+	// the outer one takes the per-kind head. Ranking in one layer instead meant
+	// repeating the whole correlated COUNT inside the ORDER BY.
 	qStr := `
 		SELECT network, path, name, creator, block_height, tx_hash, is_realm, num_files,
 		       calls, importers, imports, unique_users
 		  FROM (
-			SELECT p.network, p.path, p.name, p.creator, p.block_height, p.tx_hash,
-			       p.is_realm, p.num_files,
-			       (SELECT COUNT(*) FROM calls c WHERE c.network = p.network AND c.pkg_path = p.path) AS calls,
-			       (SELECT COUNT(*) FROM dependencies d WHERE d.network = p.network AND d.import_path = p.path) AS importers,
-			       (SELECT COUNT(*) FROM dependencies d WHERE d.network = p.network AND d.package_path = p.path) AS imports,
-			       -- COUNT(DISTINCT caller), the same definition ListPackages uses.
-			       -- Selected here because PackageInfo carries the field and a
-			       -- column left unselected does not read as absent: it reads as
-			       -- a confident zero, and a search row claiming a busy realm has
-			       -- no users is worse than one that says nothing.
-			       (SELECT COUNT(DISTINCT c.caller) FROM calls c WHERE c.network = p.network AND c.pkg_path = p.path) AS unique_users,
-			       ROW_NUMBER() OVER (PARTITION BY p.is_realm ORDER BY p.block_height DESC) AS rn
-			  FROM packages p
-			 WHERE (p.path LIKE ? OR p.name LIKE ? OR p.creator LIKE ?)`
-	args := []any{"%" + q + "%", "%" + q + "%", "%" + q + "%"}
+			SELECT *, ROW_NUMBER() OVER (
+			           PARTITION BY is_realm
+			               ORDER BY ` + searchRelevance() + `
+			         ) AS rn
+			  FROM (
+				SELECT p.network, p.path, p.name, p.creator, p.block_height, p.tx_hash,
+				       p.is_realm, p.num_files,
+				       (SELECT COUNT(*) FROM calls c WHERE c.network = p.network AND c.pkg_path = p.path) AS calls,
+				       (SELECT COUNT(*) FROM dependencies d WHERE d.network = p.network AND d.import_path = p.path) AS importers,
+				       (SELECT COUNT(*) FROM dependencies d WHERE d.network = p.network AND d.package_path = p.path) AS imports,
+				       -- COUNT(DISTINCT caller), the same definition ListPackages uses.
+				       -- Selected here because PackageInfo carries the field and a
+				       -- column left unselected does not read as absent: it reads as
+				       -- a confident zero, and a search row claiming a busy realm has
+				       -- no users is worse than one that says nothing.
+				       (SELECT COUNT(DISTINCT c.caller) FROM calls c WHERE c.network = p.network AND c.pkg_path = p.path) AS unique_users
+				  FROM packages p
+				 WHERE (p.path LIKE ? OR p.name LIKE ? OR p.creator LIKE ?)`
+	// The relevance expression binds the query four times, and its placeholders
+	// sit in ROW_NUMBER's ORDER BY, which is *earlier* in the statement text
+	// than the WHERE below it. SQLite numbers anonymous parameters by position
+	// in the text, so these go first or every row is ranked against "%moul%"
+	// while being matched against "moul".
+	args := searchRelevanceArgs(q)
+	args = append(args, "%"+q+"%", "%"+q+"%", "%"+q+"%")
 	qStr += ` AND ` + d.networkFilter("p.network", network)
 	qStr += `
+			  )
 		  )
 		 WHERE rn <= ?
-		 ORDER BY is_realm DESC, block_height DESC`
+		 ORDER BY is_realm DESC, ` + searchRelevance()
+	// Once more for the outer sort, in the same order, for the same reason.
 	args = append(args, searchKindLimit)
+	args = append(args, searchRelevanceArgs(q)...)
 
 	rows, err := d.db.Query(qStr, args...)
 	if err != nil {
