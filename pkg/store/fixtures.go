@@ -117,6 +117,24 @@ func SeedNetwork(t TB, db *DB, network string, height int) {
 	); err != nil {
 		t.Fatalf("seed first_seen: %v", err)
 	}
+	// One Discover event, through the real write path so the row is shaped the
+	// way the feed writes it. Every table in NetworkScopedTables needs a row
+	// here: countNetworkRows in the syncer tests asserts the seeded total
+	// equals the length of that list, which is what makes "somebody added a
+	// table to the wipe list and nobody tested the wipe" a failing build rather
+	// than a silent gap.
+	if _, err := db.UpsertDiscoverEvents([]DiscoverEvent{{
+		Network: network,
+		ID:      EventID(network, "package.deployed", "gno.land/r/demo/foo", 0),
+		Kind:    "package.deployed",
+		At:      "2026-01-01T00:00:00Z",
+		Height:  int64(height),
+		Actor:   "g1creator",
+		Target:  "gno.land/r/demo/foo",
+		BuiltAt: "2026-01-01T00:00:00Z",
+	}}); err != nil {
+		t.Fatalf("seed discover_events: %v", err)
+	}
 }
 
 // SQL exposes the underlying handle.

@@ -544,6 +544,60 @@ func initSchema(db *sql.DB) error {
 
 		CREATE INDEX IF NOT EXISTS idx_first_seen_at ON first_seen(network, kind, at);
 
+		-- One row per Discover event, append-only.
+		--
+		-- ids are deterministic (<network>/<kind>/<subject>/<ordinal>), never a
+		-- sequence, so a rebuild produces byte-identical rows and INSERT .. ON
+		-- CONFLICT DO NOTHING is the whole write path. That matters more than
+		-- it looks: feed readers dedupe on id and the publishing pipeline
+		-- stores picks against it, so an id that changed on a rebuild would
+		-- re-notify every subscriber and orphan every pick.
+		--
+		-- facts and layers are JSON, and they are the canonical pair. The
+		-- design's first draft of this table had title and subtitle
+		-- columns; §5.2 then superseded them with the three layers, and §5.2.1
+		-- makes headline and explanation derived projections that nothing
+		-- may set independently. Storing those flat fields here would be a
+		-- second writer for text whose only source of truth is layers, so
+		-- they are computed on read instead.
+		--
+		-- score_base is stored because every factor in it is a pure function of
+		-- the chain and never changes once written. recency and the per-actor
+		-- damping are deliberately absent: the first changes every second and
+		-- the second depends on the filtered result set, so both belong at read
+		-- time. That split is what lets a feed ignore scoring entirely and order
+		-- by at, and what keeps two readers thirty seconds apart seeing the
+		-- same ranking.
+		CREATE TABLE IF NOT EXISTS discover_events (
+			network     TEXT    NOT NULL,
+			id          TEXT    NOT NULL,
+			kind        TEXT    NOT NULL,
+			at          TEXT    NOT NULL,          -- RFC3339 UTC, the chain's time
+			height      INTEGER NOT NULL,
+			actor       TEXT    NOT NULL DEFAULT '',
+			target      TEXT    NOT NULL DEFAULT '',
+			namespace   TEXT    NOT NULL DEFAULT '',
+			facts       TEXT    NOT NULL DEFAULT '{}',
+			layers      TEXT    NOT NULL DEFAULT '{}',
+			evidence_tx TEXT    NOT NULL DEFAULT '',
+			first_ever  INTEGER NOT NULL DEFAULT 0,
+			reach       INTEGER NOT NULL DEFAULT 0,     -- unique actors, the anti-bot input
+			magnitude   REAL    NOT NULL DEFAULT 0,     -- the kind's natural quantity, raw
+			score_base  REAL    NOT NULL DEFAULT 0,
+			built_at    TEXT    NOT NULL,
+			PRIMARY KEY (network, id)
+		);
+
+		-- (network, at DESC) is the feed's only ordering, and the three others
+		-- are the three filters the page offers. id is in each of them because
+		-- paging is keyset on (at, id): two events in the same block share an
+		-- at, and an index that stopped at at would make the tie-break a
+		-- sort rather than a seek.
+		CREATE INDEX IF NOT EXISTS idx_discover_at    ON discover_events(network, at DESC, id DESC);
+		CREATE INDEX IF NOT EXISTS idx_discover_kind  ON discover_events(network, kind, at DESC, id DESC);
+		CREATE INDEX IF NOT EXISTS idx_discover_ns    ON discover_events(network, namespace, at DESC, id DESC);
+		CREATE INDEX IF NOT EXISTS idx_discover_actor ON discover_events(network, actor, at DESC, id DESC);
+
 		CREATE TABLE IF NOT EXISTS package_files (
 			network TEXT NOT NULL DEFAULT 'gnoland1',
 			package_path TEXT NOT NULL,

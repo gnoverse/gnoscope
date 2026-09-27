@@ -1,0 +1,356 @@
+package store
+
+import (
+	"encoding/json"
+	"fmt"
+	"testing"
+)
+
+func ev(network, kind, subject string, ordinal int, at string, height int64) DiscoverEvent {
+	return DiscoverEvent{
+		Network:   network,
+		ID:        EventID(network, kind, subject, ordinal),
+		Kind:      kind,
+		At:        at,
+		Height:    height,
+		Actor:     "g1" + subject,
+		Target:    "gno.land/r/ns/" + subject,
+		Namespace: "ns",
+		Facts:     json.RawMessage(`{"package_name":"` + subject + `"}`),
+		Layers:    json.RawMessage(`{"means":{"text":"An app was published."}}`),
+		BuiltAt:   "2026-09-27T00:00:00Z",
+	}
+}
+
+func seed(t *testing.T, db *DB, events ...DiscoverEvent) {
+	t.Helper()
+	if _, err := db.UpsertDiscoverEvents(events); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+}
+
+func ids(events []DiscoverEvent) []string {
+	out := make([]string, len(events))
+	for i, e := range events {
+		out[i] = e.ID
+	}
+	return out
+}
+
+// The id is the only thing a consumer can dedupe on, so the property that
+// matters is not "inserting twice does not error" but "inserting twice changes
+// nothing". A rebuild that produced new ids would re-notify every subscriber.
+func TestARebuildInsertsNothingAndChangesNothing(t *testing.T) {
+	db := NewTestDB(t)
+	batch := []DiscoverEvent{
+		ev("alpha", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100),
+		ev("alpha", "package.enabled", "hello", 0, "2026-09-20T11:00:00Z", 110),
+	}
+
+	n, err := db.UpsertDiscoverEvents(batch)
+	if err != nil || n != 2 {
+		t.Fatalf("first insert: n=%d err=%v", n, err)
+	}
+	before, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The same events again, as a rebuild would produce them.
+	n, err = db.UpsertDiscoverEvents(batch)
+	if err != nil || n != 0 {
+		t.Fatalf("rebuild inserted %d rows, want 0: %v", n, err)
+	}
+	after, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("row count changed: %d -> %d", len(before), len(after))
+	}
+	for i := range before {
+		if before[i].ID != after[i].ID || before[i].At != after[i].At {
+			t.Errorf("row %d changed: %+v -> %+v", i, before[i], after[i])
+		}
+	}
+}
+
+// A path deployed on two chains is two events. Joining on anything but the full
+// key is the way things go wrong in this schema, per AGENTS.md.
+func TestEventsAreScopedToOneChain(t *testing.T) {
+	db := NewTestDB(t)
+	seed(t, db,
+		ev("alpha", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100),
+		ev("beta", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100),
+	)
+
+	for _, net := range []string{"alpha", "beta"} {
+		got, _, err := db.DiscoverEvents(DiscoverQuery{Network: net})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("%s: %d events, want 1", net, len(got))
+		}
+		if got[0].Network != net {
+			t.Errorf("%s: got an event from %s", net, got[0].Network)
+		}
+	}
+
+	if _, _, err := db.DiscoverEvents(DiscoverQuery{}); err == nil {
+		t.Error("a query with no network was answered; capacity and counts are per chain")
+	}
+}
+
+// The reason paging is keyset and not OFFSET: the feed grows at the head. With
+// OFFSET, an insert between two requests shifts every later row down by one and
+// the reader sees a row twice and misses another. Nothing else in this file
+// would catch that.
+func TestPagingIsStableWhileTheFeedGrows(t *testing.T) {
+	db := NewTestDB(t)
+	var batch []DiscoverEvent
+	for i := 0; i < 10; i++ {
+		batch = append(batch, ev("alpha", "package.deployed", fmt.Sprintf("p%02d", i), 0,
+			fmt.Sprintf("2026-09-20T10:%02d:00Z", i), int64(100+i)))
+	}
+	seed(t, db, batch...)
+
+	first, cursor, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha", Limit: 4})
+	if err != nil || cursor == "" {
+		t.Fatalf("first page: cursor=%q err=%v", cursor, err)
+	}
+
+	// Four newer events arrive between the two requests, which is the whole
+	// point: they belong at the head and must not disturb the page below.
+	var newer []DiscoverEvent
+	for i := 10; i < 14; i++ {
+		newer = append(newer, ev("alpha", "package.deployed", fmt.Sprintf("p%02d", i), 0,
+			fmt.Sprintf("2026-09-20T11:%02d:00Z", i), int64(200+i)))
+	}
+	seed(t, db, newer...)
+
+	seen := map[string]bool{}
+	for _, id := range ids(first) {
+		seen[id] = true
+	}
+	for cursor != "" {
+		var page []DiscoverEvent
+		page, cursor, err = db.DiscoverEvents(DiscoverQuery{Network: "alpha", Limit: 4, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range ids(page) {
+			if seen[id] {
+				t.Fatalf("%s came back on two pages", id)
+			}
+			seen[id] = true
+		}
+	}
+	// Ten original events, each exactly once. The four that arrived mid-read
+	// are legitimately absent: they are newer than where the reader started.
+	if len(seen) != 10 {
+		t.Fatalf("saw %d distinct events, want the 10 that existed when paging began", len(seen))
+	}
+	for i := 0; i < 10; i++ {
+		id := EventID("alpha", "package.deployed", fmt.Sprintf("p%02d", i), 0)
+		if !seen[id] {
+			t.Errorf("%s was skipped", id)
+		}
+	}
+}
+
+// Two events in one block share an `at`. If the tie-break were not part of both
+// the ordering and the cursor, one of them would be skipped at a page boundary.
+func TestEventsInTheSameBlockDoNotBreakPaging(t *testing.T) {
+	db := NewTestDB(t)
+	const sameAt = "2026-09-20T10:00:00Z"
+	var batch []DiscoverEvent
+	for i := 0; i < 6; i++ {
+		batch = append(batch, ev("alpha", "package.deployed", fmt.Sprintf("p%d", i), i, sameAt, 100))
+	}
+	seed(t, db, batch...)
+
+	seen := map[string]bool{}
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("paging did not terminate")
+		}
+		got, next, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha", Limit: 2, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range ids(got) {
+			if seen[id] {
+				t.Fatalf("%s came back twice", id)
+			}
+			seen[id] = true
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(seen) != 6 {
+		t.Fatalf("saw %d of 6 events that share a timestamp", len(seen))
+	}
+}
+
+func TestFilters(t *testing.T) {
+	db := NewTestDB(t)
+	a := ev("alpha", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100)
+	b := ev("alpha", "chain.spike", "2026-09-21", 0, "2026-09-21T10:00:00Z", 200)
+	b.Namespace = ""
+	b.Actor = ""
+	c := ev("alpha", "package.deployed", "world", 0, "2026-09-22T10:00:00Z", 300)
+	c.Namespace = "other"
+	seed(t, db, a, b, c)
+
+	tests := []struct {
+		name string
+		q    DiscoverQuery
+		want []string
+	}{
+		{"by kind", DiscoverQuery{Network: "alpha", Kinds: []string{"chain.spike"}}, []string{b.ID}},
+		{"by two kinds", DiscoverQuery{Network: "alpha", Kinds: []string{"chain.spike", "package.deployed"}},
+			[]string{c.ID, b.ID, a.ID}},
+		{"by namespace", DiscoverQuery{Network: "alpha", Namespace: "ns"}, []string{a.ID}},
+		{"by actor", DiscoverQuery{Network: "alpha", Actor: c.Actor}, []string{c.ID}},
+		{"since is inclusive", DiscoverQuery{Network: "alpha", Since: "2026-09-21T10:00:00Z"},
+			[]string{c.ID, b.ID}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _, err := db.DiscoverEvents(tt.q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fmt.Sprint(ids(got)) != fmt.Sprint(tt.want) {
+				t.Errorf("got %v, want %v", ids(got), tt.want)
+			}
+		})
+	}
+}
+
+// The cursor arrives in a URL, so it is attacker-controlled. The worst a
+// malformed one should do is start the reader at the top; returning an error
+// would turn a mangled link into a broken page.
+func TestAMalformedCursorStartsAtTheTop(t *testing.T) {
+	db := NewTestDB(t)
+	seed(t, db, ev("alpha", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100))
+
+	for _, bad := range []string{"nonsense", "|", "|id", "2026-09-20T10:00:00Z|", "' OR 1=1 --"} {
+		got, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha", Cursor: bad})
+		if err != nil {
+			t.Errorf("cursor %q errored: %v", bad, err)
+		}
+		if len(got) != 1 {
+			t.Errorf("cursor %q returned %d events, want the whole feed", bad, len(got))
+		}
+	}
+}
+
+// A chain whose block-1 fingerprint changed has a new set of events. Rows left
+// behind would keep a feed republishing events for blocks that no longer exist,
+// with ids no rebuild will ever produce again.
+func TestAChainResetWipesTheFeed(t *testing.T) {
+	db := NewTestDB(t)
+	seed(t, db,
+		ev("alpha", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100),
+		ev("beta", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100),
+	)
+
+	if _, err := db.DeleteNetworkData("alpha"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("alpha kept %d events through a reset", len(got))
+	}
+	// And the other chain is untouched, which is the half a blanket DELETE
+	// would get wrong.
+	other, _, err := db.DiscoverEvents(DiscoverQuery{Network: "beta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other) != 1 {
+		t.Errorf("beta lost events to alpha's reset: %d remain", len(other))
+	}
+}
+
+func TestCountsAndGeneration(t *testing.T) {
+	db := NewTestDB(t)
+	a := ev("alpha", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100)
+	b := ev("alpha", "package.deployed", "world", 0, "2026-09-21T10:00:00Z", 200)
+	c := ev("alpha", "chain.spike", "2026-09-21", 0, "2026-09-21T11:00:00Z", 210)
+	c.BuiltAt = "2026-09-27T01:00:00Z" // a later generation
+	seed(t, db, a, b, c)
+
+	counts, err := db.DiscoverCounts("alpha", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["package.deployed"] != 2 || counts["chain.spike"] != 1 {
+		t.Errorf("counts = %v", counts)
+	}
+
+	windowed, err := db.DiscoverCounts("alpha", "2026-09-21T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if windowed["package.deployed"] != 1 {
+		t.Errorf("windowed counts = %v, want one deploy inside the window", windowed)
+	}
+
+	built, err := db.DiscoverBuiltAt("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if built != "2026-09-27T01:00:00Z" {
+		t.Errorf("built_at = %q, want the newest generation", built)
+	}
+	// An empty chain has no generation rather than an error: the page still
+	// renders, and says the tick has not run.
+	if got, err := db.DiscoverBuiltAt("gamma"); err != nil || got != "" {
+		t.Errorf("empty chain: got %q err=%v", got, err)
+	}
+}
+
+// The cap is a cap, not a default a caller may raise: a page of these rows
+// carries two blocks of generated prose each.
+func TestTheLimitIsCapped(t *testing.T) {
+	db := NewTestDB(t)
+	var batch []DiscoverEvent
+	for i := 0; i < 5; i++ {
+		batch = append(batch, ev("alpha", "package.deployed", fmt.Sprintf("p%d", i), 0,
+			fmt.Sprintf("2026-09-20T10:%02d:00Z", i), int64(100+i)))
+	}
+	seed(t, db, batch...)
+
+	for _, limit := range []int{0, -1, DiscoverLimitMax + 1, 10_000} {
+		got, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha", Limit: limit})
+		if err != nil {
+			t.Fatalf("limit %d: %v", limit, err)
+		}
+		if len(got) != 5 {
+			t.Errorf("limit %d returned %d events", limit, len(got))
+		}
+	}
+}
+
+func TestUpsertRejectsAnEventWithNoIdentity(t *testing.T) {
+	db := NewTestDB(t)
+	for _, bad := range []DiscoverEvent{
+		{Network: "alpha", At: "2026-09-20T10:00:00Z"},
+		{ID: "x", At: "2026-09-20T10:00:00Z"},
+		{Network: "alpha", ID: "x"},
+	} {
+		if _, err := db.UpsertDiscoverEvents([]DiscoverEvent{bad}); err == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
+}
