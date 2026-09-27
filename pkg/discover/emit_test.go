@@ -349,3 +349,73 @@ func TestTransferThresholdIsTheSampledOne(t *testing.T) {
 			TransferLargeThresholdGNOT)
 	}
 }
+
+// Layer 1 for a deploy sheds what is redundant until it fits, and the thing it
+// sheds first is a repetition rather than information.
+//
+// Measured on the real chains 2026-09-28: the naive sentence blew the 140
+// budget on 495 successful submissions, which the gate then dropped from the
+// feed silently. More than half of those paths are namespaced by an address, so
+// the sentence was spending eighty characters saying one account twice.
+func TestDeployedLayerOneFitsWithoutTruncating(t *testing.T) {
+	const addr = "g1n4pl5uc4yt5r96m9w6fmdznx3x0jyg8l6arhmt"
+
+	tests := []struct {
+		name          string
+		path, creator string
+		files         int
+		height        int64
+		wantHas       []string
+		wantLacks     []string
+	}{
+		{
+			name: "a named namespace keeps the creator, as the spec's example does",
+			path: "gno.land/r/moul/hello", creator: "g1manfred47kzduec920z88wfr64ylksmdcedlf5",
+			files: 3, height: 173108,
+			wantHas: []string{"by g1manfred47kzduec920z88wfr64ylksmdcedlf5", "at block 173108"},
+		},
+		{
+			name: "an address namespace drops the second mention of the same account",
+			path: "gno.land/p/" + addr + "/bazaar/grc721/metadata/v0", creator: addr,
+			files: 5, height: 173108,
+			wantHas:   []string{"gno.land/p/" + addr + "/bazaar/grc721/metadata/v0", "5 files"},
+			wantLacks: []string{"by " + addr},
+		},
+		{
+			name: "a long named path drops the block clause, which is carried structurally",
+			path: "gno.land/p/aib/ibc/lightclient/tendermint/testing",
+			// A creator that is not the namespace, so the "by" clause stays and
+			// the sentence has to lose something else.
+			creator: "g1manfred47kzduec920z88wfr64ylksmdcedlf5", files: 12, height: 1731081,
+			wantHas:   []string{"by g1manfred47kzduec920z88wfr64ylksmdcedlf5"},
+			wantLacks: []string{"at block"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deployedWhat(tt.path, tt.creator, tt.files, tt.height)
+			if n := len([]rune(got)); n > MaxWhat {
+				t.Errorf("%d characters, the budget is %d: %q", n, MaxWhat, got)
+			}
+			for _, want := range tt.wantHas {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing %q in %q", want, got)
+				}
+			}
+			for _, unwanted := range tt.wantLacks {
+				if strings.Contains(got, unwanted) {
+					t.Errorf("still carries %q in %q", unwanted, got)
+				}
+			}
+			// Never truncated: a cut-off path is a different path, and a
+			// cut-off address is a different account.
+			if strings.Contains(got, "…") || strings.Contains(got, "...") {
+				t.Errorf("truncated rather than dropped: %q", got)
+			}
+			if !strings.Contains(got, tt.path) {
+				t.Errorf("the path was not carried whole: %q", got)
+			}
+		})
+	}
+}

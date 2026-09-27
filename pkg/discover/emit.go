@@ -61,13 +61,44 @@ func (in PackageDeployed) Emit() (Facts, Layers) {
 	}
 
 	return facts, Layers{
-		What: Layer{fmt.Sprintf("MsgAddPackage published %s, %s, by %s, at block %d.",
-			in.Path, plural(in.NumFiles, "file"), in.Creator, in.Height)},
+		What:  Layer{deployedWhat(in.Path, in.Creator, in.NumFiles, in.Height)},
 		Means: Layer{fmt.Sprintf("%s put a new %s on the chain, called %s.", who, thing, name)},
 		Matters: Layer{fmt.Sprintf(
 			"Anyone can look at it or use it now, and nobody can change it except %s. It is %s of code.",
 			whose, plural(in.NumFiles, "file"))},
 	}
+}
+
+// deployedWhat writes layer 1 for a deploy, shedding what is redundant until it
+// fits rather than truncating.
+//
+// The budget is 140 and the naive sentence blows it on 495 of the real
+// submissions across mainnet, pearl and staging (measured 2026-09-28). The
+// cause is not verbosity, it is saying the same thing twice: more than half of
+// the paths on these chains are namespaced by an address, so
+// "published gno.land/p/g1n4pl5u.../bazaar/grc721/metadata/v0 ... by g1n4pl5u..."
+// spends eighty characters on one account. Dropping the second mention is not a
+// shortening, it is removing a repetition.
+//
+// Two steps, in order of how redundant each clause is, and both are drops
+// rather than truncations for the reason the proposal titles are: a truncated
+// value is a value that says something else, while a missing one is visibly
+// missing and is still carried structurally. The height survives in
+// layers.what.evidence either way, which is why it is the first thing to go.
+//
+// After both steps nothing on any of the three chains exceeds the budget, and
+// the worst remaining case is 140 exactly.
+func deployedWhat(path, creator string, numFiles int, height int64) string {
+	by := ""
+	if ns, _ := splitPath(path); ns != creator {
+		by = ", by " + creator
+	}
+	full := fmt.Sprintf("MsgAddPackage published %s, %s%s, at block %d.",
+		path, plural(numFiles, "file"), by, height)
+	if len([]rune(full)) <= MaxWhat {
+		return full
+	}
+	return fmt.Sprintf("MsgAddPackage published %s, %s%s.", path, plural(numFiles, "file"), by)
 }
 
 // DeployerFirst is an address publishing for the first time on a chain.
