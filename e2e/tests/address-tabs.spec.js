@@ -197,6 +197,47 @@ test('an account is told why its reconstruction is short, not a realm’s reason
   await expect(holdings).not.toContainText('this realm’s account');
 });
 
+// The holdings tab reuses the realm renderer, whose flow table draws 250 rows
+// because on a realm page it is the only place those legs appear. An address
+// page also has a transactions tab listing the same movements from the signer's
+// side, so 250 here is a second copy of it: measured on mainnet the moment this
+// shipped, moul's holdings tab came to 11,728px, thirteen screens, on a page
+// whose whole point was to stop being eleven.
+//
+// Stubbed rather than seeded. The fixture has five native legs chain-wide, and
+// adding sixty more to exercise a render cap would move every chain-wide coin
+// figure every other spec reads.
+test('the holdings flow table starts short on an address, and offers the rest', async ({ page }) => {
+  const legs = Array.from({ length: 60 }, (_, i) => ({
+    tx_hash: `leg-${i}`, account: 'account', counterparty: 'g1counterparty000000000000000000000000',
+    amount: (i + 1) * 1000, coins: `${(i + 1) * 1000}ugnot`, block_height: 5000 + i,
+    block_time: '2026-02-01T00:00:00Z',
+  }));
+  await page.route('**/api/address/*/holdings*', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      network: 'alpha', path: '', address: GRC20_FUNDER,
+      balance: '9000000ugnot', balance_known: true, live_ugnot: 9000000,
+      derived_ugnot: 9000000, flows_total: legs.length, flows_shown: legs.length,
+      flows_offset: 0, flows: legs, counterparties: [], counterparties_total: 0,
+      tokens: [], token_flows: [],
+    }),
+  }));
+
+  await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=holdings`);
+  await settle(page);
+
+  const rows = pane(page, 'holdings').locator('#defi-flows tbody tr');
+  await expect(rows, 'the address tab drew the realm page’s 250-row table').toHaveCount(25);
+
+  // Nothing is hidden, only undrawn, and the control says so and works.
+  const more = pane(page, 'holdings').locator('button, a').filter({ hasText: /more/i }).first();
+  await expect(more).toBeVisible();
+  await more.click();
+  await settle(page);
+  await expect(rows).toHaveCount(50);
+});
+
 // Denominated figures cannot be blended across chains, and the realm tab
 // refuses that case rather than inventing a number. The account tab has to
 // refuse it the same way, or the same question answers differently depending

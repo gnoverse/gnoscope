@@ -15318,7 +15318,7 @@ function loadDefiInto(ctx, into, gen) {
       'balances are denominated per chain — select a specific network to see them'));
     return;
   }
-  _defiTableRows = DEFI_TABLE_ROWS;
+  _defiTableRows = ctx.path ? DEFI_TABLE_ROWS : DEFI_TABLE_ROWS_ADDRESS;
   skeletonBlock(into);
   (async () => {
     let d;
@@ -15355,6 +15355,19 @@ const DEFI_FLOWS_PAGE = 5000;
 // and offering the rest costs no correctness, which is the whole reason it is
 // safe to do.
 const DEFI_TABLE_ROWS = 250;
+
+// On an address page the same table starts far shorter, and the reason is that
+// it is no longer the only place those legs appear.
+//
+// A realm page has one money tab and nothing else that lists a transfer, so 250
+// rows is the answer to "show me the history". An address page has a
+// transactions tab listing the same movements from the signer's side, so the
+// long table here is a second copy of it: measured on mainnet the moment this
+// shipped, `/address/g1manfred…?tab=holdings` came to 11,728px, thirteen
+// screens, on a page whose whole point was to stop being eleven. The figures
+// above it are computed over every leg either way, and "show more" is one click
+// for a reader who wants the rest.
+const DEFI_TABLE_ROWS_ADDRESS = 25;
 
 // How many rows the table is currently drawing, reset every time the tab is
 // opened for a different render. Module-level rather than threaded through,
@@ -15566,7 +15579,10 @@ function renderRealmDefi(into, d, ctx) {
 // page is already holding, so it is instant and cannot fail. Saying "draw" and
 // not "load" is what keeps the two from reading as the same button.
 function defiShowMoreEl(into, d, ctx, shown, held) {
-  const more = Math.min(held - shown, DEFI_TABLE_ROWS);
+  // The step the button offers has to be the step it takes, or it says "show
+  // 250 more" on an address page and shows 25.
+  const step = ctx.path ? DEFI_TABLE_ROWS : DEFI_TABLE_ROWS_ADDRESS;
+  const more = Math.min(held - shown, step);
   const wrap = el('div', { className: 'detail-chart-note' });
   wrap.appendChild(el('span', {},
     'drawing the ' + fmtNum(shown) + ' most recent of ' + fmtNum(d.flows_total)
@@ -15574,7 +15590,7 @@ function defiShowMoreEl(into, d, ctx, shown, held) {
   const btn = el('button', { className: 'pager-btn', style: { marginLeft: '8px' } },
     'draw ' + fmtNum(more) + ' more');
   btn.onclick = () => {
-    _defiTableRows += DEFI_TABLE_ROWS;
+    _defiTableRows += ctx.path ? DEFI_TABLE_ROWS : DEFI_TABLE_ROWS_ADDRESS;
     renderRealmDefi(ctx.into(), d, ctx);
   };
   wrap.appendChild(btn);
