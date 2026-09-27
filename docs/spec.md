@@ -111,6 +111,19 @@ everything newer than the build, so the newest bucket does not lag the timer.
   that is 1,333,000,221,686,563 ugnot over 100 ugnot/byte, or 13.33 TB, the same
   sum the monorepo does in a comment beside the default price. `/storage` is built
   on it, and every one of its figures is per chain for that reason.
+- **The Discover feed is a rollup, and its ids are its contract.**
+  `discover_events` is built on the rollup tick, never queried live: one of the
+  twelve kinds costs two indexer calls and an RPC round trip, so a live page
+  would be as slow as its worst kind and would answer differently on two
+  refreshes a second apart. Each row's id is
+  `<network>/<kind>/<subject>/<ordinal>`, a pure function of the event, so a
+  rebuild produces byte-identical rows and the write path is `ON CONFLICT DO
+  NOTHING`. Feed readers dedupe on that id, so an id derived from row order or a
+  sequence would re-notify every subscriber on every rebuild. `score_base` is
+  stored because every factor in it is a pure function of the chain; recency and
+  per-actor damping are computed at read time, which is what lets a feed ignore
+  scoring and order by time. Paging is keyset on `(at, id)`: the feed grows at
+  the head, and `OFFSET` there shows a reader one row twice and skips another.
 - **Explanations are generated, and the generator may not add a fact.** A
   Discover event is three layers: what happened (SQL, wrong only if the indexer
   is), what it means, and why it matters. The last two are generated from a
