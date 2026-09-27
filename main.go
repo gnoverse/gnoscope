@@ -232,6 +232,10 @@ func run() error {
 	// they are; the active-address series instead reads everything newer than
 	// the build live, because a lagging newest bucket would disagree with the
 	// live feed beside it.
+	networkIDs := make([]string, 0, len(cfg.Networks))
+	for _, n := range cfg.Networks {
+		networkIDs = append(networkIDs, n.ID)
+	}
 	go func() {
 		refresh := func() {
 			start := time.Now()
@@ -245,6 +249,21 @@ func run() error {
 			// not take the gas aggregates down with it.
 			if err := db.RefreshFirstSeen(); err != nil {
 				log.Printf("first_seen: %v", err)
+			}
+			// Third separate call, same reasoning, plus one of its own: this
+			// one runs generated prose through the grounding gate, and a build
+			// that rejects events is an emitter bug rather than a data problem.
+			// Logging the count is how anyone finds out, since a rejected event
+			// is simply absent from the feed and absence is invisible.
+			if results, err := db.RefreshDiscoverEvents(networkIDs); err != nil {
+				log.Printf("discover: %v", err)
+			} else {
+				for _, r := range results {
+					if r.Inserted > 0 || r.Rejected > 0 {
+						log.Printf("[%s] discover: %d new, %d built, %d rejected %v",
+							r.Network, r.Inserted, r.Built, r.Rejected, r.Violations)
+					}
+				}
 			}
 			log.Printf("rollups refreshed in %s", time.Since(start).Round(time.Millisecond))
 		}
