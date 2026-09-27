@@ -423,6 +423,11 @@ tr.total-row td { font-weight: bold; color: var(--accent); }
 /* Achievements: the badge grid, the filter chips, and the strip of emoji that
    stands in for the grid inside a table row. Cards rather than a table because
    the `how` line is the payload and a table column would truncate it. */
+/* The address overview's three ranked tables, side by side. They are short and
+   they answer three variants of one question, so stacked they were three
+   scrolls to compare. Collapses to one column under ~1000px on its own. */
+.addr-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 22px; margin-top: 16px; align-items: start; }
+.addr-cols table { margin-top: 0; }
 .ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; margin-bottom: 18px; }
 .ach { display: flex; gap: 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px;
        padding: 10px 11px; align-items: flex-start; }
@@ -13815,6 +13820,51 @@ function renderSessions(container, sessions) {
   container.appendChild(tbl);
 }
 
+// --- The address page: six tabs, because it was nine screens ----------------
+//
+// Everything this page knows used to be one column: the delegated-keys table,
+// two stats bars, an activity chart, three ranked tables, the deploy list, and
+// then up to 200 transaction rows. On a busy account that is about nine screens
+// of scroll, and every question a reader actually arrives with ("what does it
+// hold", "what did it deploy", "who signs for it") was somewhere in the middle
+// of it.
+//
+// Three rules the split follows:
+//
+//   - **Identity stays above the strip.** Whether this address is itself a
+//     delegated key changes how every row under it should be read, and it is one
+//     line. The headline stats stay above it too: figures that moved with the
+//     tab would read as properties of the tab.
+//   - **A pane is built the first time it is opened, never before.** Two cost a
+//     fetch and one costs a chart, and a chart built inside a hidden pane
+//     measures zero width and paints at its fallback. Lazy building solves both,
+//     and it is the idiom the realm page already uses for its defi and state
+//     tabs.
+//   - **A tab nobody can fill is not drawn**, and the ones that are carry their
+//     count. "deploys (20)" in the strip answers the question without the click,
+//     which is the other half of spending less time scrolling.
+
+// ADDRESS_TAB_ICONS keeps the sprite names in one place. Each is a thunk over
+// a literal argument rather than a bare string the strip interpolates, because
+// TestFrontendSpriteHasNoOrphansOrDanglingRefs finds a symbol's users by
+// grepping for that literal: a computed name makes its symbol read as an orphan
+// and fails the build.
+const ADDRESS_TAB_ICONS = {
+  overview: () => icon('pulse'),
+  transactions: () => icon('list'),
+  holdings: () => icon('coin'),
+  deploys: () => icon('bubbles'),
+  sessions: () => icon('call'),
+  achievements: () => icon('info'),
+};
+
+// How many transaction rows one page of the transactions tab draws.
+//
+// The endpoint hands back up to 200 (addressTxPage) and the tab used to draw
+// every one of them. Paging the window it already has costs no request and is
+// the difference between four screens and one.
+const ADDRESS_TX_ROWS = PAGE_SIZE;
+
 async function loadAddressDetail(addr, urlTab) {
   const container = clear('address-detail-content');
   skeletonBlock(container);
@@ -13826,314 +13876,370 @@ async function loadAddressDetail(addr, urlTab) {
     // Whose key this is, if it is one. Optional for the same reason: an
     // instance whose index has not swept this far must not take the page down.
     const identityPath = { path: 'address/' + addr + '/session', fallback: { is_session: false, grants: [] } };
-    await apiSWR(['address/' + addr, 'blocks?limit=50', sessionsPath, identityPath], ([data, blocksData, sessionsData, identityData], swrMeta) => {
-      ++_detailGen;
-      destroyDetailCharts();
-      // Block time lookup
-      const blockTime = {};
-      for (const b of (Array.isArray(blocksData) ? blocksData : [])) blockTime[b.height] = b.time;
-      container.textContent = '';
-      // Header
-      const titleRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', margin: '16px 0 8px' } },
-        el('h2', { style: { margin: 0 } }, 'Address'));
-      // gno.land's own user page for this address — the same "see on gnoweb"
-      // link realm/package pages already have, for the one identity kind that
-      // didn't have it yet.
-      titleRow.appendChild(el('a', {
-        href: 'https://gno.land/u/' + addr, target: '_blank', rel: 'noopener',
-        className: 'watch-btn', style: { textDecoration: 'none', fontSize: '12px' },
-      }, 'see on gnoweb ↗'));
-      container.appendChild(titleRow);
-      const info = addrInfo(addr);
-      if (info) {
-        const labelRow = el('div', { style: { color: 'var(--accent)', marginBottom: '4px', fontSize: '16px' } }, info.label);
-        if (info.why) { labelRow.title = info.why; }
-        if (info.inferred) labelRow.append(' (inferred)');
-        container.appendChild(labelRow);
-      }
-      const addrRow = el('div', { style: { color: 'var(--fg2)', marginBottom: '16px', wordBreak: 'break-all' } });
-      // Larger here than in a table row: this page is *about* this account, so
-      // the icon is the thing to recognise at a glance rather than a marker
-      // beside a link. Same image as everywhere else it appears.
-      const pageIcon = identicon(addr, 28);
-      if (pageIcon) {
-        pageIcon.style.verticalAlign = '-8px';
-        pageIcon.style.marginRight = '8px';
-        addrRow.appendChild(pageIcon);
-      }
-      addrRow.append(addr);
-      addrRow.appendChild(copyButton(addr, 'copy address'));
-      addrRow.append(' ');
-      const lastHeight = (data.transactions || [])[0]?.block_height || 0;
-      addrRow.appendChild(watchButton('addresses', addr, lastHeight));
-      container.appendChild(addrRow);
-      _watchTarget = { kind: 'addresses', id: addr, height: lastHeight };
-      // Before the stats. "this address has no transactions" and "this address
-      // is a key that signs under another account" look identical otherwise,
-      // and only one of them means the page is empty for a reason.
-      renderSessionIdentity(container, identityData, addr);
-      // Who else can sign for this account, before anything about what it did.
-      // Identity, not activity, which is why it sits above the tab strip: it
-      // changes how every row under it should be read, and a reader on the
-      // achievements tab needs it as much as one reading the transactions.
-      renderSessions(container, sessionsData);
-      // Stats bar
-      const txs = data.transactions || [];
-      const pkgs = data.packages || [];
-      const statsBar = el('div', { className: 'stats-bar' });
-      // The address's whole history, not this page: data.total counts every row
-      // storage holds for it, and paging must not make the headline wander.
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'transactions'), el('span', { className: 'value' }, fmtNum(data.total ?? txs.length))));
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'deploys'), el('span', { className: 'value' }, fmtNum(pkgs.length))));
-      if (data.oldest_on_page >= 0) {
-        // "oldest here", not "first seen": this is the oldest block on the page
-        // being shown, and paging back would make a "first seen" figure wander.
-        // The address's true first block would need a separate query.
-        const label = (data.total > txs.length) ? 'oldest here' : 'first seen';
-        const fbEl = el('div', { className: 'stat' }, el('span', { className: 'label' }, label));
-        const fbVal = el('span', { className: 'value' });
-        fbVal.appendChild(blockWithAge(data.oldest_on_page, data.oldest_on_page_time, data.transactions?.[0]?.network));
-        fbEl.appendChild(fbVal);
-        statsBar.appendChild(fbEl);
-      }
-      if (data.balance) {
-        statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'balance'), el('span', { className: 'value' }, fmtBalanceStr(data.balance))));
-      }
-      // Only when there are some. A "sessions 0" tile on every one of the
-      // chain's accounts would spend a headline slot on a fact that is true of
-      // almost all of them.
-      const sessionCount = (sessionsData?.supported && (sessionsData.sessions || []).length) || 0;
-      if (sessionCount) {
-        statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'sessions'), el('span', { className: 'value' }, fmtNum(sessionCount))));
-      }
-      container.appendChild(statsBar);
+    await apiSWR(['address/' + addr, 'blocks?limit=50', sessionsPath, identityPath],
+      ([data, blocksData, sessionsData, identityData]) => {
+        renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, urlTab);
+      });
+  } catch (err) {
+    container.textContent = '';
+    container.appendChild(el('p', { style: { color: 'var(--red)' } }, 'Error: ' + err.message));
+  }
+}
 
-      // Two panes from here down.
-      //
-      // Activity is everything this page has always shown; achievements is the
-      // same address read against the catalog in pkg/achievements. A tab rather
-      // than another section at the bottom, because both are long and a reader
-      // arrives wanting exactly one of them — and because the catalog's value is
-      // the *locked* half, which nobody scrolls a 50-row transaction table to
-      // reach.
-      //
-      // Rebuilt on every render pass, which apiSWR runs twice: the panes and
-      // their contents are created fresh here, so nothing from the cached pass
-      // survives into the fresh one to be duplicated.
-      const addrTabs = el('div', { className: 'tabs' });
-      const paneActivity = el('div');
-      const paneAch = el('div', { style: { display: 'none' } });
-      // Read from the URL, not from the `urlTab` route() captured, because
-      // apiSWR paints twice: a reader who switches to achievements during the
-      // cached pass would be thrown back to activity when the fresh one lands.
-      // The tab click writes the URL, so the URL is the state that survives.
-      const activeTab = (urlParam('tab') || urlTab) === 'achievements' ? 'achievements' : 'activity';
-      let achLoaded = false;
-      const mkTab = (id, label, iconName) => {
-        const t = el('div', { className: 'tab' + (id === activeTab ? ' active' : '') });
-        t.appendChild(icon(iconName));
-        t.append(label);
-        t.addEventListener('click', () => {
-          addrTabs.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-          t.classList.add('active');
-          paneActivity.style.display = id === 'activity' ? '' : 'none';
-          paneAch.style.display = id === 'achievements' ? '' : 'none';
-          // In the URL like every other tab on this site, so a reload and a
-          // shared link both land on the pane the sender was looking at.
-          urlSetParam('tab', id === 'activity' ? '' : id);
-          if (id === 'achievements' && !achLoaded) { achLoaded = true; loadAddressAchievements(addr, paneAch); }
-        });
-        addrTabs.appendChild(t);
-        return t;
-      };
-      mkTab('activity', 'activity', 'pulse');
-      mkTab('achievements', 'achievements', 'list');
-      container.appendChild(addrTabs);
-      paneActivity.style.display = activeTab === 'activity' ? '' : 'none';
-      paneAch.style.display = activeTab === 'achievements' ? '' : 'none';
-      container.appendChild(paneActivity);
-      container.appendChild(paneAch);
-      if (activeTab === 'achievements') { achLoaded = true; loadAddressAchievements(addr, paneAch); }
-      const body = paneActivity;
-      // Analyse the page's rows.
-      //
-      // These come from storage as flat {type, caller, detail} rather than from
-      // the indexer as nested messages, because the indexer cannot serve an
-      // address page at chain scale — eight of the nine busiest accounts on
-      // sapphire returned 500 after twelve seconds. Storage answers instantly and
-      // pages properly.
-      //
-      // The one thing lost with the message internals is the storage-deposit
-      // breakdown, which lives in transaction events and is not recorded per
-      // address. The transaction detail page still shows it in full.
-      const sentTo = {}, recvFrom = {}, calledRealms = {};
-      let totalSentAmount = 0, totalRecvAmount = 0, sendCount = 0, recvCount = 0;
-      let totalGasUsed = 0, totalGasFee = 0;
-      for (const tx of txs) {
-        totalGasUsed += tx.gas_used || 0;
-        totalGasFee += tx.gas_fee || 0;
-        if (tx.type === 'BankMsgSend') {
-          // detail is "<to> <amount>", the shape FilteredTransactions builds.
-          const [to, amount] = (tx.detail || '').split(' ');
-          const value = parseInt((amount || '').match(/^(\d+)/)?.[1] || '0', 10);
-          if (tx.caller === addr) {
-            sentTo[to] = (sentTo[to] || 0) + 1;
-            sendCount++;
-            totalSentAmount += value;
-          }
-          if (to === addr) {
-            recvFrom[tx.caller] = (recvFrom[tx.caller] || 0) + 1;
-            recvCount++;
-            totalRecvAmount += value;
-          }
-        } else if (tx.type === 'MsgCall' && tx.caller === addr) {
-          calledRealms[tx.detail] = (calledRealms[tx.detail] || 0) + 1;
-        }
-      }
-      // Additional stats
-      const uniqueReceivers = Object.keys(sentTo).length;
-      const uniqueSenders = Object.keys(recvFrom).length;
-      const extraStats = el('div', { className: 'stats-bar', style: { borderBottom: 'none', paddingBottom: '0' } });
-      let hasExtra = false;
-      if (sendCount > 0) {
-        hasExtra = true;
-        extraStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'sent'), el('span', { className: 'value' }, fmtNum(sendCount))));
-        extraStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'total sent'), el('span', { className: 'value' }, fmtNum(Math.floor(totalSentAmount / 1000000)) + ' GNOT')));
-        extraStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'unique receivers'), el('span', { className: 'value' }, fmtNum(uniqueReceivers))));
-      }
-      if (recvCount > 0) {
-        hasExtra = true;
-        extraStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'received'), el('span', { className: 'value' }, fmtNum(recvCount))));
-        extraStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'total received'), el('span', { className: 'value' }, fmtNum(Math.floor(totalRecvAmount / 1000000)) + ' GNOT')));
-          extraStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'unique senders'), el('span', { className: 'value' }, fmtNum(uniqueSenders))));
-      }
-      if (totalGasUsed > 0) {
-        hasExtra = true;
-        extraStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'gas used'), el('span', { className: 'value' }, fmtNum(totalGasUsed))));
-        extraStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'gas fees'), el('span', { className: 'value' }, fmtNum(Math.floor(totalGasFee / 1000000 * 100) / 100) + ' GNOT')));
-      }
-      if (hasExtra) body.appendChild(extraStats);
-      // What this account does, over time, split by message kind.
-      //
-      // The three tables below rank *who* and *what*; none of them says when,
-      // and "active for a week two months ago" and "active every day since"
-      // produce identical tables. Drawn from the page's own rows, so it moves
-      // with the pager and says so rather than claiming to be the account's
-      // whole history: /api/address caps a page at 200 and data.total is the
-      // real count.
-      const acctBuckets = bucketCounts(txs, t => t.block_time, t => t.type || 'tx');
-      if (acctBuckets && txs.length >= CHART_MIN_POINTS) {
-        // Every type gets a series, not a top-N: the message vocabulary is
-        // fixed and short (MsgCall, BankMsgSend, MsgAddPackage, MsgRun and the
-        // two inert-lifecycle messages), so there is nothing to fold away and
-        // folding would hide the rare one that is the interesting row.
-        // Ordered biggest first so the palette is stable across pages.
-        const acctNames = acctBuckets.series.map(x => x.name)
-          .sort((x, y) => seriesTotal(acctBuckets, y) - seriesTotal(acctBuckets, x));
-        const acctNote = [fmtNum(txs.length) + ' transactions plotted'];
-        if ((data.total ?? txs.length) > txs.length) {
-          acctNote.push('this page only, of ' + fmtNum(data.total) + ' in all');
-        }
-        if (acctBuckets.dropped) acctNote.push(fmtNum(acctBuckets.dropped) + ' with no block time, not plotted');
-        detailChart(body, _detailCharts, {
-          title: 'activity, per ' + acctBuckets.unit,
-          note: acctNote.join(' \u00b7 '),
-          data: {
-            labels: acctBuckets.labels,
-            datasets: acctNames.map((n, i) => ({
-              label: n,
-              data: seriesData(acctBuckets, n),
-              backgroundColor: SERIES_PALETTE[i % SERIES_PALETTE.length] + 'aa',
-              borderColor: SERIES_PALETTE[i % SERIES_PALETTE.length],
-              borderWidth: 1,
-            })),
-          },
-          scales: {
-            x: chartAxis({ stacked: true }),
-            y: chartAxis({ stacked: true, integer: true, title: 'transactions' }),
-          },
-        });
-      }
-      // Top receivers (if >1 with multiple txs)
-      const topSentTo = Object.entries(sentTo).sort((a, b) => b[1] - a[1]);
-      if (topSentTo.length > 0 && topSentTo[0][1] > 1) {
-        body.appendChild(el('div', { className: 'section-title', style: { marginTop: '16px' } }, 'top receivers'));
-        const stbl = el('table');
-        stbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'address'), el('th', {}, 'txs'))));
-        const sbody = el('tbody');
-        for (const [a, c] of topSentTo.slice(0, 10)) {
-          if (c < 2) break;
-          sbody.appendChild(el('tr', {}, el('td', {}, addrLinkFull(a)), el('td', {}, fmtNum(c))));
-        }
-        stbl.appendChild(sbody); body.appendChild(stbl);
-      }
-      // Top senders (if >1 with multiple txs)
-      const topRecvFrom = Object.entries(recvFrom).sort((a, b) => b[1] - a[1]);
-      if (topRecvFrom.length > 0 && topRecvFrom[0][1] > 1) {
-        body.appendChild(el('div', { className: 'section-title', style: { marginTop: '16px' } }, 'top senders'));
-        const rtbl = el('table');
-        rtbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'address'), el('th', {}, 'txs'))));
-        const rbody = el('tbody');
-        for (const [a, c] of topRecvFrom.slice(0, 10)) {
-          if (c < 2) break;
-          rbody.appendChild(el('tr', {}, el('td', {}, addrLinkFull(a)), el('td', {}, fmtNum(c))));
-        }
-        rtbl.appendChild(rbody); body.appendChild(rtbl);
-      }
-      // Top called realms (if any calls)
-      const topCalled = Object.entries(calledRealms).sort((a, b) => b[1] - a[1]);
-      if (topCalled.length > 0) {
-        body.appendChild(el('div', { className: 'section-title', style: { marginTop: '16px' } }, 'top called realms'));
-        const ctbl = el('table');
-        ctbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'realm::func'), el('th', {}, 'calls'))));
-        const cbody = el('tbody');
-        for (const [rf, c] of topCalled.slice(0, 10)) {
-          const parts = rf.split('::');
-          const td = el('td');
-          td.appendChild(realmPathEl(parts[0]));
-          if (parts[1]) td.append('::' + parts[1]);
-          cbody.appendChild(el('tr', {}, td, el('td', {}, fmtNum(c))));
-        }
-        ctbl.appendChild(cbody); body.appendChild(ctbl);
-      }
-      // Deployed packages
-      if (pkgs.length) {
-        body.appendChild(el('div', { className: 'section-title' }, 'deployed packages (' + pkgs.length + ')'));
-        const ptbl = el('table');
-        for (const p of pkgs) {
-          const pathTd = el('td', {}, realmPathEl(p.path, p.network));
-          if (p.network) pathTd.appendChild(netBadgeEl(p.network));
-          const dParked = parkedBadgeEl(p.status);
-          if (dParked) { pathTd.appendChild(document.createTextNode(' ')); pathTd.appendChild(dParked); }
-          ptbl.appendChild(el('tr', {}, pathTd, el('td', {}, p.is_realm ? 'realm' : 'package')));
-        }
-        body.appendChild(ptbl);
-      }
-      // Transactions
-      const shown = data.total > txs.length
-        ? 'transactions (' + fmtNum(txs.length) + ' of ' + fmtNum(data.total) + ' most recent)'
-        : 'transactions (' + fmtNum(txs.length) + ')';
-      body.appendChild(el('div', { className: 'section-title', style: { marginTop: '24px' } }, shown));
-      const tbl = el('table');
-      tbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'tx'), el('th', {}, 'type'), el('th', {}, 'detail'), el('th', {}, 'status'), el('th', {}, 'when'))));
-      const tbody = el('tbody');
-      for (const tx of txs) {
-        const when = tx.block_time ? timeEl(tx.block_time) : blockTime[tx.block_height] ? timeEl(blockTime[tx.block_height]) : (tx.block_height === 0 ? 'genesis' : '');
-        const txTd = el('td', {}, txLink(tx.hash, tx.block_height, tx.network));
-        if (tx.network) txTd.appendChild(netBadgeEl(tx.network));
-        tbody.appendChild(el('tr', {},
-          txTd,
-          el('td', {}, typeBadge(tx.type)),
-          el('td', {}, storedTxDetail(tx)),
-          el('td', {}, statusBadge(tx.success)),
-          el('td', { style: { color: 'var(--fg2)', fontSize: '12px' } }, when)
-        ));
-      }
-      tbl.appendChild(tbody); body.appendChild(tbl);
+function renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, urlTab) {
+  ++_detailGen;
+  const gen = _detailGen;
+  destroyDetailCharts();
+  container.textContent = '';
 
-      if (!txs.length) body.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } }, 'no transactions found for this address'));
+  const txs = data.transactions || [];
+  const pkgs = data.packages || [];
+  const blockTime = {};
+  for (const b of (Array.isArray(blocksData) ? blocksData : [])) blockTime[b.height] = b.time;
+
+  // --- the header, which every tab shares ---
+  const titleRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', margin: '16px 0 8px' } },
+    el('h2', { style: { margin: 0 } }, 'Address'));
+  // gno.land's own user page for this address: the same "see on gnoweb" link
+  // realm and package pages have, for the one identity kind that lacked it.
+  titleRow.appendChild(el('a', {
+    href: 'https://gno.land/u/' + addr, target: '_blank', rel: 'noopener',
+    className: 'watch-btn', style: { textDecoration: 'none', fontSize: '12px' },
+  }, 'see on gnoweb ↗'));
+  container.appendChild(titleRow);
+
+  const info = addrInfo(addr);
+  if (info) {
+    const labelRow = el('div', { style: { color: 'var(--accent)', marginBottom: '4px', fontSize: '16px' } }, info.label);
+    if (info.why) { labelRow.title = info.why; }
+    if (info.inferred) labelRow.append(' (inferred)');
+    container.appendChild(labelRow);
+  }
+
+  const addrRow = el('div', { style: { color: 'var(--fg2)', marginBottom: '12px', wordBreak: 'break-all' } });
+  // Larger here than in a table row: this page is *about* this account, so the
+  // icon is the thing to recognise at a glance rather than a marker beside a
+  // link. Same image as everywhere else it appears.
+  const pageIcon = identicon(addr, 28);
+  if (pageIcon) {
+    pageIcon.style.verticalAlign = '-8px';
+    pageIcon.style.marginRight = '8px';
+    addrRow.appendChild(pageIcon);
+  }
+  addrRow.append(addr);
+  addrRow.appendChild(copyButton(addr, 'copy address'));
+  addrRow.append(' ');
+  const lastHeight = txs[0]?.block_height || 0;
+  addrRow.appendChild(watchButton('addresses', addr, lastHeight));
+  container.appendChild(addrRow);
+  _watchTarget = { kind: 'addresses', id: addr, height: lastHeight };
+
+  // Before the stats. "this address has no transactions" and "this address is a
+  // key that signs under another account" look identical otherwise, and only
+  // one of them means the page is empty for a reason.
+  renderSessionIdentity(container, identityData, addr);
+
+  const sessionCount = (sessionsData?.supported && (sessionsData.sessions || []).length) || 0;
+
+  // One stats bar, not two. The second one held figures derived from the rows
+  // on the page (sent, received, gas), which belong with those rows: they move
+  // with the pager and the headline must not.
+  const statsBar = el('div', { className: 'stats-bar' });
+  const stat = (label, value, title) => {
+    const cell = el('div', { className: 'stat' },
+      el('span', { className: 'label' }, label),
+      el('span', { className: 'value' }, value));
+    if (title) cell.title = title;
+    statsBar.appendChild(cell);
+  };
+  // The address's whole history, not this page: data.total counts every row
+  // storage holds for it, and paging must not make the headline wander.
+  stat('transactions', fmtNum(data.total ?? txs.length));
+  stat('deploys', fmtNum(pkgs.length));
+  if (data.oldest_on_page >= 0) {
+    // "oldest here", not "first seen": this is the oldest block on the page
+    // being shown, and paging back would make a "first seen" figure wander.
+    const label = (data.total > txs.length) ? 'oldest here' : 'first seen';
+    const fbEl = el('div', { className: 'stat' }, el('span', { className: 'label' }, label));
+    const fbVal = el('span', { className: 'value' });
+    fbVal.appendChild(blockWithAge(data.oldest_on_page, data.oldest_on_page_time, txs[0]?.network));
+    fbEl.appendChild(fbVal);
+    statsBar.appendChild(fbEl);
+  }
+  if (data.balance) stat('balance', fmtBalanceStr(data.balance));
+  // Only when there are some. A "sessions 0" tile on every one of the chain's
+  // accounts would spend a headline slot on a fact true of almost all of them.
+  // It stays in the headline now that the table itself is a tab: "this account
+  // delegates" has to be visible from every tab, and this is the line that says
+  // so once the seven-row table no longer sits above everything.
+  if (sessionCount) stat('sessions', fmtNum(sessionCount), 'delegated signing keys, on the sessions tab');
+  container.appendChild(statsBar);
+
+  // --- what the page's own rows say, derived once and shared by two tabs ---
+  //
+  // These come from storage as flat {type, caller, detail} rather than from the
+  // indexer as nested messages, because the indexer cannot serve an address page
+  // at chain scale: eight of the nine busiest accounts on sapphire returned 500
+  // after twelve seconds. Storage answers instantly and pages properly.
+  //
+  // The one thing lost with the message internals is the storage-deposit
+  // breakdown, which lives in transaction events and is not recorded per
+  // address. The transaction detail page still shows it in full.
+  const d = { sentTo: {}, recvFrom: {}, calledRealms: {}, sentAmount: 0, recvAmount: 0, sends: 0, recvs: 0, gasUsed: 0, gasFee: 0 };
+  for (const tx of txs) {
+    d.gasUsed += tx.gas_used || 0;
+    d.gasFee += tx.gas_fee || 0;
+    if (tx.type === 'BankMsgSend') {
+      // detail is "<to> <amount>", the shape FilteredTransactions builds.
+      const [to, amount] = (tx.detail || '').split(' ');
+      const value = parseInt((amount || '').match(/^(\d+)/)?.[1] || '0', 10);
+      if (tx.caller === addr) { d.sentTo[to] = (d.sentTo[to] || 0) + 1; d.sends++; d.sentAmount += value; }
+      if (to === addr) { d.recvFrom[tx.caller] = (d.recvFrom[tx.caller] || 0) + 1; d.recvs++; d.recvAmount += value; }
+    } else if (tx.type === 'MsgCall' && tx.caller === addr) {
+      d.calledRealms[tx.detail] = (d.calledRealms[tx.detail] || 0) + 1;
+    }
+  }
+
+  // --- the strip ---
+  const spec = [
+    { id: 'overview', build: (pane) => renderAddressOverview(pane, addr, data, txs, d) },
+    { id: 'transactions', count: data.total ?? txs.length, build: (pane) => renderAddressTxs(pane, txs, data, blockTime, d) },
+    // Deliberately uncounted, like the realm page's defi tab and for the same
+    // reason: the number would need the fetch that opening the tab is what
+    // pays for, so counting it here would undo the deferral.
+    { id: 'holdings', build: (pane) => loadDefiInto(addressDefiCtx(addr, pane), pane, gen) },
+    { id: 'deploys', count: pkgs.length, when: pkgs.length > 0, build: (pane) => renderAddressDeploys(pane, pkgs) },
+    { id: 'sessions', count: sessionCount, when: sessionCount > 0, build: (pane) => renderSessions(pane, sessionsData) },
+    { id: 'achievements', build: (pane) => loadAddressAchievements(addr, pane) },
+  ].filter(t => t.when === undefined || t.when);
+
+  const names = spec.map(t => t.id);
+  // Read from the URL, not from the `urlTab` route() captured, because apiSWR
+  // paints twice: a reader who switches tab during the cached pass would be
+  // thrown back to the default when the fresh one lands. The tab click writes
+  // the URL, so the URL is the state that survives.
+  const requested = urlParam('tab') || urlTab;
+  const activeTab = names.includes(requested) ? requested : 'overview';
+
+  const strip = el('div', { className: 'tabs' });
+  const panes = el('div');
+  const built = {};
+  for (const t of spec) {
+    const pane = el('div', { style: { display: t.id === activeTab ? '' : 'none' } });
+    pane.setAttribute('data-pane', t.id);
+    const tab = el('div', { className: 'tab' + (t.id === activeTab ? ' active' : '') });
+    tab.setAttribute('data-tab', t.id);
+    tab.appendChild(ADDRESS_TAB_ICONS[t.id]());
+    tab.append(t.id);
+    if (t.count) tab.appendChild(el('span', { className: 'tab-count' }, '(' + fmtNum(t.count) + ')'));
+    const open = () => {
+      strip.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      tab.classList.add('active');
+      panes.querySelectorAll(':scope > [data-pane]').forEach(p => {
+        p.style.display = p.getAttribute('data-pane') === t.id ? '' : 'none';
+      });
+      // In the URL like every other tab on this site, so a reload and a shared
+      // link both land on the pane the sender was looking at.
+      urlSetParam('tab', t.id === 'overview' ? '' : t.id);
+      if (!built[t.id]) { built[t.id] = true; t.build(pane); }
+    };
+    tab.addEventListener('click', open);
+    strip.appendChild(tab);
+    panes.appendChild(pane);
+    if (t.id === activeTab) { built[t.id] = true; t.build(pane); }
+  }
+  container.appendChild(strip);
+  container.appendChild(panes);
+}
+
+// The overview: what this account does, in one screen.
+//
+// The three ranked tables sit side by side rather than stacked. They are short,
+// they answer three variants of one question ("who and what does it deal with"),
+// and stacked they were three scrolls to compare.
+function renderAddressOverview(pane, addr, data, txs, d) {
+  if (!txs.length) {
+    pane.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } },
+      'nothing indexed for this address yet: no calls, sends, runs or deploys.'));
+    return;
+  }
+
+  // The figures derived from the rows on the page, kept apart from the headline
+  // above: these move with the pager and say so.
+  const derived = el('div', { className: 'stats-bar', style: { borderBottom: 'none', paddingBottom: '0' } });
+  let any = false;
+  const add = (label, value, title) => {
+    any = true;
+    const cell = el('div', { className: 'stat' },
+      el('span', { className: 'label' }, label), el('span', { className: 'value' }, value));
+    if (title) cell.title = title;
+    derived.appendChild(cell);
+  };
+  if (d.sends > 0) {
+    add('sent', fmtNum(d.sends));
+    add('total sent', fmtNum(Math.floor(d.sentAmount / 1000000)) + ' GNOT');
+    add('unique receivers', fmtNum(Object.keys(d.sentTo).length));
+  }
+  if (d.recvs > 0) {
+    add('received', fmtNum(d.recvs));
+    add('total received', fmtNum(Math.floor(d.recvAmount / 1000000)) + ' GNOT');
+    add('unique senders', fmtNum(Object.keys(d.recvFrom).length));
+  }
+  if (d.gasUsed > 0) {
+    add('gas used', fmtNum(d.gasUsed));
+    add('gas fees', fmtNum(Math.floor(d.gasFee / 1000000 * 100) / 100) + ' GNOT');
+  }
+  if (any) {
+    pane.appendChild(derived);
+    if ((data.total ?? txs.length) > txs.length) {
+      pane.appendChild(el('div', { className: 'section-sub', style: { marginTop: '6px' } },
+        'over the ' + fmtNum(txs.length) + ' most recent transactions, of '
+        + fmtNum(data.total) + ' in all. the headline above counts every one.'));
+    }
+  }
+
+  // What this account does, over time, split by message kind. The tables below
+  // rank *who* and *what*; none of them says when, and "active for a week two
+  // months ago" and "active every day since" produce identical tables.
+  const buckets = bucketCounts(txs, t => t.block_time, t => t.type || 'tx');
+  if (buckets && txs.length >= CHART_MIN_POINTS) {
+    // Every type gets a series, not a top-N: the message vocabulary is fixed and
+    // short, so there is nothing to fold away and folding would hide the rare
+    // one that is the interesting row. Ordered biggest first so the palette is
+    // stable across pages.
+    const names = buckets.series.map(x => x.name)
+      .sort((x, y) => seriesTotal(buckets, y) - seriesTotal(buckets, x));
+    const note = [fmtNum(txs.length) + ' transactions plotted'];
+    if ((data.total ?? txs.length) > txs.length) note.push('this page only, of ' + fmtNum(data.total) + ' in all');
+    if (buckets.dropped) note.push(fmtNum(buckets.dropped) + ' with no block time, not plotted');
+    detailChart(pane, _detailCharts, {
+      title: 'activity, per ' + buckets.unit,
+      note: note.join(' · '),
+      data: {
+        labels: buckets.labels,
+        datasets: names.map((n, i) => ({
+          label: n,
+          data: seriesData(buckets, n),
+          backgroundColor: SERIES_PALETTE[i % SERIES_PALETTE.length] + 'aa',
+          borderColor: SERIES_PALETTE[i % SERIES_PALETTE.length],
+          borderWidth: 1,
+        })),
+      },
+      scales: {
+        x: chartAxis({ stacked: true }),
+        y: chartAxis({ stacked: true, integer: true, title: 'transactions' }),
+      },
     });
-  } catch (err) { container.textContent = ''; container.appendChild(el('p', { style: { color: 'var(--red)' } }, 'Error: ' + err.message)); }
+  }
+
+  const cols = el('div', { className: 'addr-cols' });
+  const rank = (title, entries, head, cell, minCount) => {
+    const sorted = Object.entries(entries).sort((a, b) => b[1] - a[1]);
+    if (!sorted.length || sorted[0][1] < (minCount || 1)) return;
+    const box = el('div');
+    box.appendChild(el('div', { className: 'section-title', style: { marginTop: 0 } }, title));
+    const tbl = el('table');
+    tbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, head), el('th', {}, 'txs'))));
+    const body = el('tbody');
+    for (const [key, n] of sorted.slice(0, 10)) {
+      if (n < (minCount || 1)) break;
+      body.appendChild(el('tr', {}, el('td', {}, cell(key)), el('td', {}, fmtNum(n))));
+    }
+    tbl.appendChild(body);
+    box.appendChild(tbl);
+    cols.appendChild(box);
+  };
+  // A single counterparty seen once is not a ranking, which is why the two
+  // transfer tables want a second transaction before they are worth a column.
+  rank('top receivers', d.sentTo, 'address', (a) => addrLink(a), 2);
+  rank('top senders', d.recvFrom, 'address', (a) => addrLink(a), 2);
+  rank('top called realms', d.calledRealms, 'realm::func', (rf) => {
+    const parts = rf.split('::');
+    const td = el('span', {}, realmPathEl(parts[0]));
+    if (parts[1]) td.append('::' + parts[1]);
+    return td;
+  });
+  if (cols.childNodes.length) pane.appendChild(cols);
+}
+
+// The transactions tab: the same table as before, paged over the window the
+// endpoint already returned rather than drawn 200 rows at a time.
+function renderAddressTxs(pane, txs, data, blockTime, d) {
+  if (!txs.length) {
+    pane.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } },
+      'no transactions found for this address'));
+    return;
+  }
+  const head = el('div', { className: 'section-sub' });
+  head.append((data.total ?? txs.length) > txs.length
+    ? 'the ' + fmtNum(txs.length) + ' most recent, of ' + fmtNum(data.total) + ' in all.'
+    : 'every transaction this index holds for the address.');
+  pane.appendChild(head);
+
+  // The table element is built once and only its rows are swapped.
+  //
+  // Not for correctness: the filter and the sort both persist through the URL,
+  // so they come back even on a table rebuilt from scratch, and the test beside
+  // this pins that behaviour rather than this mechanism. It is for what the
+  // reader sees. enhanceTables hangs the filter box and the export buttons
+  // *beside* the table, so rebuilding the table destroys and recreates both on
+  // every page turn: the controls flicker, a half-typed filter loses focus, and
+  // the whole enhancement pass reruns for a change that is fifty rows.
+  //
+  // The rows still have to carry the state, which they do the ordinary way:
+  // fresh rows arrive without `data-tstate`, and the observer re-applies.
+  const tbl = el('table');
+  tbl.appendChild(el('thead', {}, el('tr', {},
+    el('th', {}, 'tx'), el('th', {}, 'type'), el('th', {}, 'detail'),
+    el('th', {}, 'status'), el('th', {}, 'when'))));
+  const body = el('tbody');
+  tbl.appendChild(body);
+  pane.appendChild(tbl);
+  // Outside the table's own parent, so redrawing the pager cannot disturb the
+  // filter and export controls enhanceTables puts there.
+  const pagerHost = el('div');
+  pane.appendChild(pagerHost);
+
+  let page = 0;
+  const draw = () => {
+    body.textContent = '';
+    for (const tx of txs.slice(page * ADDRESS_TX_ROWS, (page + 1) * ADDRESS_TX_ROWS)) {
+      const when = tx.block_time ? timeEl(tx.block_time)
+        : blockTime[tx.block_height] ? timeEl(blockTime[tx.block_height])
+        : (tx.block_height === 0 ? 'genesis' : '');
+      const txTd = el('td', {}, txLink(tx.hash, tx.block_height, tx.network));
+      if (tx.network) txTd.appendChild(netBadgeEl(tx.network));
+      body.appendChild(el('tr', {},
+        txTd,
+        el('td', {}, typeBadge(tx.type)),
+        el('td', {}, storedTxDetail(tx)),
+        el('td', {}, statusBadge(tx.success)),
+        el('td', { style: { color: 'var(--fg2)', fontSize: '12px' } }, when)));
+    }
+    pagerHost.textContent = '';
+    // Over the loaded window, not over data.total: the pager can only reach
+    // rows the page already has, and offering a page number it cannot fill
+    // would be a control that does nothing.
+    pager(pagerHost, page, txs.length, (n) => { page = n; draw(); });
+  };
+  draw();
+}
+
+function renderAddressDeploys(pane, pkgs) {
+  pane.appendChild(el('div', { className: 'section-sub' },
+    fmtNum(pkgs.length) + ' package' + (pkgs.length === 1 ? '' : 's') + ' deployed from this address.'));
+  const tbl = el('table');
+  tbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'path'), el('th', {}, 'kind'))));
+  const body = el('tbody');
+  for (const p of pkgs) {
+    const pathTd = el('td', {}, realmPathEl(p.path, p.network));
+    if (p.network) pathTd.appendChild(netBadgeEl(p.network));
+    const parked = parkedBadgeEl(p.status);
+    if (parked) { pathTd.appendChild(document.createTextNode(' ')); pathTd.appendChild(parked); }
+    body.appendChild(el('tr', {}, pathTd, el('td', {}, p.is_realm ? 'realm' : 'package')));
+  }
+  tbl.appendChild(body);
+  pane.appendChild(tbl);
 }
 
 
@@ -15196,7 +15302,15 @@ let _defiGen = -1;
 function loadRealmDefi(path, detail, gen) {
   if (_defiGen === gen) return;
   _defiGen = gen;
-  const into = clear('tab-defi');
+  loadDefiInto(realmDefiCtx(path), clear('tab-defi'), gen);
+}
+
+// loadDefiInto fetches and draws one account's two ledgers, for whichever page
+// asked. The realm tab and the address page's holdings tab differ only in the
+// context; the fetch, the all-networks refusal, the generation guard and the
+// error state are the same on both, and were worth having once rather than
+// twice.
+function loadDefiInto(ctx, into, gen) {
   // Denominated figures, so the blended view has nothing to show: adding two
   // chains' ugnot would invent a number. Same refusal the storage tab makes.
   if (getNetwork() === 'all') {
@@ -15209,7 +15323,7 @@ function loadRealmDefi(path, detail, gen) {
   (async () => {
     let d;
     try {
-      d = await api(defiPath(path, 0));
+      d = await api(defiPath(ctx, 0));
     } catch (err) {
       if (gen !== _detailGen) return;
       into.textContent = '';
@@ -15218,7 +15332,7 @@ function loadRealmDefi(path, detail, gen) {
     }
     if (gen !== _detailGen) return;
     into.textContent = '';
-    renderRealmDefi(into, d, path);
+    renderRealmDefi(into, d, ctx);
   })();
 }
 
@@ -15248,8 +15362,34 @@ const DEFI_TABLE_ROWS = 250;
 // and reopening the tab should start it short again.
 let _defiTableRows = DEFI_TABLE_ROWS;
 
-function defiPath(path, offset) {
-  return 'realm/defi/' + path.replace('gno.land/', '')
+// A defi context says which account the renderer below is drawing, where to
+// page it from, and what a redraw replaces.
+//
+// The realm page's defi tab and the address page's holdings tab are the same
+// renderer over the same payload: two ledgers for one address, which for a realm
+// happens to be derived from a package path and for an account is the account.
+// What differs is only the endpoint and the element, so those are what travels.
+// A realm path does not, because an account has none.
+function realmDefiCtx(path) {
+  return {
+    path: path,
+    base: 'realm/defi/' + path.replace('gno.land/', ''),
+    into: () => clear('tab-defi'),
+  };
+}
+
+// The address page builds its panes rather than declaring them in markup, so it
+// hands the element over instead of an id to look up.
+function addressDefiCtx(addr, pane) {
+  return {
+    path: '',
+    base: 'address/' + addr + '/holdings',
+    into: () => { pane.textContent = ''; return pane; },
+  };
+}
+
+function defiPath(ctx, offset) {
+  return ctx.base
     + '?flows_limit=' + DEFI_FLOWS_PAGE + (offset ? '&flows_offset=' + offset : '')
     + '&token_flows_limit=' + DEFI_FLOWS_PAGE;
 }
@@ -15260,13 +15400,18 @@ function defiPath(path, offset) {
 // token table through defiPath would re-send every native leg to append a few
 // token rows. Zero is a legitimate totals-only ask on that side, so the balance
 // figures still come back and only the table nobody asked for is left out.
-function defiTokenFlowsPath(path, offset) {
-  return 'realm/defi/' + path.replace('gno.land/', '')
+function defiTokenFlowsPath(ctx, offset) {
+  return ctx.base
     + '?flows_limit=0&token_flows_limit=' + DEFI_FLOWS_PAGE
     + (offset ? '&token_flows_offset=' + offset : '');
 }
 
-function renderRealmDefi(into, d, path) {
+function renderRealmDefi(into, d, ctx) {
+  // A realm owns a banker and a storage-deposit account; a signing account owns
+  // itself. That difference changes three sentences below rather than any of
+  // the arithmetic, and getting one of them wrong would have the page explain a
+  // gap by a cause that does not apply.
+  const isRealm = !!(ctx && ctx.path);
   const flows = d.flows || [];
   const banker = flows.filter(f => f.account === 'banker');
   const tokens = d.tokens || [];
@@ -15287,13 +15432,14 @@ function renderRealmDefi(into, d, path) {
   // reserved for a read that did not happen, because rendering a failed read as
   // "0 GNOT" would be the site asserting something it does not know.
   stat('held', d.balance_known ? fmtBalanceStr(d.balance || '0ugnot') : unknownEl(),
-    'the realm’s own account: ' + d.address);
+    (isRealm ? 'the realm’s own account: ' : 'this account: ') + d.address);
   if (d.storage_deposit_address) {
     stat('storage deposit',
       d.storage_balance_known ? fmtBalanceStr(d.storage_balance || '0ugnot') : unknownEl(),
       'locked against this package’s bytes, refunded when they are freed: ' + d.storage_deposit_address);
   }
-  stat('transfers', fmtNum(d.flows_total || 0), 'bank transfers touching either account');
+  stat('transfers', fmtNum(d.flows_total || 0),
+    isRealm ? 'bank transfers touching either account' : 'bank transfers touching this account');
   if (tokens.length) stat('GRC20 positions', fmtNum(tokens.length));
   into.appendChild(stats);
 
@@ -15311,10 +15457,20 @@ function renderRealmDefi(into, d, path) {
     note.textContent = 'reconstructed from ' + fmtNum(d.flows_total || 0)
       + ' transfer events, and the total lands exactly on what the chain reports, so this history is complete.';
   } else {
+    // Why the two differ, and the answer is not the same on both pages.
+    //
+    // A realm's banker is only ever moved by sendCoins, which emits, so a gap
+    // there means history is missing. A signing account also pays gas and
+    // storage deposits, and both go through SendCoinsUnrestricted, which emits
+    // nothing: the reconstruction is short by exactly that spend, on every
+    // active account, permanently. Offering the realm's explanation here would
+    // send a reader looking for missing transfers that are not missing.
     note.textContent = 'the reconstruction comes to ' + fmtGnotAmount(d.derived_ugnot || 0)
       + ', ' + fmtGnotAmount(Math.abs(gap)) + (gap > 0 ? ' short of' : ' over') + ' what the chain reports. '
       + (d.truncated ? 'The indexer capped the query, so the oldest transfers are missing.'
-        : 'A genesis allocation moves no coins through the bank and emits no event, which is the usual cause.');
+        : isRealm
+          ? 'A genesis allocation moves no coins through the bank and emits no event, which is the usual cause.'
+          : 'Gas and storage deposits leave this account without emitting a transfer event, so a spending account always reads short by what it has paid in fees. A genesis allocation is invisible here for the same reason.');
   }
   into.appendChild(note);
 
@@ -15363,11 +15519,11 @@ function renderRealmDefi(into, d, path) {
     });
   }
 
-  defiFlowGraphEl(into, d, path);
+  defiFlowGraphEl(into, d, ctx);
   const parties = defiCounterpartiesTableEl(d);
   if (parties) into.appendChild(parties);
 
-  if (tokens.length) into.appendChild(defiTokensEl(d, tokens, path));
+  if (tokens.length) into.appendChild(defiTokensEl(d, tokens, ctx));
 
   if (flows.length) {
     into.appendChild(el('div', { className: 'section-title' }, 'native transfers'));
@@ -15392,13 +15548,14 @@ function renderRealmDefi(into, d, path) {
     into.appendChild(tbl);
     if (drawn.length < flows.length) {
       // Held in hand already, so this one is a redraw and not a fetch.
-      into.appendChild(defiShowMoreEl(into, d, path, drawn.length, flows.length));
+      into.appendChild(defiShowMoreEl(into, d, ctx, drawn.length, flows.length));
     } else if (d.flows_total > flows.length) {
-      into.appendChild(defiFlowsPagerEl(into, d, path, flows));
+      into.appendChild(defiFlowsPagerEl(into, d, ctx, flows));
     }
   } else {
     into.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } },
-      'no coin has ever moved through this realm’s account'));
+      isRealm ? 'no coin has ever moved through this realm’s account'
+              : 'no coin has ever moved through this account'));
   }
 }
 
@@ -15408,7 +15565,7 @@ function renderRealmDefi(into, d, path) {
 // back to the server for legs it does not have, this one only unfolds rows the
 // page is already holding, so it is instant and cannot fail. Saying "draw" and
 // not "load" is what keeps the two from reading as the same button.
-function defiShowMoreEl(into, d, path, shown, held) {
+function defiShowMoreEl(into, d, ctx, shown, held) {
   const more = Math.min(held - shown, DEFI_TABLE_ROWS);
   const wrap = el('div', { className: 'detail-chart-note' });
   wrap.appendChild(el('span', {},
@@ -15418,7 +15575,7 @@ function defiShowMoreEl(into, d, path, shown, held) {
     'draw ' + fmtNum(more) + ' more');
   btn.onclick = () => {
     _defiTableRows += DEFI_TABLE_ROWS;
-    renderRealmDefi(clear('tab-defi'), d, path);
+    renderRealmDefi(ctx.into(), d, ctx);
   };
   wrap.appendChild(btn);
   return wrap;
@@ -15436,7 +15593,7 @@ function defiShowMoreEl(into, d, path, shown, held) {
 // what the local coin_transfers ledger is for; until it exists, pressing this
 // twice on a large realm is two full derivations, and the response cache is the
 // only thing keeping it from being two per reader.
-function defiFlowsPagerEl(into, d, path, flows) {
+function defiFlowsPagerEl(into, d, ctx, flows) {
   const remaining = d.flows_total - flows.length;
   const wrap = el('div', { className: 'detail-chart-note' });
   wrap.appendChild(el('span', {},
@@ -15449,7 +15606,7 @@ function defiFlowsPagerEl(into, d, path, flows) {
     btn.textContent = 'loading…';
     let next;
     try {
-      next = await api(defiPath(path, flows.length));
+      next = await api(defiPath(ctx, flows.length));
     } catch (err) {
       btn.disabled = false;
       btn.textContent = 'could not load: ' + err.message;
@@ -15459,7 +15616,7 @@ function defiFlowsPagerEl(into, d, path, flows) {
     // where the second stopped instead of re-fetching the same offset.
     d.flows = flows.concat(next.flows || []);
     into.textContent = '';
-    renderRealmDefi(into, d, path);
+    renderRealmDefi(into, d, ctx);
   };
   wrap.appendChild(btn);
   return wrap;
@@ -15497,7 +15654,7 @@ function defiNodeLabel(addr) {
   return (info && info.label) || truncAddr(addr);
 }
 
-function defiFlowGraphEl(into, d, path) {
+function defiFlowGraphEl(into, d, ctx) {
   const parties = d.counterparties || [];
   if (!parties.length) return;
 
@@ -15516,7 +15673,7 @@ function defiFlowGraphEl(into, d, path) {
       // here, and a refetch would cost the server another full derivation of
       // the realm's history (see defiFlowsPagerEl).
       into.textContent = '';
-      renderRealmDefi(into, d, path);
+      renderRealmDefi(into, d, ctx);
     });
     seg.appendChild(b);
   });
@@ -15828,7 +15985,7 @@ function defiTokenCharts(section, d, tokens) {
 
 // defiTokensEl is the GRC20 half: what the contract holds in tokens, and the
 // caveat that makes those figures a floor rather than a count.
-function defiTokensEl(d, tokens, path) {
+function defiTokensEl(d, tokens, ctx) {
   const section = el('div');
   section.appendChild(el('div', { className: 'section-title' }, 'GRC20 positions'));
   defiTokenCharts(section, d, tokens);
@@ -15864,7 +16021,7 @@ function defiTokensEl(d, tokens, path) {
       + d.token_ledger_from.slice(0, 10)
       + '. Anything received before then is not in it, so these are floors rather than balances.'));
   }
-  defiTokenFlowsEl(section, d, tokens, path);
+  defiTokenFlowsEl(section, d, tokens, ctx);
   return section;
 }
 
@@ -15875,7 +16032,7 @@ function defiTokensEl(d, tokens, path) {
 // The positions table says what the realm holds and the charts say when it
 // moved; neither names a counterparty, which on a treasury is usually the
 // question after "is it growing".
-function defiTokenFlowsEl(section, d, tokens, path) {
+function defiTokenFlowsEl(section, d, tokens, ctx) {
   const flows = d.token_flows || [];
   if (!flows.length) return;
   // Fungibility is a property of the position, not of the leg, and it decides
@@ -15920,7 +16077,7 @@ function defiTokenFlowsEl(section, d, tokens, path) {
   // count it is actually paging through.
   const total = d.token_flows_total || 0;
   if (total > flows.length) {
-    section.appendChild(defiTokenFlowsPagerEl(d, flows, total, path));
+    section.appendChild(defiTokenFlowsPagerEl(d, flows, total, ctx));
   }
 }
 
@@ -15929,7 +16086,7 @@ function defiTokenFlowsEl(section, d, tokens, path) {
 // had and no way to see the rest. r/gnoswap/pool and r/gnoswap/router both sit
 // exactly on that cap, which is indistinguishable from a complete history
 // without a total beside it.
-function defiTokenFlowsPagerEl(d, flows, total, path) {
+function defiTokenFlowsPagerEl(d, flows, total, ctx) {
   const remaining = total - flows.length;
   const wrap = el('div', { className: 'detail-chart-note' });
   wrap.appendChild(el('span', {},
@@ -15942,7 +16099,7 @@ function defiTokenFlowsPagerEl(d, flows, total, path) {
     btn.textContent = 'loading\u2026';
     let next;
     try {
-      next = await api(defiTokenFlowsPath(path, flows.length));
+      next = await api(defiTokenFlowsPath(ctx, flows.length));
     } catch (err) {
       btn.disabled = false;
       btn.textContent = 'could not load: ' + err.message;
@@ -15953,8 +16110,7 @@ function defiTokenFlowsPagerEl(d, flows, total, path) {
     // that answered this asked for flows_limit=0, so its `flows` is empty by
     // design and overwriting the native table with it would blank it.
     d.token_flows = flows.concat(next.token_flows || []);
-    const into = clear('tab-defi');
-    renderRealmDefi(into, d, path);
+    renderRealmDefi(ctx.into(), d, ctx);
   };
   wrap.appendChild(btn);
   return wrap;

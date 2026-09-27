@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { test } from '@playwright/test';
 
-import { HUB_ROUTE, BUSY_CALLER, LIBRARY_ROUTE } from '../harness/fixture.mjs';
+import { HUB_ROUTE, BUSY_CALLER, LIBRARY_ROUTE, GRC20_FUNDER, HUB_CREATOR } from '../harness/fixture.mjs';
 import { settle } from './helpers.js';
 
 // Screenshots for review, captured against the seeded fixture.
@@ -107,7 +107,12 @@ const PAGES = [
   ['realm-storage', `/realm/${HUB_ROUTE}?network=alpha&tab=storage`],
   ['realm-calls', `/realm/${HUB_ROUTE}?network=alpha&tab=calls`],
   ['realm-events', `/realm/${HUB_ROUTE}?network=alpha&tab=events`],
+  // One per tab: the strip is the page now, and a shot of whichever one happens
+  // to be the default would show a change to none of the others.
   ['address-detail', `/address/${BUSY_CALLER}`],
+  ['address-transactions', `/address/${BUSY_CALLER}?tab=transactions`],
+  ['address-holdings', `/address/${GRC20_FUNDER}?network=alpha&tab=holdings`],
+  ['address-deploys', `/address/${HUB_CREATOR}?network=alpha&tab=deploys`],
   ['address-achievements', `/address/${BUSY_CALLER}?tab=achievements`],
 ];
 

@@ -1027,6 +1027,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/achievements", a.HandleAchievements)
 	mux.HandleFunc("GET /api/achievements/{slug}", a.HandleAchievement)
 	mux.HandleFunc("GET /api/address/{addr}/achievements", a.HandleAddressAchievements)
+	mux.HandleFunc("GET /api/address/{addr}/holdings", a.HandleAddressHoldings)
 	mux.HandleFunc("GET /api/directory/people", a.HandleDirectoryPeople)
 }
 

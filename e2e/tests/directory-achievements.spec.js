@@ -119,8 +119,8 @@ test('an address page has an achievements tab with earned and locked badges', as
   await page.goto(`/address/${BUSY_CALLER}`);
   await settle(page);
 
-  // The activity pane is what this page has always shown, and it stays first.
-  await expect(page.locator('#address-detail-content .tabs .tab.active')).toHaveText(/activity/);
+  // Overview is the landing tab, and it stays first.
+  await expect(page.locator('#address-detail-content .tabs .tab.active')).toHaveText(/overview/);
 
   await page.locator('#address-detail-content .tab', { hasText: 'achievements' }).click();
   await settle(page);
@@ -138,12 +138,11 @@ test('an address page has an achievements tab with earned and locked badges', as
   expect(unexpected(seen.consoleErrors)).toEqual([]);
 });
 
-// The split put everything below the stats bar into an activity pane, and the
-// two things that are passed the container rather than appending to it were
-// easy to miss: the per-hour chart and the delegated-keys table. The chart
-// rendered *under* the achievements grid, which is exactly what a tab is for
-// preventing; the keys table is identity and has to be visible from both.
-test('the activity chart stays in the activity pane', async ({ page }) => {
+// Each pane owns its own content, and the thing that made that easy to get
+// wrong is the two renderers that take a container rather than appending to
+// one: the per-hour chart and the delegated-keys table. The chart once drew
+// *under* the achievements grid, which is exactly what a tab is for preventing.
+test('the activity chart stays on the overview tab', async ({ page }) => {
   await waitForBadges(page);
   await page.goto(`/address/${BUSY_CALLER}`);
   await settle(page);
@@ -156,16 +155,16 @@ test('the activity chart stays in the activity pane', async ({ page }) => {
   await expect(chart.first(), 'the activity chart leaked into the achievements tab').toBeHidden();
 });
 
-test('the achievements tab survives a reload, and the activity pane comes back', async ({ page }) => {
+test('the achievements tab survives a reload, and the overview comes back', async ({ page }) => {
   await waitForBadges(page);
   await page.goto(`/address/${BUSY_CALLER}?tab=achievements`);
   await settle(page);
   await expect(page.locator('#address-detail-content .ach-grid').first()).toBeVisible();
 
-  await page.locator('#address-detail-content .tab', { hasText: 'activity' }).click();
+  await page.locator('#address-detail-content .tab', { hasText: 'overview' }).click();
   await settle(page);
   await expect(page).not.toHaveURL(/tab=/);
-  await expect(page.locator('#address-detail-content table').first()).toBeVisible();
+  await expect(page.locator('#address-detail-content canvas').first()).toBeVisible();
 });
 
 test('the unknown-badge case is a 400, not an empty list', async ({ page }) => {
