@@ -82,6 +82,12 @@ var NetworkScopedTables = []string{
 	// dates would make every one of them look like a returning actor and the
 	// "new this week" feed permanently empty.
 	"first_seen",
+	// discover_events is built from first_seen and the tables above it, so it
+	// inherits their reset rule and adds one of its own: its ids are
+	// deterministic and its consumers dedupe on them, so a dead chain's rows
+	// surviving a reset would keep a feed republishing events for blocks that
+	// no longer exist, with ids no rebuild will ever produce again.
+	"discover_events",
 }
 
 // DeleteNetworkData removes every row belonging to a network, in one transaction.

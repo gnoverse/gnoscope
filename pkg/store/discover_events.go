@@ -1,0 +1,321 @@
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// discover_events: the Discover feed, built on the rollup tick rather than
+// queried per request.
+//
+// Nothing here is a live query, and that is a decision rather than a caching
+// habit. One of the twelve kinds needs two indexer calls and an RPC round trip
+// per request, so a page built live would be as slow as its worst kind and
+// would answer differently on two refreshes a second apart. Building on the
+// tick also gives a feed reader a stable generation to dedupe against, which is
+// the difference between "three new items" and "everything again".
+//
+// Not to be confused with discover.go in this package, which is the /apps
+// directory: the chain proposing entries for a curated list. Same word, two
+// features, and this one is the event feed.
+
+// DiscoverEvent is one row.
+//
+// Facts and Layers are the canonical pair and everything a reader sees is
+// derived from them. Facts is the closed set of values the SQL produced;
+// Layers is what happened, what it means and why it matters, generated from
+// Facts and never carrying anything absent from it (pkg/discover enforces that
+// mechanically). Headline and Explanation are projections computed on read, so
+// there is exactly one writer for the text.
+type DiscoverEvent struct {
+	Network    string          `json:"network"`
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	At         string          `json:"at"`
+	Height     int64           `json:"height"`
+	Actor      string          `json:"actor,omitempty"`
+	Target     string          `json:"target,omitempty"`
+	Namespace  string          `json:"namespace,omitempty"`
+	Facts      json.RawMessage `json:"facts"`
+	Layers     json.RawMessage `json:"layers"`
+	EvidenceTx string          `json:"evidence_tx,omitempty"`
+	FirstEver  bool            `json:"first_ever"`
+	Reach      int64           `json:"reach"`
+	Magnitude  float64         `json:"magnitude"`
+	ScoreBase  float64         `json:"score_base"`
+	BuiltAt    string          `json:"built_at"`
+}
+
+// EventID builds the deterministic id.
+//
+// <network>/<kind>/<subject>/<ordinal>, where subject is the transaction hash
+// when there is one and the thing itself otherwise (an address, a package
+// path, a day for a spike). Ordinal separates two events of one kind from one
+// transaction: the message index, or 0.
+//
+// Deterministic and never a sequence, because the id is the only thing a
+// consumer can dedupe on. A rebuild of this table has to produce byte-identical
+// ids or every feed subscriber re-notifies and every stored pick in the
+// publishing pipeline points at a row that no longer exists. That is also why
+// nothing here is derived from row order, insertion time or a counter.
+//
+// The separator is "/" and the subject is not escaped, because a tx hash is
+// base64 and a package path contains slashes already: the id is an opaque key
+// for equality and never parsed back into its parts. Anything that needs the
+// kind or the height reads the column.
+func EventID(network, kind, subject string, ordinal int) string {
+	return fmt.Sprintf("%s/%s/%s/%d", network, kind, subject, ordinal)
+}
+
+// UpsertDiscoverEvents writes events, skipping any id already present.
+//
+// DO NOTHING rather than DO UPDATE: the table is append-only by design, and a
+// row whose id already exists is by construction the same event, because the id
+// is a function of the event's own identity. Updating would mean a rebuild
+// could silently rewrite history that a subscriber has already read.
+//
+// Returns the number of rows actually inserted, which is the number of new
+// events and the figure worth logging on a tick.
+func (d *DB) UpsertDiscoverEvents(events []DiscoverEvent) (int, error) {
+	if len(events) == 0 {
+		return 0, nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO discover_events
+			(network, id, kind, at, height, actor, target, namespace,
+			 facts, layers, evidence_tx, first_ever, reach, magnitude, score_base, built_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (network, id) DO NOTHING`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	inserted := 0
+	for _, e := range events {
+		if e.Network == "" || e.ID == "" || e.At == "" {
+			return 0, fmt.Errorf("discover event needs network, id and at: %+v", e)
+		}
+		res, err := stmt.Exec(e.Network, e.ID, e.Kind, e.At, e.Height, e.Actor, e.Target,
+			e.Namespace, jsonOrEmpty(e.Facts), jsonOrEmpty(e.Layers), e.EvidenceTx,
+			boolToInt(e.FirstEver), e.Reach, e.Magnitude, e.ScoreBase, e.BuiltAt)
+		if err != nil {
+			return 0, fmt.Errorf("insert %s: %w", e.ID, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			inserted++
+		}
+	}
+	return inserted, tx.Commit()
+}
+
+// DiscoverQuery is the filter set the feed offers.
+//
+// Every field is optional. Cursor is the keyset position returned by the
+// previous page and is the only way to page: OFFSET over a table that grows at
+// the head would skip or repeat rows between two requests, which on a feed
+// reads as events vanishing.
+type DiscoverQuery struct {
+	Network   string
+	Kinds     []string
+	Namespace string
+	Actor     string
+	Since     string // inclusive lower bound on at
+	Cursor    string // "at|id" from the previous page
+	Limit     int
+}
+
+// DiscoverLimitMax is the hard cap on a page.
+//
+// A cap rather than a default that callers may raise: this endpoint's rows
+// carry two blocks of generated prose each, so an unbounded limit is a
+// multi-megabyte response, and the one thing a feed must not do is time out.
+const DiscoverLimitMax = 200
+
+// DiscoverEvents returns one page, newest first, with the cursor for the next.
+//
+// The second return is empty when the page is the last one. A caller that pages
+// until it comes back empty reads the whole feed exactly once, with no row seen
+// twice and none skipped, even while the tick is inserting at the head.
+func (d *DB) DiscoverEvents(q DiscoverQuery) ([]DiscoverEvent, string, error) {
+	if q.Network == "" {
+		return nil, "", fmt.Errorf("discover is per chain: a network is required")
+	}
+	if q.Limit <= 0 || q.Limit > DiscoverLimitMax {
+		q.Limit = 50
+	}
+
+	where := []string{"network = ?"}
+	args := []any{q.Network}
+
+	if len(q.Kinds) > 0 {
+		where = append(where, "kind IN ("+strings.TrimSuffix(strings.Repeat("?,", len(q.Kinds)), ",")+")")
+		for _, k := range q.Kinds {
+			args = append(args, k)
+		}
+	}
+	if q.Namespace != "" {
+		where = append(where, "namespace = ?")
+		args = append(args, q.Namespace)
+	}
+	if q.Actor != "" {
+		where = append(where, "actor = ?")
+		args = append(args, q.Actor)
+	}
+	if q.Since != "" {
+		where = append(where, "at >= ?")
+		args = append(args, q.Since)
+	}
+	// Keyset, on the same (at DESC, id DESC) the index is built for. The tuple
+	// comparison is spelled out rather than written as a row value because
+	// SQLite's row-value support is newer than the oldest build this has to run
+	// on, and a silent fallback to a sort would only show up under load.
+	if at, id, ok := splitCursor(q.Cursor); ok {
+		where = append(where, "(at < ? OR (at = ? AND id < ?))")
+		args = append(args, at, at, id)
+	}
+
+	// One more than asked for, so "is there a next page" is answered without a
+	// second COUNT over the same predicate.
+	args = append(args, q.Limit+1)
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.db.Query(`
+		SELECT network, id, kind, at, height, actor, target, namespace,
+		       facts, layers, evidence_tx, first_ever, reach, magnitude, score_base, built_at
+		  FROM discover_events
+		 WHERE `+strings.Join(where, " AND ")+`
+		 ORDER BY at DESC, id DESC
+		 LIMIT ?`, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+
+	out := []DiscoverEvent{}
+	for rows.Next() {
+		var e DiscoverEvent
+		var facts, layers string
+		var firstEver int
+		if err := rows.Scan(&e.Network, &e.ID, &e.Kind, &e.At, &e.Height, &e.Actor, &e.Target,
+			&e.Namespace, &facts, &layers, &e.EvidenceTx, &firstEver, &e.Reach,
+			&e.Magnitude, &e.ScoreBase, &e.BuiltAt); err != nil {
+			return nil, "", err
+		}
+		e.Facts = json.RawMessage(facts)
+		e.Layers = json.RawMessage(layers)
+		e.FirstEver = firstEver != 0
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+
+	next := ""
+	if len(out) > q.Limit {
+		out = out[:q.Limit]
+		last := out[len(out)-1]
+		next = last.At + "|" + last.ID
+	}
+	return out, next, nil
+}
+
+// DiscoverCounts is the per-kind tally over the same window the page asked for,
+// so the filter chips can show numbers without a second request.
+//
+// Deliberately over the *unfiltered* window: a chip that showed the count after
+// its own filter was applied would read "3" next to a kind the reader is not
+// looking at, which is the one number it must not be.
+func (d *DB) DiscoverCounts(network, since string) (map[string]int, error) {
+	if network == "" {
+		return nil, fmt.Errorf("discover is per chain: a network is required")
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	args := []any{network}
+	q := `SELECT kind, COUNT(*) FROM discover_events WHERE network = ?`
+	if since != "" {
+		q += ` AND at >= ?`
+		args = append(args, since)
+	}
+	q += ` GROUP BY kind`
+
+	rows, err := d.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var kind string
+		var n int
+		if err := rows.Scan(&kind, &n); err != nil {
+			return nil, err
+		}
+		out[kind] = n
+	}
+	return out, rows.Err()
+}
+
+// DiscoverBuiltAt is the generation the stored rows belong to: the newest
+// built_at in the table.
+//
+// The gap between this and the moment a response is written is the page's real
+// staleness, and it is worth showing. A marketing reader who refreshes and sees
+// nothing new deserves to know the tick has not run rather than concluding the
+// chain is quiet.
+func (d *DB) DiscoverBuiltAt(network string) (string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var at sql.NullString
+	err := d.db.QueryRow(`SELECT MAX(built_at) FROM discover_events WHERE network = ?`,
+		network).Scan(&at)
+	if err != nil {
+		return "", err
+	}
+	return at.String, nil
+}
+
+// splitCursor parses "at|id". A malformed cursor is treated as no cursor
+// rather than as an error: it arrives in a URL, so it is attacker-controlled
+// and the worst it should do is start the reader at the top.
+func splitCursor(c string) (at, id string, ok bool) {
+	if c == "" {
+		return "", "", false
+	}
+	i := strings.Index(c, "|")
+	if i <= 0 || i == len(c)-1 {
+		return "", "", false
+	}
+	return c[:i], c[i+1:], true
+}
+
+func jsonOrEmpty(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
