@@ -253,6 +253,47 @@ func TestAFalseLicenceIsNotALicence(t *testing.T) {
 	}
 }
 
+// A package legitimately named after a small number is not a figure. Dropping
+// it would be silent and permanent: the event simply never appears in the feed,
+// and nothing in the output says a package is missing.
+func TestANumberWordThatIsSomethingsNameIsNotAFigure(t *testing.T) {
+	facts := Facts{"package_name": "two", "namespace": "x"}
+	l := Layers{
+		What:    Layer{"MsgAddPackage published gno.land/r/x/two."},
+		Means:   Layer{"Somebody put a new app on the chain, called two."},
+		Matters: Layer{"Anyone can use it now."},
+	}
+	if vs := Ground(facts, l, headwords); len(vs) > 0 {
+		t.Errorf("a package named two was rejected: %s", checks(vs))
+	}
+
+	// And the check still fires when the word is genuinely a count: same
+	// sentence shape, no fact holding that name.
+	bare := Facts{"package_name": "hello", "namespace": "x"}
+	loose := Layers{
+		What:    Layer{"MsgAddPackage published gno.land/r/x/hello."},
+		Means:   Layer{"Somebody put a new app on the chain, called hello."},
+		Matters: Layer{"Two people have used it."},
+	}
+	if vs := Ground(bare, loose, headwords); len(vs) == 0 {
+		t.Error("\"Two people have used it\" passed with no two in the facts")
+	}
+}
+
+// Exact value equality, never substring: otherwise a fact like
+// network="network" would ground almost any word that appears inside it.
+func TestAFactValueGroundsOnlyItselfNotItsSubstrings(t *testing.T) {
+	facts := Facts{"network_label": "mainnet"}
+	l := Layers{
+		What:    Layer{"x"},
+		Means:   Layer{"Something happened."},
+		Matters: Layer{"Nine accounts were involved."},
+	}
+	if vs := Ground(facts, l, headwords); len(vs) == 0 {
+		t.Error("\"Nine\" was grounded by a fact that merely contains those letters")
+	}
+}
+
 // The declared conversions, and the one that is declared as needing a fact.
 func TestDeclaredConversions(t *testing.T) {
 	tests := []struct {

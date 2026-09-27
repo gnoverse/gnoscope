@@ -211,6 +211,17 @@ func checkNumbers(facts Facts, field, text string) []Violation {
 		if _, isClaim := superlatives[w]; isClaim && licensedSuperlative(facts, w) {
 			continue
 		}
+		// A number word that is also the name of something in the facts is that
+		// name, not a figure. A package called "two" is a legal package, and
+		// "An app called two was published" states no quantity; reading it as
+		// one would drop that package from the feed permanently and silently,
+		// which is a worse failure than the one this check exists for.
+		//
+		// Exact value equality, never substring: "two" inside "network" is a
+		// coincidence, and a substring rule would ground almost anything.
+		if isFactValue(facts, w) {
+			continue
+		}
 		if !nearAny(v, allowed) {
 			out = append(out, Violation{"G1", field, fmt.Sprintf(
 				"%q states a figure that is in no fact: %s", w, factList(facts))})
@@ -306,6 +317,16 @@ func numeric(raw any) (float64, bool) {
 		return f, err == nil
 	}
 	return 0, false
+}
+
+// isFactValue reports whether a word is, exactly, the value of some fact.
+func isFactValue(facts Facts, word string) bool {
+	for _, v := range facts {
+		if s, ok := v.(string); ok && strings.EqualFold(s, word) {
+			return true
+		}
+	}
+	return false
 }
 
 func factList(facts Facts) string {

@@ -152,5 +152,26 @@ func MustCall(t TB, db *DB, network, hash string, height int, ts time.Time, call
 	}
 }
 
+// MustPackageSubmission inserts one successful deploy, and the packages row
+// that goes with it.
+//
+// Both, because they are written by different passes in the real syncer and
+// every query that names a deploy joins them: a fixture that wrote only the
+// submission would pass a test whose production query returns nothing.
+func MustPackageSubmission(t TB, db *DB, network, hash, path, creator string, height int, ts time.Time, isRealm bool, numFiles int) {
+	t.Helper()
+	_, name := lastSegment(path)
+	if err := db.InsertPackageSubmission(network, hash, 0, path, name, creator, height,
+		rfc3339(ts), isRealm, numFiles, true); err != nil {
+		t.Fatalf("insert package submission: %v", err)
+	}
+	if err := db.UpsertPackage(network, path, name, creator, hash, height,
+		rfc3339(ts), isRealm, numFiles); err != nil {
+		t.Fatalf("upsert package: %v", err)
+	}
+}
+
+func lastSegment(path string) (string, string) { return splitGnoPath(path) }
+
 // rfc3339 is the timestamp format every stored block_time uses.
 func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
