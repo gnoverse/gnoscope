@@ -114,15 +114,20 @@ func bech32Polymod(values []byte) uint32 {
 }
 
 // bech32Address encodes 20 address bytes with gno's "g" prefix.
-func bech32Address(data []byte) string {
+func bech32Address(data []byte) string { return bech32Encode("g", data) }
+
+// bech32Encode encodes bytes under an arbitrary human-readable part. gno uses
+// two: "g" for addresses and "gpub" for public keys.
+func bech32Encode(hrp string, data []byte) string {
 	conv := convertBits(data, 8, 5)
-	values := append([]byte{}, hrpExpand("g")...)
+	values := append([]byte{}, hrpExpand(hrp)...)
 	values = append(values, conv...)
 	values = append(values, 0, 0, 0, 0, 0, 0)
 	polymod := bech32Polymod(values) ^ 1
 
 	var sb strings.Builder
-	sb.WriteString("g1")
+	sb.WriteString(hrp)
+	sb.WriteString("1")
 	for _, c := range conv {
 		sb.WriteByte(bech32Charset[c])
 	}
@@ -130,6 +135,46 @@ func bech32Address(data []byte) string {
 		sb.WriteByte(bech32Charset[(polymod>>uint(5*(5-i)))&31])
 	}
 	return sb.String()
+}
+
+// Type URLs amino stamps into an encoded public key, one per supported scheme.
+const (
+	secp256k1TypeName = "/tm.PubKeySecp256k1"
+	ed25519TypeName   = "/tm.PubKeyEd25519"
+)
+
+// PubKeyBech32 renders a raw public key the way gno spells one: gpub1…
+//
+// This is the identifier a session is *operated* by, and it is not the address.
+// `gnokey maketx session revoke` takes -pubkey, and passing the address there
+// silently does nothing, so a page that offers only the address gives a reader
+// the one of the two they cannot act on.
+//
+// The encoding is bech32 over the amino wire form of the key, which is
+// crypto.PubKeyToBech32 in tm2. That wire form is a fixed framing around the
+// type URL and the key, so it is built here rather than pulling amino in:
+//
+//	0x0a, len(typeURL), typeURL, 0x12, len(key)+2, 0x0a, len(key), key
+//
+// Verified byte for byte against tm2's own encoder for both schemes, and the
+// resulting strings against three of mainnet's live session keys.
+func PubKeyBech32(pub []byte) string {
+	var typeName string
+	switch len(pub) {
+	case compressedPubKeyLen:
+		typeName = secp256k1TypeName
+	case ed25519PubKeyLen:
+		typeName = ed25519TypeName
+	default:
+		return ""
+	}
+
+	out := make([]byte, 0, len(typeName)+len(pub)+6)
+	out = append(out, 0x0a, byte(len(typeName)))
+	out = append(out, typeName...)
+	out = append(out, 0x12, byte(len(pub)+2), 0x0a, byte(len(pub)))
+	out = append(out, pub...)
+	return bech32Encode("gpub", out)
 }
 
 func hrpExpand(hrp string) []byte {

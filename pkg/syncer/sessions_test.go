@@ -163,3 +163,47 @@ func TestFetchSessionRangeReportsNoCoverageOnFailure(t *testing.T) {
 		t.Errorf("got %d transactions from a failed range", len(txs))
 	}
 }
+
+// A session-signed transaction must be recorded as such even when it carries
+// no auth message, because almost all of them are ordinary calls. And the
+// grant count must not count it: that number is logged as "session grants".
+func TestRecordSessionsIndexesTheSignerWithoutCountingItAsAGrant(t *testing.T) {
+	s, _, db := newTestSyncer(t, "mainnet")
+
+	tx := indexer.Transaction{
+		Hash: "dHhoYXNo", Success: true, BlockHeight: 274312,
+		Messages: []indexer.TxMessage{{
+			Route: "vm", TypeURL: "exec",
+			Value: indexer.MessageValue{Typename: "MsgCall", Caller: "g1master"},
+		}},
+		Signatures: []indexer.Signature{{SessionAddr: "g1session"}},
+	}
+
+	if got := s.recordSessions(tx, "2026-09-25T00:00:00Z"); got != 0 {
+		t.Errorf("grant count = %d, want 0: an ordinary call is not a grant", got)
+	}
+	n, err := db.SessionTxCount("mainnet", "g1session")
+	if err != nil {
+		t.Fatalf("SessionTxCount: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("session tx count = %d, want 1", n)
+	}
+
+	// Idempotent: a re-walk of the same block must not double count.
+	s.recordSessions(tx, "2026-09-25T00:00:00Z")
+	if n, _ = db.SessionTxCount("mainnet", "g1session"); n != 1 {
+		t.Errorf("after a re-walk count = %d, want 1", n)
+	}
+}
+
+// An indexer that does not model signatures returns none, which means "not
+// asked" and must not be recorded as anybody having signed.
+func TestNoSignaturesRecordsNothing(t *testing.T) {
+	s, _, db := newTestSyncer(t, "mainnet")
+	tx := indexer.Transaction{Hash: "aA==", Success: true, BlockHeight: 1}
+	s.recordSessions(tx, "")
+	if n, _ := db.SessionTxCount("mainnet", ""); n != 0 {
+		t.Errorf("recorded %d signers from a transaction with no signatures", n)
+	}
+}

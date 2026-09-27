@@ -76,6 +76,13 @@ func TestSelectionSets_CarryTheOptionalFragmentsVerbatim(t *testing.T) {
 			if !strings.Contains(tc.fields, transferFragments) {
 				t.Error("set does not carry the transfer fragments verbatim")
 			}
+
+			// The sync walk reads the light set and is the only place a
+			// session-signed transaction can be recognised, so this group has
+			// to be in every set, not just the detail one.
+			if !strings.Contains(tc.fields, signatureFields) {
+				t.Error("set does not carry the signature fields verbatim")
+			}
 		})
 	}
 }
@@ -88,9 +95,10 @@ func TestTrimFields_StripsEveryOptionalGroupFromEverySet(t *testing.T) {
 			// cached per endpoint, because a pool's members can run different
 			// schemas. With no URL configured the endpoint is the empty string.
 			c := &Client{typeSupport: map[string]bool{
-				typeSupportKey("", inertProbeType):    false,
-				typeSupportKey("", sessionProbeType):  false,
-				typeSupportKey("", transferProbeType): false,
+				typeSupportKey("", inertProbeType):     false,
+				typeSupportKey("", sessionProbeType):   false,
+				typeSupportKey("", transferProbeType):  false,
+				typeSupportKey("", signatureProbeType): false,
 			}}
 
 			trimmed := c.trimFields(context.Background(), tc.fields)
@@ -103,9 +111,11 @@ func TestTrimFields_StripsEveryOptionalGroupFromEverySet(t *testing.T) {
 				inertFragments,
 				sessionFragments,
 				transferFragments,
+				signatureFields,
 				"MsgEnablePackage",
 				"MsgCreateSession",
 				"TransferEvent",
+				"session_addr",
 			} {
 				if strings.Contains(trimmed, unwanted) {
 					t.Errorf("trimmed set still contains %q", unwanted)

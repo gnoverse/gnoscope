@@ -13748,6 +13748,21 @@ function renderSessionIdentity(container, identity, addr) {
   container.appendChild(box);
 }
 
+// addressTabHref builds an address URL on a specific tab, network included.
+//
+// Built through URLSearchParams rather than by concatenating netSuffix(), which
+// returns "?network=x" or the empty string: appending "&tab=..." to the empty
+// case produces "/address/g1…&tab=transactions", a query string with no "?"
+// that the router reads as part of the address.
+function addressTabHref(addr, tab) {
+  const q = new URLSearchParams();
+  const net = getNetwork();
+  if (net && net !== 'all') q.set('network', net);
+  if (tab) q.set('tab', tab);
+  const qs = q.toString();
+  return '/address/' + addr + (qs ? '?' + qs : '');
+}
+
 // renderSessions draws the delegated signing keys an account has granted.
 //
 // The account page is the only place this fact can appear. A session signs on
@@ -13779,13 +13794,20 @@ function renderSessions(container, sessions) {
   const tbl = el('table');
   tbl.appendChild(el('thead', {}, el('tr', {},
     el('th', {}, 'key'),
+    el('th', {}, 'address'),
     el('th', {}, 'may call'),
     el('th', {}, 'spent'),
     el('th', {}, 'expires'),
     el('th', {}, 'signed'))));
   const tbody = el('tbody');
   for (const sn of list) {
-    const keyTd = el('td', {}, addrLinkFull(sn.address));
+    // The gpub1 first, because it is the identifier a session is OPERATED by:
+    // `gnokey maketx session revoke` takes -pubkey, and handed the address it
+    // silently does nothing. Truncated because it is a hundred characters, and
+    // copyable because the whole point is pasting it into that command.
+    const keyTd = el('td', {}, sn.pub_key
+      ? copyable(sn.pub_key, el('span', { title: sn.pub_key }, truncAddr(sn.pub_key)))
+      : el('span', { style: { color: 'var(--fg2)' } }, 'not reported'));
     // An expired key is still returned by the chain and can no longer sign.
     // Saying so beside the key, not only in the expiry column, is what keeps a
     // scan down the first column honest.
@@ -13793,6 +13815,9 @@ function renderSessions(container, sessions) {
       keyTd.append(' ');
       keyTd.appendChild(badge('reject', 'expired'));
     }
+    // The address is what the rest of the explorer keys on, so it keeps its own
+    // column and stays the thing you click through to.
+    const addrTd = el('td', {}, addrLinkFull(sn.address));
 
     const scopeTd = el('td');
     const paths = sn.allow_paths || [];
@@ -13807,14 +13832,25 @@ function renderSessions(container, sessions) {
       for (const entry of paths) scopeTd.appendChild(el('div', {}, allowPathEl(entry)));
     }
 
+    // "signed N" is the key's own sequence, so it is a count the chain
+    // guarantees. Linked to the key's page, where those transactions are
+    // listed: a bare number that leads nowhere reads as a promise the page
+    // does not keep, which is exactly how it read before.
+    const signedTd = el('td');
+    const signed = sn.sequence || 0;
+    if (signed > 0) {
+      signedTd.appendChild(link(fmtNum(signed), () => navigate(addressTabHref(sn.address, 'transactions'))));
+    } else {
+      signedTd.append('0');
+    }
+
     tbody.appendChild(el('tr', {},
       keyTd,
+      addrTd,
       scopeTd,
       el('td', {}, fmtSpend(sn)),
       el('td', { style: { fontSize: '12px' } }, sn.expires_at ? fmtExpiry(sn.expires_at) : 'never'),
-      // The sequence is how many transactions the key has actually signed, and
-      // it is the only usage figure that survives a call costing no gas.
-      el('td', {}, fmtNum(sn.sequence || 0))));
+      signedTd));
   }
   tbl.appendChild(tbody);
   container.appendChild(tbl);

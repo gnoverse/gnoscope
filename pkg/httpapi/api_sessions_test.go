@@ -59,6 +59,10 @@ const mainnetSessionsJSON = `[
       "BaseAccount": {
         "address": "g1rrtqvv2kcffw0nezkecxmxyqa6u9wy06e03fck",
         "coins": "",
+        "public_key": {
+          "@type": "/tm.PubKeySecp256k1",
+          "value": "ApM0STFy1UY/K/FnLoo9pXhpUbnTUQmY+FjHqFduK/bQ"
+        },
         "account_number": "3263223",
         "sequence": "1"
       },
@@ -243,5 +247,39 @@ func TestFetchSessionsFields(t *testing.T) {
 	faucet := got[2]
 	if faucet.SpendPeriod != 2592000 {
 		t.Errorf("spend_period = %d, want 2592000", faucet.SpendPeriod)
+	}
+}
+
+// The key a session is operated by is the gpub1, not the address: `gnokey
+// maketx session revoke` takes -pubkey and silently does nothing when given the
+// address. The chain reports the raw key as base64 and the page has to spell it.
+func TestSessionsCarryTheBech32PubKey(t *testing.T) {
+	const master = "g1manfred47kzduec920z88wfr64ylksmdcedlf5"
+	srv := fakeSessionNode{data: map[string]string{master: mainnetSessionsJSON}}.server(t)
+
+	got, supported := fetchSessions(context.Background(), master, srv.URL)
+	if !supported {
+		t.Fatal("not supported")
+	}
+	var reaper *Session
+	for i := range got {
+		if got[i].Address == "g1rrtqvv2kcffw0nezkecxmxyqa6u9wy06e03fck" {
+			reaper = &got[i]
+		}
+	}
+	if reaper == nil {
+		t.Fatal("the seeded session is missing")
+	}
+	const wantPub = "gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pq2fngjf3wt25v0et79njaz3a54uxj5de6dgsnx8ctrr6s4mw90mdqewd0jh"
+	if reaper.PubKey != wantPub {
+		t.Errorf("pub_key = %q\nwant      %q", reaper.PubKey, wantPub)
+	}
+
+	// A session the chain reports without a decodable key must still be listed,
+	// with an empty pub_key, rather than dropped.
+	for _, s := range got {
+		if s.Address != reaper.Address && s.PubKey != "" {
+			t.Errorf("%s reported a pub_key from a fixture that has none: %q", s.Address, s.PubKey)
+		}
 	}
 }

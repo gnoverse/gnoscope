@@ -491,3 +491,62 @@ func TestAnUpwardCursorIsNotMistakenForADownwardOne(t *testing.T) {
 		t.Errorf("progress = %v at=%d, want false 0: nothing has been swept downward yet", done, at)
 	}
 }
+
+// The defect this exists to stop coming back: a session address had an empty
+// transactions page, because every message it sends names the MASTER as caller
+// and none of the address-matching branches can match the key itself. The
+// master's page said "signed 4" and the link led nowhere.
+func TestAddressTransactionsIncludeWhatASessionSigned(t *testing.T) {
+	db := NewTestDB(t)
+	const (
+		master  = "g1master0000000000000000000000000000"
+		session = "g1session000000000000000000000000000"
+		other   = "g1othersession0000000000000000000000"
+	)
+
+	// Two calls by the master. Both name the master as caller, which is what
+	// the chain records; only the signature differs.
+	if err := db.InsertCall("mainnet", "TXSIGNED", 200, 0, "2026-09-25T00:00:00Z",
+		master, "gno.land/r/moul/x/reaper", "Reap", true); err != nil {
+		t.Fatalf("seed call: %v", err)
+	}
+	if err := db.InsertCall("mainnet", "TXSELF", 100, 0, "2026-09-24T00:00:00Z",
+		master, "gno.land/r/moul/home", "Set", true); err != nil {
+		t.Fatalf("seed call: %v", err)
+	}
+	if err := db.RecordSessionTx("mainnet", "TXSIGNED", session, 200); err != nil {
+		t.Fatalf("record signer: %v", err)
+	}
+
+	// The session's own page lists what it signed, and nothing else.
+	got, total, err := db.AddressTransactions("mainnet", session, 50, 0)
+	if err != nil {
+		t.Fatalf("AddressTransactions(session): %v", err)
+	}
+	if total != 1 || len(got) != 1 {
+		t.Fatalf("session page has %d rows (total %d), want 1: the key signed one call", len(got), total)
+	}
+	if got[0].Hash != "TXSIGNED" {
+		t.Errorf("row = %s, want TXSIGNED", got[0].Hash)
+	}
+	// The detail comes from the call, so the row says what it did, not merely
+	// that something was signed.
+	if got[0].Detail != "gno.land/r/moul/x/reaper::Reap" {
+		t.Errorf("detail = %q, want the call it signed", got[0].Detail)
+	}
+	// The caller stays the master, because that is who the chain says acted.
+	if got[0].Caller != master {
+		t.Errorf("caller = %q, want the master %q", got[0].Caller, master)
+	}
+
+	// A key that signed nothing still has an empty page.
+	if _, n, err := db.AddressTransactions("mainnet", other, 50, 0); err != nil || n != 0 {
+		t.Errorf("unrelated key has %d rows (err %v), want 0", n, err)
+	}
+
+	// And the master keeps both of its transactions: being signed by a key does
+	// not move a transaction off the account that made it.
+	if _, n, err := db.AddressTransactions("mainnet", master, 50, 0); err != nil || n != 2 {
+		t.Errorf("master has %d rows (err %v), want 2", n, err)
+	}
+}

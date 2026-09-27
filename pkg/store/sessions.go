@@ -341,11 +341,14 @@ func sessionBackfillCursorKey(network string) string {
 //	v3    the schema probe was cached per pool rather than per endpoint, so the
 //	      typed fragments were stripped for one indexer and the query sent to
 //	      the other, which answered with no fields to decode.
+//	v4    the sweep started recording signature.session_addr, which earlier
+//	      passes never selected, so blocks it had already walked hold grants
+//	      without the transactions those keys signed.
 //
 // Bump it whenever the sweep's direction or its decoder changes. A stale cursor
 // is not a cosmetic problem: it is a claim that blocks were examined, and that
 // claim is what stops them ever being examined again.
-const sessionSweepVersion = "v3"
+const sessionSweepVersion = "v4"
 
 func sessionBackfillStopKey(network string) string { return "session_backfill_stop:" + network }
 
@@ -504,4 +507,35 @@ func sortSessionRealms(rs []SessionRealm) {
 		}
 		return rs[i].Path < rs[j].Path
 	})
+}
+
+// RecordSessionTx notes that a delegated key signed a transaction.
+//
+// Idempotent on (network, tx_hash): a transaction has one signer, and the sync
+// walk and any re-walk must agree rather than accumulate.
+func (d *DB) RecordSessionTx(network, txHash, sessionAddr string, height int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, err := d.db.Exec(`
+		INSERT INTO session_txs (network, tx_hash, session_addr, block_height)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(network, tx_hash) DO UPDATE SET
+			session_addr = excluded.session_addr,
+			block_height = excluded.block_height`,
+		network, txHash, sessionAddr, height)
+	return err
+}
+
+// SessionTxCount is how many transactions this index has seen a key sign.
+//
+// Not the same figure as the key's sequence, which the chain guarantees and
+// this cannot: the index only knows the blocks it has walked. A page showing
+// both has to say which is which.
+func (d *DB) SessionTxCount(network, sessionAddr string) (int, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	var n int
+	err := d.db.QueryRow(`SELECT COUNT(*) FROM session_txs
+		 WHERE `+d.networkFilter("network", network)+` AND session_addr = ?`, sessionAddr).Scan(&n)
+	return n, err
 }
