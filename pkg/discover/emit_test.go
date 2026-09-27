@@ -419,3 +419,36 @@ func TestDeployedLayerOneFitsWithoutTruncating(t *testing.T) {
 		})
 	}
 }
+
+// Layer 2 is one sentence inside 90 characters, and the budget is tight enough
+// that a long package name overruns it. Seen once on a real chain, 2026-09-28,
+// at 96 characters, where the gate then dropped the event silently.
+func TestDebutLayerTwoNamesThePackageOnlyWhenItFits(t *testing.T) {
+	tests := []struct {
+		name, who, thing, pkg string
+		wantNamed             bool
+	}{
+		{"a short name is kept", "Somebody", "app", "pixelgnomes", true},
+		{"the real overrun drops the clause", "Somebody", "app", "gemsart2trimmedfast1789459000", false},
+		{"a long handle counts against the same budget", "@a-very-long-registered-handle-here", "library", "memba_quest_attestation_v1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := debutMeans(tt.who, tt.thing, tt.pkg)
+			if n := len([]rune(got)); n > MaxMeans {
+				t.Errorf("%d characters, the budget is %d: %q", n, MaxMeans, got)
+			}
+			if named := strings.Contains(got, tt.pkg); named != tt.wantNamed {
+				t.Errorf("names the package = %v, want %v: %q", named, tt.wantNamed, got)
+			}
+			// Dropped, never truncated: half a package name is a different
+			// package, and the reader cannot tell it was cut.
+			if !tt.wantNamed && strings.Contains(got, tt.pkg[:8]) {
+				t.Errorf("the name was truncated rather than dropped: %q", got)
+			}
+			if !strings.Contains(got, tt.who) {
+				t.Errorf("lost the actor: %q", got)
+			}
+		})
+	}
+}

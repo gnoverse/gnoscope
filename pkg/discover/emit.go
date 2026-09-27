@@ -135,11 +135,29 @@ func (in DeployerFirst) Emit() (Facts, Layers) {
 	return facts, Layers{
 		What: Layer{fmt.Sprintf("%s has no earlier successful MsgAddPackage on %s.",
 			in.Address, in.NetworkLabel)},
-		Means: Layer{fmt.Sprintf("%s published on the chain for the first time, an %s called %s.",
-			who, thing, in.PackageName)},
+		Means: Layer{debutMeans(who, thing, in.PackageName)},
 		Matters: Layer{fmt.Sprintf("A new builder arrived. %s people have ever published on this chain.",
 			spellSmall(in.DistinctDeployers))},
 	}
+}
+
+// debutMeans writes layer 2 for a debut, naming the package when it fits.
+//
+// Layer 2 is one sentence inside 90 characters because that is the card's
+// headline row, and the budget is genuinely tight: the design's own sample line
+// is 89. A 29-character package name pushes it to 96, which the gate then drops
+// silently (seen once on pearl, 2026-09-28).
+//
+// Dropping the clause rather than truncating the name, for the reason every
+// other shed in this file does it: a truncated name is a different package. The
+// name is not lost, it stays in the facts, in the event's target and in layer
+// 1's path, so a card can show it everywhere except the one line with no room.
+func debutMeans(who, thing, pkg string) string {
+	full := fmt.Sprintf("%s published on the chain for the first time, an %s called %s.", who, thing, pkg)
+	if len([]rune(full)) <= MaxMeans {
+		return full
+	}
+	return fmt.Sprintf("%s published on the chain for the first time.", who)
 }
 
 // ChainSpike is a day on which far more addresses appeared than usual.
