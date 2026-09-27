@@ -21,6 +21,7 @@ const SESSIONS = {
   sessions: [
     {
       address: 'g1session1lifetime000000000000000000',
+      pub_key: 'gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pq2fngjf3wt25v0et79njaz3a54uxj5de6dgsnx8ctrr6s4mw90mdqewd0jh',
       master: MASTER,
       allow_paths: ['vm/exec:gno.land/r/moul/x/reaper'],
       spend_limit: '5000000ugnot',
@@ -157,4 +158,50 @@ test('an account with no grants draws no empty table', async ({ page }) => {
   await settle(page);
 
   await expect(page.locator('#address-detail-content')).not.toContainText('sessions (');
+});
+
+// The key a session is OPERATED by is its gpub1, not its address: `gnokey
+// maketx session revoke` takes -pubkey and silently does nothing when handed
+// the address. Showing only the address gave a reader the one of the two they
+// cannot act on.
+test('the key column shows the gpub1, truncated, with the address beside it', async ({ page }) => {
+  await stubSessions(page, SESSIONS);
+  await page.goto('/address/' + MASTER + '?tab=sessions');
+  await settle(page);
+
+  const row = page.locator('#address-detail-content tr', { hasText: 'g1session1lifetime' });
+  // Truncated, because the key is a hundred characters and the table has five
+  // other columns.
+  await expect(row).toContainText('gpub1pgf');
+  await expect(row, 'the full key must not be printed inline').not.toContainText(
+    'gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pq2fngjf3wt25v0et79njaz3a54uxj5de6dgsnx8ctrr6s4mw90mdqewd0jh');
+  // The address keeps its own column: it is what the rest of the explorer
+  // keys on and what you click through to.
+  await expect(row).toContainText('g1session1lifetime');
+});
+
+// "signed N" was a bare number that led nowhere, and the page it should have
+// led to was empty. The number is the key's own sequence, which the chain
+// guarantees, so it has to reach the transactions that back it.
+test('the signed count links to the key page', async ({ page }) => {
+  await stubSessions(page, SESSIONS);
+  await page.goto('/address/' + MASTER + '?tab=sessions');
+  await settle(page);
+
+  const row = page.locator('#address-detail-content tr', { hasText: 'g1session2rolling' });
+  const signed = row.locator('a', { hasText: '42' });
+  await expect(signed).toHaveCount(1);
+  await signed.click();
+  await page.waitForURL(/\/address\/g1session2rolling/);
+  expect(page.url(), 'should land on the transactions tab').toContain('tab=transactions');
+});
+
+// A key that has signed nothing must not offer a link to an empty page.
+test('a zero signed count is not a link', async ({ page }) => {
+  await stubSessions(page, SESSIONS);
+  await page.goto('/address/' + MASTER + '?tab=sessions');
+  await settle(page);
+
+  const row = page.locator('#address-detail-content tr', { hasText: 'g1session3expired' });
+  await expect(row.locator('a', { hasText: /^0$/ })).toHaveCount(0);
 });

@@ -1,6 +1,9 @@
 package indexer
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+)
 
 // Deriving who actually signed a transaction, from real mainnet content.
 //
@@ -120,6 +123,68 @@ func TestAddressFromPubKeyRejectsOtherLengths(t *testing.T) {
 	for _, n := range []int{0, 20, 31, 34, 64} {
 		if got := AddressFromPubKey(make([]byte, n)); got != "" {
 			t.Errorf("AddressFromPubKey(%d bytes) = %q, want empty", n, got)
+		}
+	}
+}
+
+// gpub1 is what a session is operated by: `gnokey maketx session revoke` takes
+// -pubkey, and passing the address there silently does nothing. So the
+// encoding has to be exactly right, and "exactly right" is defined by tm2's
+// crypto.PubKeyToBech32, not by this file.
+//
+// Every expectation below was produced by running tm2's own encoder over the
+// public_key.value the chain reports for these live mainnet sessions, and each
+// address is the one auth/accounts/<master>/sessions reports for the same key,
+// which is what ties the pair together.
+func TestPubKeyBech32MatchesTm2(t *testing.T) {
+	tests := []struct {
+		name     string
+		b64      string
+		wantAddr string
+		wantPub  string
+	}{
+		{
+			name:     "reaper-session",
+			b64:      "ApM0STFy1UY/K/FnLoo9pXhpUbnTUQmY+FjHqFduK/bQ",
+			wantAddr: "g1rrtqvv2kcffw0nezkecxmxyqa6u9wy06e03fck",
+			wantPub:  "gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pq2fngjf3wt25v0et79njaz3a54uxj5de6dgsnx8ctrr6s4mw90mdqewd0jh",
+		},
+		{
+			name:     "test-session",
+			b64:      "A+Apoz/C5jbScCIc9PnVPVGs0c97ONcx+LGh/UKYfQXT",
+			wantAddr: "g10w4vv8km5t0w382vl5qgnma5dety3fnscf7538",
+			wantPub:  "gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pq0szngelctnrd5nsygw0f7w484g6e5w00vudwv0ckxsl6s5c05zax5k86sk",
+		},
+		{
+			name:     "govdao-session",
+			b64:      "A4L88WziWkBWCs0BFE/5BuFdFKSiUvqTzgn8Hj/LNcFt",
+			wantAddr: "g1zlkxnvj2velp8ghgs7fl5fvl74fm8xax0sx2wj",
+			wantPub:  "gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pqwp0eutvufdyq4s2e5q3gnleqms4699y5ff04y7wp87pu07txhqk6kt9e7q",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := base64.StdEncoding.DecodeString(tt.b64)
+			if err != nil {
+				t.Fatalf("fixture is not base64: %v", err)
+			}
+			// The address is the cross-check: if the key bytes were wrong, this
+			// would not match either, and the gpub1 expectation would be
+			// asserting one wrong value against another.
+			if got := AddressFromPubKey(raw); got != tt.wantAddr {
+				t.Errorf("address = %q, want %q", got, tt.wantAddr)
+			}
+			if got := PubKeyBech32(raw); got != tt.wantPub {
+				t.Errorf("gpub = %q\nwant   %q", got, tt.wantPub)
+			}
+		})
+	}
+}
+
+func TestPubKeyBech32RejectsOtherLengths(t *testing.T) {
+	for _, n := range []int{0, 20, 31, 34, 64} {
+		if got := PubKeyBech32(make([]byte, n)); got != "" {
+			t.Errorf("PubKeyBech32(%d bytes) = %q, want empty", n, got)
 		}
 	}
 }

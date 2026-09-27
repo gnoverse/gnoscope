@@ -2,11 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/moul/mygnoscan/pkg/indexer"
 )
 
 // Account sessions: delegated signing keys, one account per grant.
@@ -66,6 +69,12 @@ type Session struct {
 	// the only usage figure that does not depend on gas being spent.
 	Sequence      int64 `json:"sequence"`
 	AccountNumber int64 `json:"account_number,omitempty"`
+
+	// PubKey is the key as gno spells one, gpub1…, and it is the identifier a
+	// session is operated by: `gnokey maketx session revoke` takes -pubkey and
+	// silently does nothing when handed the address. Reporting only the address
+	// gives a reader the one of the two they cannot act on.
+	PubKey string `json:"pub_key,omitempty"`
 }
 
 // sessionAccount mirrors the chain's JSON for one entry of
@@ -77,6 +86,12 @@ type sessionAccount struct {
 			Address       string `json:"address"`
 			AccountNumber string `json:"account_number"`
 			Sequence      string `json:"sequence"`
+			PublicKey     struct {
+				Type string `json:"@type"`
+				// Base64 of the raw key: 33 bytes for secp256k1, 32 for
+				// ed25519. Not an address and not yet a gpub1.
+				Value string `json:"value"`
+			} `json:"public_key"`
 		} `json:"BaseAccount"`
 		MasterAddress string `json:"master_address"`
 		ExpiresAt     string `json:"expires_at"`
@@ -151,6 +166,7 @@ func fetchSessions(ctx context.Context, addr, rpcURL string) ([]Session, bool) {
 			ExpiresAt:     atoi64(acc.Base.ExpiresAt),
 			Sequence:      atoi64(acc.Base.Account.Sequence),
 			AccountNumber: atoi64(acc.Base.Account.AccountNumber),
+			PubKey:        pubKeyBech32(acc.Base.Account.PublicKey.Value),
 		})
 	}
 
@@ -170,6 +186,22 @@ func fetchSessions(ctx context.Context, addr, rpcURL string) ([]Session, bool) {
 		return out[i].Address < out[j].Address
 	})
 	return out, true
+}
+
+// pubKeyBech32 turns the chain's base64 public key into gpub1…
+//
+// Best effort: a key the chain reports in a form we cannot decode yields an
+// empty string, and the page falls back to the address. Being unable to spell
+// the key is not a reason to drop the session from the list.
+func pubKeyBech32(b64 string) string {
+	if b64 == "" {
+		return ""
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return ""
+	}
+	return indexer.PubKeyBech32(raw)
 }
 
 func atoi64(s string) int64 {

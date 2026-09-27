@@ -257,12 +257,30 @@ const transferFragments = `
 				coins
 			}`
 
+// signatureFields is the signing group: who actually put their key to a
+// transaction, as opposed to which account it acts for.
+//
+// session_addr is the whole reason this is selected. The chain stamps it when a
+// delegated key signs, and it is the only field anywhere that links a
+// transaction to the session that signed it: every message still names the
+// MASTER as its caller, so nothing else in the payload distinguishes a
+// session-signed transaction from a self-signed one.
+//
+// Optional because the two mainnet indexers disagree about it, as they do about
+// MsgCreateSession: indexer.onbloc.xyz defines Signature and indexer.gno.land
+// has no signatures field on Transaction at all (probed 2026-09-28).
+const signatureFields = `
+	signatures {
+		session_addr
+	}`
+
 // The type each fragment group is gated on: one representative per group, and
 // the rest of the group shipped to the indexer in the same release as it.
 const (
-	inertProbeType    = "MsgEnablePackage"
-	sessionProbeType  = "MsgCreateSession"
-	transferProbeType = "TransferEvent"
+	inertProbeType     = "MsgEnablePackage"
+	sessionProbeType   = "MsgCreateSession"
+	transferProbeType  = "TransferEvent"
+	signatureProbeType = "Signature"
 )
 
 // SupportsTransferEvents reports whether this chain's indexer can answer
@@ -372,6 +390,9 @@ func (c *Client) trimFields(ctx context.Context, fields string) string {
 	}
 	if !c.supportsType(ctx, transferProbeType) {
 		fields = strings.ReplaceAll(fields, transferFragments, "")
+	}
+	if !c.supportsType(ctx, signatureProbeType) {
+		fields = strings.ReplaceAll(fields, signatureFields, "")
 	}
 	return fields
 }
@@ -696,6 +717,18 @@ type Transaction struct {
 	Network     string      `json:"network,omitempty"`
 	BlockTime   string      `json:"block_time,omitempty"`
 	ChainID     string      `json:"chain_id,omitempty"`
+
+	// Signatures is empty on an indexer that does not model them, which is not
+	// the same as a transaction having none. Absence here means "not asked",
+	// never "signed by nobody".
+	Signatures []Signature `json:"signatures,omitempty"`
+}
+
+// Signature is one signer on a transaction.
+type Signature struct {
+	// SessionAddr is set only when a delegated key signed. Empty means the
+	// account signed for itself.
+	SessionAddr string `json:"session_addr,omitempty"`
 }
 
 type Coin struct {
@@ -876,7 +909,7 @@ const txFieldsTemplate = `
 			}
 		}
 	}
-	response {
+%[3]s	response {
 		log
 		info
 		error
@@ -923,7 +956,9 @@ func txSelection(fileBodies, contentRaw bool) string {
 		body = " body"
 	}
 
-	return fmt.Sprintf(txFieldsTemplate, raw, body)
+	// The signing group goes into every set: the sync walk is the only place a
+	// session-signed transaction can be recognised, and it reads the light set.
+	return fmt.Sprintf(txFieldsTemplate, raw, body, signatureFields)
 }
 
 var (

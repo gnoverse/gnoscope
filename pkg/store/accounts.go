@@ -547,6 +547,18 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 			" ORDER BY block_height DESC LIMIT %d)", sel, table, cond, nf, take)
 	}
 
+	// sessionBranch matches on who SIGNED rather than on who is named, by
+	// joining session_txs. `table` carries its alias because the selected
+	// columns have to be qualified once two tables are in scope.
+	sessionBranch := func(sel, table string) string {
+		alias := table[strings.LastIndex(table, " ")+1:]
+		return fmt.Sprintf("SELECT * FROM (SELECT %s FROM %s"+
+			" JOIN session_txs s ON s.network = %s.network AND s.tx_hash = %s.tx_hash"+
+			" WHERE s.session_addr = ? AND %s"+
+			" ORDER BY %s.block_height DESC LIMIT %d)",
+			sel, table, alias, alias, d.networkFilter(alias+".network", network), alias, take)
+	}
+
 	// One branch per way an address can appear. bank_sends matches both
 	// directions because being paid is activity too.
 	union := strings.Join([]string{
@@ -565,6 +577,23 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 		branch(`network, tx_hash, block_height, COALESCE(block_time,''), 'BankMsgSend',
 		        from_address, to_address || ' ' || amount, success`, "bank_sends",
 			"(from_address = ? OR to_address = ?)"),
+		// Transactions this address SIGNED as a delegated key.
+		//
+		// Without this branch a session address has an empty page: every
+		// message it sent names the master as caller, so none of the four
+		// branches above can match it, and "signed 4" on the master's page led
+		// to a page showing nothing.
+		//
+		// Joined back to calls for the detail, because the signature says which
+		// transaction and the call says what it did. A session-signed
+		// transaction that is not a MsgCall (vm/run and bank/send are grantable
+		// scopes too) is covered by the two branches after it.
+		sessionBranch(`c.network, c.tx_hash, c.block_height, COALESCE(c.block_time,''), 'MsgCall',
+		        c.caller, c.pkg_path || '::' || c.func_name, c.success`, "calls c"),
+		sessionBranch(`r.network, r.tx_hash, r.block_height, COALESCE(r.block_time,''), 'MsgRun',
+		        r.caller, '', r.success`, "msg_runs r"),
+		sessionBranch(`b.network, b.tx_hash, b.block_height, COALESCE(b.block_time,''), 'BankMsgSend',
+		        b.from_address, b.to_address || ' ' || b.amount, b.success`, "bank_sends b"),
 	}, " UNION ALL ")
 
 	// The count is over unbounded branches — a total that stopped at the page
@@ -575,9 +604,17 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 		"SELECT tx_hash FROM package_submissions WHERE creator = ? AND " + nf,
 		"SELECT tx_hash FROM msg_runs WHERE caller = ? AND " + nf,
 		"SELECT tx_hash FROM bank_sends WHERE (from_address = ? OR to_address = ?) AND " + nf,
+		"SELECT c.tx_hash FROM calls c JOIN session_txs s ON s.network = c.network AND s.tx_hash = c.tx_hash" +
+			" WHERE s.session_addr = ? AND " + d.networkFilter("c.network", network),
+		"SELECT r.tx_hash FROM msg_runs r JOIN session_txs s ON s.network = r.network AND s.tx_hash = r.tx_hash" +
+			" WHERE s.session_addr = ? AND " + d.networkFilter("r.network", network),
+		"SELECT b.tx_hash FROM bank_sends b JOIN session_txs s ON s.network = b.network AND s.tx_hash = b.tx_hash" +
+			" WHERE s.session_addr = ? AND " + d.networkFilter("b.network", network),
 	}, " UNION ALL ")
 
-	args := []any{addr, addr, addr, addr, addr}
+	// Five for the four named-address branches (bank_sends takes two), then one
+	// per session branch. The count union takes the same list in the same order.
+	args := []any{addr, addr, addr, addr, addr, addr, addr, addr}
 
 	var total int
 	if err := d.db.QueryRow(`SELECT COUNT(*) FROM (`+countUnion+`)`, args...).Scan(&total); err != nil {

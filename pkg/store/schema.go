@@ -1074,6 +1074,28 @@ func initSchema(db *sql.DB) error {
 			PRIMARY KEY (network, session_addr, granted_height)
 		) WITHOUT ROWID;
 
+		-- Which transactions a delegated key actually signed.
+		--
+		-- Not derivable from anything else here. Every message a session sends
+		-- still names the MASTER as its caller, so calls, msg_runs and
+		-- bank_sends all record the master and the session address appears in
+		-- none of them. The chain stamps signature.session_addr and that is the
+		-- only place the link exists.
+		--
+		-- Kept as its own table rather than a column on each message table: a
+		-- transaction is signed once but can carry several messages, so the
+		-- fact belongs to the transaction, and a column per table would record
+		-- it once per message.
+		CREATE TABLE IF NOT EXISTS session_txs (
+			network      TEXT NOT NULL,
+			tx_hash      TEXT NOT NULL,
+			session_addr TEXT NOT NULL,
+			block_height INTEGER NOT NULL,
+			PRIMARY KEY (network, tx_hash)
+		) WITHOUT ROWID;
+
+		CREATE INDEX IF NOT EXISTS idx_session_txs_addr ON session_txs(network, session_addr, block_height DESC);
+
 		CREATE INDEX IF NOT EXISTS idx_session_grants_master ON session_grants(network, master, granted_height DESC);
 		CREATE INDEX IF NOT EXISTS idx_session_grants_height ON session_grants(network, granted_height DESC);
 		CREATE INDEX IF NOT EXISTS idx_session_grants_addr ON session_grants(network, session_addr);

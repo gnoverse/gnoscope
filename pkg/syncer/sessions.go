@@ -79,6 +79,12 @@ func (s *Syncer) recordSessions(tx indexer.Transaction, blockTime string) int {
 	if !tx.Success {
 		return 0
 	}
+	// Who signed is recorded even for a transaction carrying no auth message,
+	// because most session-signed transactions are ordinary calls. Deliberately
+	// NOT added to the returned count: that count is logged as "session grants"
+	// and folding signatures into it would report a grant for every call.
+	s.recordSessionTx(tx)
+
 	stored := 0
 	for _, msg := range tx.Messages {
 		if msg.Route != "auth" {
@@ -143,6 +149,31 @@ func (s *Syncer) recordSessions(tx indexer.Transaction, blockTime string) int {
 		}
 	}
 	return stored
+}
+
+// recordSessionTx notes that a delegated key signed this transaction.
+//
+// signature.session_addr is the only field anywhere that says so: every message
+// still names the master as its caller, so without this a session address has
+// no transactions at all and the "signed N" figure on the master's page leads
+// to an empty page.
+//
+// Rides whatever walk already holds the payload, and costs nothing on an
+// indexer that does not model signatures, where Signatures is simply empty.
+// That emptiness means "not asked", never "signed by nobody", which is why it
+// is not recorded as a self-signed transaction.
+func (s *Syncer) recordSessionTx(tx indexer.Transaction) int {
+	for _, sig := range tx.Signatures {
+		if sig.SessionAddr == "" {
+			continue
+		}
+		if err := s.db.RecordSessionTx(s.networkID, tx.Hash, sig.SessionAddr, tx.BlockHeight); err != nil {
+			log.Printf("[%s] session tx at %d: %v", s.networkID, tx.BlockHeight, err)
+			return 0
+		}
+		return 1
+	}
+	return 0
 }
 
 // sessionGrantMsg is a grant with everything already resolved, whichever of the
