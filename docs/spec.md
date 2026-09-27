@@ -167,7 +167,7 @@ deliberately not reading.
 | any table of 8 rows or more | `f.<table>`, `s.<table>` (add `:desc` for descending) |
 | `/packages`, `/accounts` | `pv`, `av` |
 | `/directory/people` | `q`, `has` (comma-separated, an AND), `sort`, `named` |
-| address detail | `tab` (`achievements`) |
+| address detail | `tab` (`transactions`, `holdings`, `deploys`, `sessions`, `achievements`) |
 | `/dashboards` | `section`, `window` |
 | `/txs` | `type`, `status`, `page` |
 | `/blocks` | `txs` |

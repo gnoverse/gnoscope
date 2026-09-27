@@ -60,10 +60,18 @@ test('an account page names the keys that sign for it', async ({ page }) => {
   const seen = watch(page);
   await stubSessions(page, SESSIONS);
 
+  // The keys table lives on its own tab now. The headline still carries the
+  // count, which is what keeps "this account delegates" visible from every tab
+  // once the table itself is one click away.
   await page.goto('/address/' + MASTER);
   await settle(page);
 
   const body = page.locator('#address-detail-content');
+  await expect(body.locator('.stats-bar').first(), 'the count has to survive the move').toContainText('sessions');
+  await expect(body.locator('.tab[data-tab="sessions"]')).toContainText('(3)');
+
+  await page.goto('/address/' + MASTER + '?tab=sessions');
+  await settle(page);
   await expect(body).toContainText('sessions (3)');
 
   // The grant, not just that a grant exists. A key scoped to one realm and a
@@ -102,7 +110,7 @@ test('a key with no spend limit reads as unable to spend, not unlimited', async 
     }],
   });
 
-  await page.goto('/address/' + MASTER);
+  await page.goto('/address/' + MASTER + '?tab=sessions');
   await settle(page);
 
   const row = page.locator('#address-detail-content tr', { hasText: 'g1nospend' });
@@ -113,7 +121,7 @@ test('a key with no spend limit reads as unable to spend, not unlimited', async 
 test('an expired key does not read like a live one', async ({ page }) => {
   await stubSessions(page, SESSIONS);
 
-  await page.goto('/address/' + MASTER);
+  await page.goto('/address/' + MASTER + '?tab=sessions');
   await settle(page);
 
   // The chain keeps returning an expired session, and it can no longer sign.

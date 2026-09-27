@@ -144,8 +144,41 @@ func (a *API) HandleRealmDefi(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "no account for path: "+path, 404)
 		return
 	}
-	depositAddr := gnoaddr.DeriveStorageDeposit(path)
 
+	a.writeDefiFor(w, r, network, path, addr, gnoaddr.DeriveStorageDeposit(path))
+}
+
+// HandleAddressHoldings answers the address page's holdings tab.
+//
+// The same two ledgers as the realm tab above, for an account that is not a
+// realm: a plain account owns one address rather than two, so it passes no
+// storage-deposit address and the storage figures come back empty. Everything
+// else already worked per address and was reachable only by knowing a package
+// path, which an account does not have.
+//
+// The one figure that means something different here is DerivedUgnot. It is a
+// sum over TransferEvent legs, and gas collection and the storage deposit go
+// through SendCoinsUnrestricted, which emits none: for a realm's banker the
+// reconstruction is exact, for a signing account it is short by exactly that
+// account's gas spend. The page says so rather than printing it beside the live
+// balance as though the two ought to agree.
+func (a *API) HandleAddressHoldings(w http.ResponseWriter, r *http.Request) {
+	network := a.networkParam(r)
+	addr := r.PathValue("addr")
+	if network == "" {
+		jsonError(w, "balances are denominated per chain: select a network", 400)
+		return
+	}
+	a.writeDefiFor(w, r, network, "", addr, "")
+}
+
+// writeDefiFor assembles and writes the payload both handlers above serve.
+//
+// Extracted rather than duplicated: every read below was already keyed on an
+// address, and the only thing the realm case adds is a second account derived
+// from its path. A copy would have been a second place to forget that
+// DerivedUgnot is a SUM over every leg while Flows is only a page of them.
+func (a *API) writeDefiFor(w http.ResponseWriter, r *http.Request, network, path, addr, depositAddr string) {
 	resp := realmDefiResponse{
 		Network:               network,
 		Path:                  path,
