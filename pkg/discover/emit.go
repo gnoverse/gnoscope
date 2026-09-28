@@ -62,11 +62,34 @@ func (in PackageDeployed) Emit() (Facts, Layers) {
 
 	return facts, Layers{
 		What:  Layer{deployedWhat(in.Path, in.Creator, in.NumFiles, in.Height)},
-		Means: Layer{fmt.Sprintf("%s put a new %s on the chain, called %s.", who, thing, name)},
+		Means: Layer{deployedMeans(who, thing, name)},
 		Matters: Layer{fmt.Sprintf(
 			"Anyone can look at it or use it now, and nobody can change it except %s. It is %s of code.",
 			whose, plural(in.NumFiles, "file"))},
 	}
+}
+
+// deployedMeans writes layer 2 for a deploy, naming the package when it fits.
+//
+// This was the one emitter with no shed, and it was safe by accident: the
+// longest package name on any of the three chains is 21 characters
+// (memba_weighted_policy), so the worst real line is 70 against a budget of 90
+// (measured 2026-09-28 over 402 paths). Nothing was overrunning.
+//
+// Added anyway, because the accident just got smaller. A version segment is no
+// longer taken as the name, so paths that used to yield "v0" now yield the real
+// one, and every name on the chain got longer on the same day. debutMeans and
+// the proposal emitter already shed; an event that overruns is dropped by the
+// gate and vanishes silently, which is exactly what happened on pearl to a
+// 29-character name. The drop is the name clause, not a truncation, because a
+// truncated name is a different package and the name survives in the facts, in
+// the target and in layer 1.
+func deployedMeans(who, thing, name string) string {
+	full := fmt.Sprintf("%s put a new %s on the chain, called %s.", who, thing, name)
+	if len([]rune(full)) <= MaxMeans {
+		return full
+	}
+	return fmt.Sprintf("%s put a new %s on the chain.", who, thing)
 }
 
 // deployedWhat writes layer 1 for a deploy, shedding what is redundant until it
@@ -261,12 +284,51 @@ func waitedPhrase(seconds float64) string {
 	return "It was checked and approved almost immediately."
 }
 
+// VersionSegment reports whether a path segment is a generation marker: v0,
+// v1, v23.
+//
+// Exported because two packages need the same answer and the alternative is two
+// regexes that can disagree: pkg/httpapi names app cards from a path, and the
+// emitters below name a package in a sentence a human reads. It lives here
+// because this package is pure and httpapi already imports it.
+func VersionSegment(seg string) bool {
+	if len(seg) < 2 || seg[0] != 'v' {
+		return false
+	}
+	for _, r := range seg[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // splitPath turns gno.land/r/moul/hello into ("moul", "hello").
 //
 // The namespace is the segment after the r/ or p/, not the first segment of the
 // path: every path here begins gno.land, so taking the first would make every
 // namespace on the chain "gno.land".
-func splitPath(path string) (namespace, name string) {
+//
+// The name is the last segment that is not a version. A gno package is versioned
+// by a path segment, so the last segment of gno.land/p/moul/x/vm/riscv/v0 is v0,
+// and taking it produced the sentence "@moul put a new library on the chain,
+// called v0" on the live page. A version names a generation and never a project.
+//
+// The version is not always trailing either: gnoswap deploys as
+// gnoswap/v1/position, so dropping only the last one leaves the wrong answer for
+// a different path shape. Every version segment after the namespace goes.
+//
+// When that leaves nothing the last original segment comes back, because the
+// path really is gno.land/r/moul/v0 and "v0" is then the only name it has. Same
+// judgement as nameFromPath in pkg/httpapi, which is the other caller of
+// VersionSegment: a blank name is worse than a poor one.
+func splitPath(path string) (namespace, name string) { return SplitPath(path) }
+
+// SplitPath is splitPath, exported for the two packages outside this one that
+// have to agree with it: pkg/store derives the same namespace and name when it
+// builds a candidate, and did so from its own copy until 2026-09-28, which is
+// how "called v0" reached a reader from one copy while the other was fixed.
+func SplitPath(path string) (namespace, name string) {
 	parts := strings.Split(strings.TrimPrefix(path, "gno.land/"), "/")
 	if len(parts) < 3 {
 		// Not the usual shape. Return the last segment as the name and no
@@ -276,7 +338,16 @@ func splitPath(path string) (namespace, name string) {
 		}
 		return "", path
 	}
-	return parts[1], parts[len(parts)-1]
+	// Only the segments after the namespace are candidates. Without that bound,
+	// gno.land/r/moul/v0 drops its one real segment and falls back on the
+	// namespace, naming the package "moul".
+	last := parts[len(parts)-1]
+	for i := len(parts) - 1; i >= 2; i-- {
+		if !VersionSegment(parts[i]) {
+			return parts[1], parts[i]
+		}
+	}
+	return parts[1], last
 }
 
 // plural renders a count with its noun: "3 files", "1 file".

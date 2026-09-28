@@ -273,6 +273,12 @@ func TestSplitGnoPath(t *testing.T) {
 		{"gno.land/r/moul/home/sub", "moul", "sub"},
 		{"", "", ""},
 		{"nonsense", "", "nonsense"},
+		// Pins the delegation to discover.SplitPath rather than the rule
+		// itself, which is tested there. This package held a second copy that
+		// said "v0" while the emitter's said "riscv", so the fact stored on the
+		// event and the sentence built from it named different things. If
+		// somebody re-inlines a copy here, this is what catches it.
+		{"gno.land/p/moul/x/vm/riscv/v0", "moul", "riscv"},
 	} {
 		ns, name := splitGnoPath(tt.path)
 		if ns != tt.ns || name != tt.name {
