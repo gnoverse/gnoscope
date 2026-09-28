@@ -2,6 +2,8 @@ package store
 
 import (
 	"database/sql"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -129,6 +131,21 @@ type RealmFunction struct {
 
 	LastHeight int    `json:"last_height"`
 	LastTime   string `json:"last_time,omitempty"`
+
+	// GasMedian and GasP90 are what calling this function costs, in gas.
+	//
+	// Measured only over transactions that carried exactly one message, and
+	// GasSamples says how many those were. A transaction's gas is a property
+	// of the whole transaction, not of one message in it, so a bundled call
+	// cannot be attributed to any single function: charging one function the
+	// whole bill would inflate it by however many messages rode along.
+	//
+	// The narrower sample is the honest trade. A figure from n=1 is not a
+	// cost, so the page shows the sample size and says nothing when it is too
+	// small to mean anything.
+	GasMedian  int `json:"gas_median,omitempty"`
+	GasP90     int `json:"gas_p90,omitempty"`
+	GasSamples int `json:"gas_samples,omitempty"`
 }
 
 // RealmUsageRow is one message in the feed.
@@ -422,6 +439,10 @@ func (d *DB) RealmUsage(network, path string, f RealmUsageFilter) (*RealmUsage, 
 		return nil, err
 	}
 
+	if err := d.attachFunctionGas(out, with, srcArgs, resolved); err != nil {
+		return nil, err
+	}
+
 	// Feed page.
 	limit := f.Limit
 	if limit <= 0 {
@@ -452,4 +473,87 @@ func (d *DB) RealmUsage(network, path string, f RealmUsageFilter) (*RealmUsage, 
 		out.Rows = append(out.Rows, row)
 	}
 	return out, rRows.Err()
+}
+
+// attachFunctionGas fills the per-function gas figures.
+//
+// Only single-message transactions count. `act` is scoped to one realm, so
+// "one call in act" would still admit a transaction that also called two other
+// realms, and that transaction's gas is not this function's either. The
+// qualifying set is therefore transactions that appear exactly once across
+// calls and not at all in msg_runs or bank_sends: one message, chain-wide.
+//
+// Median and p90 rather than a mean: gas distributions here are long-tailed (a
+// first call that writes state costs several times a later one that does not),
+// and a mean over that describes no call anyone actually made.
+func (d *DB) attachFunctionGas(out *RealmUsage, with string, srcArgs []any, network string) error {
+	if len(out.Functions) == 0 {
+		return nil
+	}
+
+	q := with + `SELECT a.func_name, t.gas_used
+		FROM act a
+		JOIN transactions t ON t.network = ? AND t.tx_hash = a.tx_hash
+		WHERE a.kind = 'call'
+		  AND a.tx_hash IN (
+		      SELECT c.tx_hash FROM calls c
+		       WHERE c.network = ? AND c.tx_hash IN (SELECT tx_hash FROM act)
+		       GROUP BY c.tx_hash HAVING COUNT(*) = 1
+		  )
+		  AND a.tx_hash NOT IN (SELECT tx_hash FROM msg_runs WHERE network = ?)
+		  AND a.tx_hash NOT IN (SELECT tx_hash FROM bank_sends WHERE network = ?)`
+
+	args := append(append([]any{}, srcArgs...), network, network, network, network)
+	rows, err := d.db.Query(q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	byFunc := map[string][]int{}
+	for rows.Next() {
+		var name string
+		var gas sql.NullInt64
+		if err := rows.Scan(&name, &gas); err != nil {
+			return err
+		}
+		if gas.Valid && gas.Int64 > 0 {
+			byFunc[name] = append(byFunc[name], int(gas.Int64))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for i := range out.Functions {
+		g := byFunc[out.Functions[i].Name]
+		if len(g) == 0 {
+			continue
+		}
+		sort.Ints(g)
+		out.Functions[i].GasSamples = len(g)
+		out.Functions[i].GasMedian = percentileInt(g, 0.50)
+		out.Functions[i].GasP90 = percentileInt(g, 0.90)
+	}
+	return nil
+}
+
+// percentileInt returns the p-th percentile of a sorted slice, nearest-rank.
+//
+// Nearest-rank rather than interpolated: every value it can return is a gas
+// figure some transaction actually paid, which is what makes "the median call
+// costs 182,401" a true statement rather than an average of two calls that
+// both cost something else.
+func percentileInt(sorted []int, p float64) int {
+	if len(sorted) == 0 {
+		return 0
+	}
+	i := int(math.Ceil(p*float64(len(sorted)))) - 1
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(sorted) {
+		i = len(sorted) - 1
+	}
+	return sorted[i]
 }
