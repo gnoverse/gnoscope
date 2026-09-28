@@ -172,6 +172,19 @@ type DiscoverQuery struct {
 	Since     string // inclusive lower bound on at
 	Cursor    string // "at|id" from the previous page
 	Limit     int
+	// ByScore orders the candidate pool by stored score instead of by time.
+	//
+	// It exists because a ranked page cannot be built from a time-ordered
+	// fetch. Capping at the most recent N and then sorting those by score
+	// produces "the best of the most recent N", which is a different and
+	// quietly wrong answer: measured on mainnet 2026-09-28, a 200-row
+	// time-ordered pool contained 11 of the 21 deployer.first events, so half
+	// the highest-scoring kind on the chain could not reach the page at all.
+	//
+	// Cursor paging is not available with this, and the field is deliberately
+	// not combined with one: a keyset cursor needs the sort key to be unique
+	// and stable, and score_base is neither.
+	ByScore bool
 }
 
 // DiscoverLimitMax is the hard cap on a page.
@@ -231,12 +244,16 @@ func (d *DB) DiscoverEvents(q DiscoverQuery) ([]DiscoverEvent, string, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
+	order := "at DESC, id DESC"
+	if q.ByScore {
+		order = "score_base DESC, at DESC, id DESC"
+	}
 	rows, err := d.db.Query(`
 		SELECT network, id, kind, at, height, actor, target, namespace,
 		       facts, layers, evidence_tx, first_ever, reach, magnitude, score_base, built_at
 		  FROM discover_events
 		 WHERE `+strings.Join(where, " AND ")+`
-		 ORDER BY at DESC, id DESC
+		 ORDER BY `+order+`
 		 LIMIT ?`, args...)
 	if err != nil {
 		return nil, "", err
@@ -422,4 +439,45 @@ func percentileOf(sorted []float64, p float64) float64 {
 		i = len(sorted) - 1
 	}
 	return sorted[i]
+}
+
+// DiscoverTotal counts the events matching a filter, ignoring paging.
+//
+// Separate from the page query because the page is bounded and the count is
+// not. Reporting the size of the fetched slice as the total was the first
+// shape of this, and it published "total: 200" for a window holding 474: a
+// number in an envelope that a consumer has no way to check is worse than no
+// number, because it will be believed.
+func (d *DB) DiscoverTotal(q DiscoverQuery) (int, error) {
+	if q.Network == "" {
+		return 0, fmt.Errorf("discover is per chain: a network is required")
+	}
+	where := []string{"network = ?"}
+	args := []any{q.Network}
+	if len(q.Kinds) > 0 {
+		where = append(where, "kind IN ("+strings.TrimSuffix(strings.Repeat("?,", len(q.Kinds)), ",")+")")
+		for _, k := range q.Kinds {
+			args = append(args, k)
+		}
+	}
+	if q.Namespace != "" {
+		where = append(where, "namespace = ?")
+		args = append(args, q.Namespace)
+	}
+	if q.Actor != "" {
+		where = append(where, "actor = ?")
+		args = append(args, q.Actor)
+	}
+	if q.Since != "" {
+		where = append(where, "at >= ?")
+		args = append(args, q.Since)
+	}
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var n int
+	err := d.db.QueryRow(`SELECT COUNT(*) FROM discover_events WHERE `+
+		strings.Join(where, " AND "), args...).Scan(&n)
+	return n, err
 }

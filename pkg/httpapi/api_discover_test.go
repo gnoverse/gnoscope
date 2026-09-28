@@ -283,3 +283,27 @@ func TestTheEnvelopeSaysHowStaleItIs(t *testing.T) {
 		t.Errorf("counts = %v", resp.Counts)
 	}
 }
+
+// A number in an envelope that a consumer cannot check is worse than no number,
+// because it will be believed. This reported 200 for a window holding 474.
+func TestTotalCountsTheWindowNotThePage(t *testing.T) {
+	withGlossaryAPI(t)
+	api, db := newTestAPI(t)
+	for i := 0; i < 25; i++ {
+		seedEvent(t, db, "package.deployed", fmt.Sprintf("p%02d", i),
+			fmt.Sprintf("g1a%02d", i), fmt.Sprintf("ns%02d", i), 1, 25)
+	}
+
+	resp := getDiscover(t, api, "/api/discover?network=alpha&limit=5")
+	if len(resp.Events) != 5 {
+		t.Fatalf("%d events, want the 5 asked for", len(resp.Events))
+	}
+	if resp.Total != 25 {
+		t.Errorf("total = %d, want 25: it counts the window, not the page", resp.Total)
+	}
+	// And it respects the filter rather than counting everything.
+	filtered := getDiscover(t, api, "/api/discover?network=alpha&namespace=ns00&limit=5")
+	if filtered.Total != 1 {
+		t.Errorf("filtered total = %d, want 1", filtered.Total)
+	}
+}
