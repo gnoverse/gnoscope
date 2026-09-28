@@ -35,6 +35,11 @@ type CodeHit struct {
 	// out of a string.
 	Snippet string `json:"snippet"`
 	IsRealm bool   `json:"is_realm"`
+	// IsStdlib marks a hit in the node's own standard library rather than in
+	// anything deployed. The UI needs it to route: a stdlib package has no
+	// realm page, so linking a hit there would give every `strings` result a
+	// dead end.
+	IsStdlib bool `json:"is_stdlib,omitempty"`
 }
 
 // ensureCodeIndex creates the FTS5 table. Called from the schema migration.
@@ -202,6 +207,7 @@ func (d *DB) SearchCode(o CodeSearchOpts) ([]CodeHit, error) {
 			return nil, err
 		}
 		h.IsRealm = strings.HasPrefix(h.Path, "gno.land/r/")
+		h.IsStdlib = IsStdlibPath(h.Path)
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -235,7 +241,14 @@ var _ = sql.ErrNoRows
 // between them, and a retry when the syncer wins a race anyway.
 func (d *DB) BackfillCodeIndex() (int, error) {
 	var indexed, files int
-	if err := d.db.QueryRow(`SELECT count(*) FROM code_index`).Scan(&indexed); err != nil {
+	// Counts only on-chain rows. The index also holds stdlib, which comes from
+	// a different table and a different crawl (stdlib.go), so a bare
+	// count(code_index) would exceed count(package_files) the moment stdlib is
+	// present and the completeness guard below would conclude the on-chain
+	// half was done when it had not started. The domain prefix separates them:
+	// every on-chain path carries it, no stdlib path does.
+	if err := d.db.QueryRow(
+		`SELECT count(*) FROM code_index WHERE package_path LIKE 'gno.land/%'`).Scan(&indexed); err != nil {
 		return 0, err
 	}
 	if err := d.db.QueryRow(`SELECT count(*) FROM package_files`).Scan(&files); err != nil {
@@ -256,7 +269,16 @@ func (d *DB) BackfillCodeIndex() (int, error) {
 
 	const batch = 500
 	total := 0
-	for offset := 0; ; {
+	// Bounded by the corpus, not only by "a page came back empty".
+	//
+	// The exit condition used to be solely n == 0, which makes termination
+	// depend on the paging query advancing. Verified by breaking it: with the
+	// OFFSET pinned to 0 the loop copies the same page forever and the process
+	// spins until something kills it. A startup goroutine that never returns
+	// is a worse failure than an incomplete index, so the corpus size is the
+	// backstop and the empty page is the normal exit.
+	maxIters := files/batch + 2
+	for offset, iter := 0, 0; iter < maxIters; iter++ {
 		n, err := d.backfillBatch(offset, batch)
 		if err != nil {
 			// Report what was indexed so far alongside the error: a partial
