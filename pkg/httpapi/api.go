@@ -945,18 +945,25 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/stats", a.HandleStats)
 	mux.HandleFunc("GET /api/pulse", a.HandlePulse)
 	mux.HandleFunc("GET /api/realms", a.HandleRealms)
-	// These three beat the /api/realm/{path...} wildcard below by Go 1.22 mux
+	// These four beat the /api/realm/{path...} wildcard below by Go 1.22 mux
 	// precedence: the more specific pattern wins, and no gno path starts with
-	// "cousage/", "defi/" or "usage/" because the first segment is always r/
-	// or p/.
+	// "cousage/", "defi/", "deploys/" or "usage/" because the first segment is
+	// always r/ or p/.
 	mux.HandleFunc("GET /api/realm/cousage/{path...}", a.HandleRealmCoUsage)
 	mux.HandleFunc("GET /api/realm/defi/{path...}", a.HandleRealmDefi)
+	mux.HandleFunc("GET /api/realm/deploys/{path...}", a.HandleRealmDeploys)
 	mux.HandleFunc("GET /api/realm/usage/{path...}", a.HandleRealmUsage)
 	mux.HandleFunc("GET /api/realm/{path...}", a.HandleRealm)
 	mux.HandleFunc("GET /api/views", a.HandleViews)
 	mux.HandleFunc("GET /api/packages", a.HandlePackages)
 	mux.HandleFunc("GET /api/packages/facets", a.HandlePackageFacets)
-	mux.HandleFunc("GET /api/tx/{hash}", a.HandleTx)
+	// {hash...}, not {hash}: roughly a third of gno transaction hashes are
+	// base64 carrying a slash, and pasted unescaped that is two path segments.
+	// A single-segment wildcard matched neither, so the request fell through to
+	// the SPA and came back 200 with a page of HTML, which a caller cannot tell
+	// apart from an answer. The trailing form matches the escaped spelling too,
+	// so nothing that worked before changes.
+	mux.HandleFunc("GET /api/tx/{hash...}", a.HandleTx)
 	mux.HandleFunc("GET /api/txs", a.HandleTxs)
 	mux.HandleFunc("GET /api/address/{addr}", a.HandleAddress)
 	mux.HandleFunc("GET /api/address/{addr}/sessions", a.HandleAddressSessions)
@@ -965,6 +972,8 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions", a.HandleSessions)
 	mux.HandleFunc("GET /api/search", a.HandleSearch)
 	mux.HandleFunc("GET /api/code/search", a.HandleCodeSearch)
+	mux.HandleFunc("GET /api/stdlib", a.HandleStdlib)
+	mux.HandleFunc("GET /api/stdlib/{path...}", a.HandleStdlib)
 	mux.HandleFunc("GET /api/symbols/search", a.HandleSymbolSearch)
 	mux.HandleFunc("GET /api/users/search", a.HandleUserSearch)
 	mux.HandleFunc("GET /api/symbols/status", a.HandleSymbolIndexStatus)
@@ -1047,6 +1056,17 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/address/{addr}/achievements", a.HandleAddressAchievements)
 	mux.HandleFunc("GET /api/address/{addr}/holdings", a.HandleAddressHoldings)
 	mux.HandleFunc("GET /api/directory/people", a.HandleDirectoryPeople)
+
+	// Badges. Registered through the same recorder as everything above so they
+	// show up in /api/endpoints, even though they are not under /api/: an
+	// endpoint reference that omits the one part of the API meant to be pasted
+	// into somebody else's document has it backwards.
+	//
+	// The SPA's catch-all "GET /" is registered in run(); Go's mux prefers the
+	// more specific pattern, so these win without either side knowing about the
+	// other.
+	mux.HandleFunc("GET "+BadgePrefix+"realm/{path...}", a.HandleBadgeRealm)
+	mux.HandleFunc("GET "+BadgePrefix+"network", a.HandleBadgeNetwork)
 }
 
 // --- RPC / indexer chain agreement -----------------------------------------

@@ -151,15 +151,27 @@ func (a *API) HandleAddressAchievements(w http.ResponseWriter, r *http.Request) 
 		TxHash string `json:"tx_hash,omitempty"`
 	}
 
+	// earned and total count only what can be earned.
+	//
+	// A marker badge (session-key) describes what an address *is* and a master
+	// account can never become one, so counting it gave every human reader a
+	// ceiling one below the one printed, with nothing saying which badge was
+	// the impossible one. It is still returned, and still drawn: on a session
+	// address it is the most useful line on the page.
 	out := make([]entry, 0, len(achievements.Catalog))
-	earned := 0
+	earned, total := 0, 0
 	for _, def := range achievements.Catalog {
 		e := entry{achievementView: achievementView{
 			Def: def, Holders: counts[def.Slug], GroupLabel: achievements.GroupLabel[def.Group],
 		}}
+		if !def.Marker {
+			total++
+		}
 		if u, ok := byslug[def.Slug]; ok {
 			e.Unlocked, e.Height, e.Time, e.TxHash = true, u.Height, u.Time, u.TxHash
-			earned++
+			if !def.Marker {
+				earned++
+			}
 		}
 		out = append(out, e)
 	}
@@ -169,7 +181,7 @@ func (a *API) HandleAddressAchievements(w http.ResponseWriter, r *http.Request) 
 		"network":      network,
 		"achievements": out,
 		"earned":       earned,
-		"total":        len(achievements.Catalog),
+		"total":        total,
 		"computed_at":  a.db.AchievementsComputedAt(),
 	})
 }

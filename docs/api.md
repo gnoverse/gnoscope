@@ -400,12 +400,30 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/symbols/status` | what the symbol index covers |
 | `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset` |
 | `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
+| `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
 | `GET /api/deps/{path...}` | dependency graph as `{path: [imports]}`. `dir=dependents` reverses direction, and defaults to one hop; `depth=N` caps the reverse walk, `depth=0` is unbounded |
 | `GET /api/realm/cousage/{path...}` | co-usage: what else the addresses that called this realm also called. `{path, network, window, callers, partners[], truncated}`, each partner `{path, shared, calls, callers}` ordered by `shared` descending. `window` = `all` (default), `90d`, `30d`, `7d`, `24h`, unknown values are a 400. `limit` defaults to 100, capped at 1000. **Resolves a single network** the same way the contracts map does |
 | `GET /api/storage/{path...}` | storage events for a package. **Requires `network`**: the figures are denominated amounts and blending chains would be meaningless |
 | `GET /api/realm/defi/{path...}` | what a package holds: its two accounts' live balances, every native transfer through them, and its GRC20 positions. **Requires `network`**. The `flows[]` table pages with `flows_limit` (default 500, capped at 5000, `0` for a totals-only read) and `flows_offset`, counting back from the newest leg; `flows_total` is the whole history and every balance figure is summed over all of it, never over the page. `counterparties[]` is the same legs collapsed by who was at the other end (`sent`, `received`, `net` from *that account's* side, `legs`), always over every leg and never over the page, ranked by gross and capped at 50 with `counterparties_total` beside it. See below |
 | `GET /api/events/{path...}` | every event tagged with a package's path. Bounded: `limit` defaults to 200, capped at 2000. In all-networks mode it queries every chain and tags each row with its `network`. Unlike `/api/allevents` this is not filtered to `GnoEvent`, so the chain's own `StorageDepositEvent` / `StorageUnlockEvent` for that path are included; the realm page hides those behind a toggle rather than dropping them here |
+
+### The deploy history is the submissions, not the package row
+
+`/api/realm/deploys` reads `package_submissions`, which holds one row per
+message and is never overwritten. `packages` is a current-state projection with
+one row per path, so reading a history out of it returns exactly one entry and
+presents it as the whole story.
+
+This is not a rare edge. Under gno.land's inert code submission policy a parked
+package is invisible to every liveness probe (`vm/qfile`, `vm/qrender`), so a
+deployer who verifies by querying the path concludes the deploy failed and
+resubmits, once per retry, for as long as an approver is stuck. Several rows at
+one path are therefore usually the same code sent again rather than a change.
+
+What changed *between* two submissions is not answerable here: `package_files`
+stores the current body and nothing else, so a diff needs each submission's
+files re-fetched from the chain.
 
 ### The two accounts a package owns
 
@@ -836,7 +854,7 @@ answer it must never give.
 | endpoint | description |
 |---|---|
 | `GET /api/txs` | recent transactions. `limit` (default 500, max 2000), `offset`, `type` = `MsgCall`/`MsgAddPackage`/`MsgRun`/`BankMsgSend`, `success` = `true`/`false`. A `type` filter is served **from local storage** and pages properly with a real total; without one the rows come from the indexer and `total` is the fetched window. `from_storage` says which |
-| `GET /api/tx/{hash}` | one transaction: messages, events, errors |
+| `GET /api/tx/{hash...}` | one transaction: messages, events, errors. The hash may be pasted raw or percent-encoded; about a third are base64 carrying a `/`, which is why the pattern is a trailing wildcard |
 | `GET /api/blocks` | recent blocks. `limit` |
 | `GET /api/block/{height}` | one block and its transactions. **Requires `network`**: a height alone does not identify a block across chains |
 | `GET /api/allevents` | recent `GnoEvent`s across all packages, and only those: the chain's storage bookkeeping is filtered out server-side. `limit` defaults to 200, capped at 2000. Rows carry their `network` |
@@ -856,7 +874,7 @@ labels this figure "recent" for the same reason.
 | `GET /api/sessions` | delegation chain-wide: `stats` (grants, and the live/expired/revoked partition, counted against one instant so they always sum), `realms` ranked by distinct delegating accounts rather than grant count, and the grant log, newest first. `scanned` reports how far the historical sweep has got, so a partial index says so instead of presenting itself as the whole chain |
 | `GET /api/accounts` | most active accounts. `limit` (default 100, max 500), `offset`, and `sort` = `calls`, `deploys`, `runs`, `sends` or total activity. One row per `(address, network)`: the same key on two chains is two different actors, and each row carries its `network` |
 | `GET /api/address/{addr}/identity` | **what this address is**, before anything about what it did. A gno address carries no type, so a person's wallet, a realm's treasury, a realm's storage deposit and a delegated signing key are the same forty characters. `kind` is the verdict (`package`, `package_deposit`, `session_key`, `signer`, `unsigned`, `unknown`) and the rest is the evidence: `package` from the derived index, `session_of` from the replayed grant, and `chain` live from `auth/accounts/{addr}`. `chain.has_signed` is the one fact nothing else can supply: tm2 records a public key the first time it verifies a signature and never otherwise, so a null key on a funded account proves nobody has ever signed with it. `chain.vesting` proves a genesis allocation, because the only caller of `SetVesting` is `InitChainerConfig.applyBalance`; ⚠️ its **absence proves nothing**, and the page says so rather than printing "not in genesis". `chain_error` rather than a missing `chain` when the node could not be reached, so an outage never reads as "this address has no account" |
-| `GET /api/address/{addr}/holdings` | what an account holds: the same payload and the same two ledgers as `/api/realm/defi`, for an address nobody can derive a package path for. Takes the same `flows_limit`/`flows_offset` and `token_flows_limit`/`token_flows_offset`. `path` comes back empty and the storage-deposit fields are absent, because a plain account owns one address rather than two. **Requires `network`**, for the reason the realm version does: two chains' ugnot cannot be added. ⚠️ `derived_ugnot` means something weaker here. It sums `TransferEvent` legs, and gas collection and the storage deposit go through `SendCoinsUnrestricted`, which emits none, so for a realm's banker the reconstruction is exact and for a signing account it is short by exactly that account's fee spend |
+| `GET /api/address/{addr}/holdings` | what an account holds: the same payload and the same two ledgers as `/api/realm/defi`, for an address nobody can derive a package path for. Takes the same `flows_limit`/`flows_offset` and `token_flows_limit`/`token_flows_offset`. `path` comes back empty and the storage-deposit fields are absent, because a plain account owns one address rather than two. **Requires `network`**, for the reason the realm version does: two chains' ugnot cannot be added. ⚠️ `derived_ugnot` means something weaker here. It sums `TransferEvent` legs, and gas collection and the storage deposit go through `SendCoinsUnrestricted`, which emits none, so for a realm's banker the reconstruction is exact and for a signing account it is short by exactly that account's fee spend. `gas_ugnot` and `storage_deposit_ugnot` are that spend, both indexed, so the shortfall is decomposed rather than disclaimed: `unexplained_ugnot` is `live - (derived - gas - storage_deposit)` and is **0 to the ugnot** on a post-genesis account (verified against mainnet on 2026-09-28). A positive residual is a credit with no transfer behind it, which only genesis produces; `storage_deposit_ugnot` is signed, so an unlock's refund is negative. ⚠️ It also includes the deposits taken on **enable** transactions for packages this address submitted: under the inert submission policy `MsgAddPackage` parks the package and takes no deposit (every post-genesis deploy on mainnet emits no events at all), and the charge lands later on the approver's `MsgEnablePackage`, billed to the creator. Attributing storage by the transaction's caller books it to the approver, which misplaced 118.91 of one mainnet deployer's 119.14 GNOT |
 
 ## Directory and achievements
 
@@ -1434,6 +1452,22 @@ one disconnects.
 A network configured without an indexer client gets no feed rather than a broken
 one, and a subscription naming a network with no feed is accepted but silent —
 the connection stays open and delivers nothing.
+
+## Badges
+
+`GET /_badges/…` is the one part of the surface that answers with an image
+rather than JSON: small SVG cards meant to be embedded in somebody else's
+document, including a gno realm's own `Render()`.
+
+```
+/_badges/realm/{path...}?network=&metric=messages|callers&days=&theme=
+/_badges/network?network=&days=&theme=
+```
+
+They are registered through the same route table as everything above, so they
+appear in `/api/endpoints`. Windows, caching, the drawn-not-returned error
+convention and the gnoweb CSP allowlist that decides whether one renders on
+gno.land at all: [docs/badges.md](badges.md).
 
 ## Embed mode
 

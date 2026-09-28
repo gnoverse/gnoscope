@@ -400,33 +400,19 @@ func (d *DB) sourceChainSpike(network, since string) ([]discoverCandidate, error
 	return out, nil
 }
 
-// splitGnoPath returns the namespace and the last segment of a gno path.
+// splitGnoPath returns the namespace and the human name of a gno path.
 // "gno.land/r/moul/hello" is "moul" and "hello".
+//
+// It defers to discover.SplitPath rather than deriving it, because this used to
+// be a second implementation and the two disagreed the moment one was fixed. A
+// version segment is not a name, and this copy still called
+// gno.land/p/moul/x/vm/riscv/v0 "v0" while the emitter's copy called it "riscv",
+// so the fact and the sentence built from it named different things.
 func splitGnoPath(path string) (namespace, name string) {
 	if path == "" {
 		return "", ""
 	}
-	segs := splitSlash(path)
-	// gno.land / r / <namespace> / <name...>
-	if len(segs) >= 4 {
-		return segs[2], segs[len(segs)-1]
-	}
-	if len(segs) > 0 {
-		return "", segs[len(segs)-1]
-	}
-	return "", ""
-}
-
-func splitSlash(s string) []string {
-	var out []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '/' {
-			out = append(out, s[start:i])
-			start = i + 1
-		}
-	}
-	return append(out, s[start:])
+	return discover.SplitPath(path)
 }
 
 // atLabel renders a registered name the way the emitters expect it, and an

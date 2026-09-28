@@ -17,6 +17,7 @@ realms is the point.
 - **Usage tracking** — direct calls, indirect imports, MsgRun references
 - **Multi-network** — several chains in one instance and one database, switchable
 - **Analytics** — activity over time, gas, storage growth, leaderboards
+- **Embeddable badges** — `/_badges/*` draws an SVG usage graph any markdown can carry, a gno realm's own `Render()` included
 - **Single binary** — Go backend with the frontend embedded, no Node.js
 
 ![Analytics](docs/images/analytics.png)
@@ -60,6 +61,7 @@ Everything lives in [`docs/`](docs/) — start there.
 | [docs/architecture.md](docs/architecture.md) | components, data flow, design decisions, known weak points |
 | [docs/api.md](docs/api.md) | full `/api/*` reference |
 | [docs/mcp.md](docs/mcp.md) | the read-only MCP endpoint at `/mcp`, for agents |
+| [docs/badges.md](docs/badges.md) | `/_badges/*`: SVG cards other documents embed, including a gno realm's `Render()` |
 | [docs/development.md](docs/development.md) | local development loop |
 | [docs/deployment.md](docs/deployment.md) | flags, config, operating notes |
 | [docs/screenshots.md](docs/screenshots.md) | regenerating the images above |

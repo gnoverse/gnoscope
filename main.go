@@ -19,6 +19,7 @@ import (
 	"github.com/moul/mygnoscan/pkg/discover"
 	"github.com/moul/mygnoscan/pkg/httpapi"
 	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/moul/mygnoscan/pkg/stdlibs"
 	"github.com/moul/mygnoscan/pkg/store"
 	"github.com/moul/mygnoscan/pkg/syncer"
 	"github.com/moul/mygnoscan/pkg/web"
@@ -176,6 +177,48 @@ func run() error {
 			log.Printf("code index: backfilled %d files", n)
 		}
 	}()
+
+	// Crawl the standard library, per network, in the background.
+	//
+	// Stdlib is never a MsgAddPackage, so the syncer cannot produce it and an
+	// index without it is unusable for an editor or an agent: the first symbol
+	// either looks up is in `strings` or `avl`. It is ~50 packages read once,
+	// so this costs the node almost nothing and is skipped entirely when the
+	// source is already held.
+	//
+	// Non-fatal and off the startup path: a chain with no stdlib crawled is a
+	// thinner search index, not a reason to refuse to serve.
+	for _, net := range cfg.Networks {
+		if net.RPCURL == "" {
+			continue
+		}
+		go func(n config.NetworkConfig) {
+			// Reindex first: source already held but missing from the index is
+			// the cheap case and needs no network at all.
+			if got, err := db.BackfillStdlibIndex(n.ID); err != nil {
+				log.Printf("[%s] stdlib reindex: %v", n.ID, err)
+			} else if got > 0 {
+				log.Printf("[%s] stdlib: reindexed %d files", n.ID, got)
+			}
+			held, _ := db.StdlibFileCount(n.ID)
+			if held > 0 {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			c := &stdlibs.Crawler{
+				DB: db, Fetch: httpapi.RPCFetcher{RPCURL: n.RPCURL},
+				Network: n.ID, Workers: 4,
+			}
+			res, err := c.Run(ctx)
+			if err != nil {
+				log.Printf("[%s] stdlib crawl: %v", n.ID, err)
+				return
+			}
+			log.Printf("[%s] stdlib: %d packages, %d files (%d skipped)",
+				n.ID, res.Packages, res.Files, res.Skipped)
+		}(net)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
