@@ -88,10 +88,16 @@ type discoverResponse struct {
 
 // DiscoverCandidatePool is how many stored events one request ranks over.
 //
-// Larger than any page, because the page is chosen from it rather than being
-// it. Bounded because the whole point of the rollup is that a request does not
-// scan the chain.
-const DiscoverCandidatePool = 1000
+// It is the store's own cap, and asking for more is not a way to get more: the
+// store clamps, which is how the first version of this ranked 50 events while
+// the constant said 1000.
+//
+// A bounded pool is sound here only because it is ordered by score. The events
+// outside it are the lowest-scoring in the window, and an event's final score
+// never exceeds its stored base, so none of them can overtake something inside.
+// Ordered by time the same bound was unsound, and hid ten of the twenty-one
+// highest-scoring events on mainnet.
+const DiscoverCandidatePool = store.DiscoverLimitMax
 
 // DiscoverVocabulary is the event-vocabulary version. A consumer that stored
 // picks against v1 ids can tell when the meaning of a kind changed.

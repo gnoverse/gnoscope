@@ -482,3 +482,33 @@ func TestDiscoverTotalCountsTheFilterNotThePage(t *testing.T) {
 		t.Error("counted across every chain")
 	}
 }
+
+// Asking for more than the cap gives the cap, not the default.
+//
+// These were one branch, so a request for 1000 silently became 50. The API's
+// candidate pool asked for 1000 and ranked an eighth of the window, reporting
+// nothing unusual while doing it.
+func TestAnOversizedLimitClampsToTheCapNotTheDefault(t *testing.T) {
+	db := NewTestDB(t)
+	for i := 0; i < DiscoverLimitMax+20; i++ {
+		seed(t, db, ev("alpha", "package.deployed", fmt.Sprintf("p%03d", i), 0,
+			fmt.Sprintf("2026-09-20T10:%02d:%02dZ", i/60, i%60), int64(100+i)))
+	}
+
+	got, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha", Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != DiscoverLimitMax {
+		t.Errorf("asked for 1000 and got %d, want the cap of %d", len(got), DiscoverLimitMax)
+	}
+
+	// And an unset limit still gets the default, which is the other half.
+	got, _, err = db.DiscoverEvents(DiscoverQuery{Network: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 50 {
+		t.Errorf("unset limit returned %d, want the default 50", len(got))
+	}
+}
