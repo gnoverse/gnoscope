@@ -16,13 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/analyzer"
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/discover"
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/registry"
-	"github.com/moul/mygnoscan/pkg/store"
-	"github.com/moul/mygnoscan/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/analyzer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/syncer"
 )
 
 type API struct {
@@ -417,7 +417,7 @@ func (a *API) HandleGovDAO(w http.ResponseWriter, r *http.Request) {
 // list plus the memberstore's tiers and members, read straight from gov/dao's
 // own Render() output over RPC (see govdao.go) rather than reimplemented
 // against its storage — the realm is the source of truth for its own rules,
-// including ones mygnoscan does not know about (a tier threshold changing,
+// including ones gnoscope does not know about (a tier threshold changing,
 // say).
 // HandleInertQueue serves the current parked-package queue: every path
 // vm/qinertpaths reports, enriched with each one's own vm/qpkgmeta_json

@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/glossary"
+	"github.com/gnoverse/gnoscope/pkg/glossary"
 )
 
 // The server's root package loads the glossary at init; a test binary for this

@@ -11,7 +11,7 @@
 //
 //   - **No gnovm dependency.** The `@type` discriminators in the payload carry
 //     everything needed to walk it structurally, so this package reads gno's
-//     JSON without importing gno. mygnoscan ships as one binary with one
+//     JSON without importing gno. gnoscope ships as one binary with one
 //     non-stdlib direct dependency, and importing the GnoVM to decode its own
 //     wire format would trade that for a type switch we can write here.
 //

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // seedProposedBlocks gives two proposers an uneven share, so the share

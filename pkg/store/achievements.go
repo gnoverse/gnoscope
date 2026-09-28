@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/achievements"
+	"github.com/gnoverse/gnoscope/pkg/achievements"
 )
 
 // Achievements: who has done what on chain, precomputed.

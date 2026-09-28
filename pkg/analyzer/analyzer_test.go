@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // ExtractImports feeds the dependency graph, which is what the realm/package

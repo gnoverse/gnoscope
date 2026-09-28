@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/discover"
-	"github.com/moul/mygnoscan/pkg/glossary"
+	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/glossary"
 )
 
 // Building the Discover feed on the tick.

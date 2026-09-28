@@ -1,7 +1,7 @@
 .PHONY: test e2e screenshots run install dev build awesome awesome-check
 
 build:
-	CGO_ENABLED=0 go build -o mygnoscan .
+	CGO_ENABLED=0 go build -o gnoscope .
 
 run:
 	CGO_ENABLED=0 go run .

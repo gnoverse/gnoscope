@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The assets views, over the GRC20 transfer ledger.

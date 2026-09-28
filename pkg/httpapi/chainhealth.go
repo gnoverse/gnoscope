@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // Asking the node itself, instead of inferring its health from the indexer.
 //
-// Everything mygnoscan knew about whether a chain was up came from
+// Everything gnoscope knew about whether a chain was up came from
 // `livenessOf`, which reads the newest block *out of the indexer*. That
 // conflates two independent failures into one word. When staging's indexer went
 // to NXDOMAIN the page said "unreachable", while the node was answering
@@ -395,7 +395,7 @@ func (a *API) probeNetworks(ctx context.Context, networks []config.NetworkConfig
 //
 // Sourced from the local `blocks` table rather than from a node, so it costs
 // one indexed query per network and shows the same history after a reload. The
-// consequence is honest and worth knowing: a network mygnoscan is not
+// consequence is honest and worth knowing: a network gnoscope is not
 // successfully syncing has an empty strip even when its chain is fine, which is
 // why the strip sits beside the diagnosis rather than replacing it.
 

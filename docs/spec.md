@@ -1,6 +1,6 @@
 # Specification
 
-What mygnoscan is, what it stores, and what it means.
+What gnoscope is, what it stores, and what it means.
 
 ## Purpose
 
@@ -13,7 +13,7 @@ It tracks multiple networks in one instance and one database.
 
 ## Scope
 
-mygnoscan reads from a [tx-indexer](https://github.com/gnolang/tx-indexer)
+gnoscope reads from a [tx-indexer](https://github.com/gnolang/tx-indexer)
 GraphQL endpoint, and optionally from an RPC endpoint for state that the indexer
 does not carry (account balances). It never writes to a chain, holds keys, or
 signs anything.
@@ -117,7 +117,7 @@ everything newer than the build, so the newest bucket does not lag the timer.
   other team and none of the eight is ours, so one number marks those the most
   shareable things on the chain. Discover judges `interest` and `clearance`
   separately, and **`share` requires `clearance == "ours"` with no other path to
-  it at any interest level**. The operator supplies who owns what; mygnoscan
+  it at any interest level**. The operator supplies who owns what; gnoscope
   ships no opinion, because a public explorer asserting an affiliation on
   somebody else's behalf is not its job. With the empty default every
   attributable event is `unclear`, so the best verdict it can reach is `maybe`:
@@ -230,7 +230,7 @@ their controls are a viewport plus half a dozen knobs rather than a list filter.
 ## Non-goals
 
 - Writing to chains, custody, or signing.
-- Being a general-purpose indexer: mygnoscan is a cache over one, not a
+- Being a general-purpose indexer: gnoscope is a cache over one, not a
   replacement for it.
 - Historical state reconstruction. It stores what transactions say, not what state
   was at a given height.

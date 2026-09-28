@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // Session grants, replayed from the auth/* messages.
@@ -190,7 +190,7 @@ type sessionGrantMsg struct {
 // decodeSessionMsg reads a grant out of a message, from either shape.
 //
 // Both are live simultaneously and a single instance sees both, which is the
-// thing that makes this subtle. mygnoscan's mainnet is configured with two
+// thing that makes this subtle. gnoscope's mainnet is configured with two
 // interchangeable indexers and rotates to the second whenever the first rate
 // limits it:
 //

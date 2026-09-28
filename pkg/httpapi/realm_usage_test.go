@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // /api/realm/usage/{path...} has to beat the /api/realm/{path...} wildcard it

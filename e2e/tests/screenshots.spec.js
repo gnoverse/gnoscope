@@ -131,7 +131,7 @@ test.describe('screenshots', () => {
       }
       if (name === 'rail-collapsed') {
         await page.goto('/');
-        await page.evaluate(() => localStorage.setItem('mygnoscan-rail', 'collapsed'));
+        await page.evaluate(() => localStorage.setItem('gnoscope-rail', 'collapsed'));
       }
       await page.goto(path);
       await settle(page);
@@ -144,7 +144,7 @@ test.describe('screenshots', () => {
       }
       await page.screenshot({ path: join(OUT, `${name}.png`), fullPage: true });
       if (name === 'rail-collapsed') {
-        await page.evaluate(() => localStorage.removeItem('mygnoscan-rail'));
+        await page.evaluate(() => localStorage.removeItem('gnoscope-rail'));
       }
     });
   }

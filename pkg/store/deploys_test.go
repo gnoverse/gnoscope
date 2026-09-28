@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // The history a realm has is its submissions, and a resubmission is a routine

@@ -4,8 +4,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/achievements"
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/achievements"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // The catalog is twenty-odd hand-written queries against nine tables, and a

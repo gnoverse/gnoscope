@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // Fetcher is the node read this package needs. One method, so the crawler can

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 func testNetworks(ids ...string) ([]config.NetworkConfig, map[string]*indexer.Client) {

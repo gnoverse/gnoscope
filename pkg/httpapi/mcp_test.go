@@ -642,15 +642,15 @@ func TestMCPOriginValidation(t *testing.T) {
 	}{
 		{
 			name: "a CLI client sends no Origin and is the normal case",
-			host: "mygnoscan.example", origin: "", wantStatus: 200,
+			host: "gnoscope.example", origin: "", wantStatus: 200,
 		},
 		{
 			name: "a browser on our own page",
-			host: "mygnoscan.example", origin: "https://mygnoscan.example", wantStatus: 200,
+			host: "gnoscope.example", origin: "https://gnoscope.example", wantStatus: 200,
 		},
 		{
 			name: "a browser on somebody else's page",
-			host: "mygnoscan.example", origin: "https://evil.example.com", wantStatus: 403,
+			host: "gnoscope.example", origin: "https://evil.example.com", wantStatus: 403,
 		},
 		{
 			// A developer with the explorer on one local port and their own
@@ -661,12 +661,12 @@ func TestMCPOriginValidation(t *testing.T) {
 		{
 			name:    "an origin the operator allowed",
 			allowed: []string{"https://partner.example"},
-			host:    "mygnoscan.example", origin: "https://partner.example", wantStatus: 200,
+			host:    "gnoscope.example", origin: "https://partner.example", wantStatus: 200,
 		},
 		{
 			name:    "a wildcard is a choice an operator can make",
 			allowed: []string{"*"},
-			host:    "mygnoscan.example", origin: "https://anything.example", wantStatus: 200,
+			host:    "gnoscope.example", origin: "https://anything.example", wantStatus: 200,
 		},
 		{
 			// The whole reason the flag exists. Forging both headers defeats
@@ -694,13 +694,13 @@ func TestMCPOriginValidation(t *testing.T) {
 			// health check against the listen address is not locked out of the
 			// endpoint it is checking.
 			name:         "loopback is accepted beside a configured public origin",
-			publicOrigin: "https://mygnoscan.example",
+			publicOrigin: "https://gnoscope.example",
 			host:         "127.0.0.1:8888", origin: "", wantStatus: 200,
 		},
 		{
 			name:         "the public origin's own page, behind a proxy",
-			publicOrigin: "https://mygnoscan.example",
-			host:         "mygnoscan.example", origin: "https://mygnoscan.example", wantStatus: 200,
+			publicOrigin: "https://gnoscope.example",
+			host:         "gnoscope.example", origin: "https://gnoscope.example", wantStatus: 200,
 		},
 	}
 
@@ -740,7 +740,7 @@ func TestMCPRefusedOriginCostsNoRate(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, MCPPath,
 			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
 		r.RemoteAddr = "203.0.113.11:4242"
-		r.Host = "mygnoscan.example"
+		r.Host = "gnoscope.example"
 		if origin != "" {
 			r.Header.Set("Origin", origin)
 		}

@@ -147,7 +147,7 @@ func (d *DB) CoinTransfersFor(network, addr string, limit, offset int) ([]CoinTr
 // The honesty check the GRC20 ledger needs too: a position reconstructed from a
 // ledger that starts after the package's own deploy is a floor, not a figure.
 // Reporting the floor lets a page say which it is showing rather than leaving a
-// reader to assume (gnoverse/mygnoscan's GRC20 ledger shipped without this and
+// reader to assume (gnoverse/gnoscope's GRC20 ledger shipped without this and
 // reported a truncated supply as exact).
 func (d *DB) EarliestCoinTransfer(network string) int {
 	d.mu.RLock()

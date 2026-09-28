@@ -26,7 +26,7 @@ type Options struct {
 	// a third party home without its operator having asked for it is not a
 	// default anyone should inherit by upgrading.
 	//
-	// The deployment at mygnoscan.moul.p2p.team passes Simple Analytics'
+	// The deployment at gnoscope.com passes Simple Analytics'
 	// https://scripts.simpleanalyticscdn.com/latest.js, which sets no cookie
 	// and stores nothing on the device. Any provider serving a single
 	// self-contained script works the same way.
@@ -255,7 +255,7 @@ func matchesETag(inm, etag string) bool {
 //
 // Injected here rather than written into index.html because the frontend is
 // one file compiled into the binary and shared by every deployment, and a
-// hardcoded tag would make anyone else running mygnoscan report to our account.
+// hardcoded tag would make anyone else running gnoscope report to our account.
 //
 // The URL lands in an HTML attribute, so it is validated as an absolute http(s)
 // URL and escaped. A misconfigured flag fails at startup rather than shipping

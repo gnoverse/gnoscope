@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
-	"github.com/moul/mygnoscan/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/syncer"
 )
 
 func (a *API) HandleStats(w http.ResponseWriter, r *http.Request) {

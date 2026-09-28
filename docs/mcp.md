@@ -11,7 +11,7 @@ trade that makes that safe.
 ## Connecting
 
 ```bash
-claude mcp add --transport http mygnoscan https://<host>/mcp
+claude mcp add --transport http gnoscope https://<host>/mcp
 ```
 
 Any client that takes a JSON config:
@@ -19,7 +19,7 @@ Any client that takes a JSON config:
 ```json
 {
   "mcpServers": {
-    "mygnoscan": { "type": "http", "url": "https://<host>/mcp" }
+    "gnoscope": { "type": "http", "url": "https://<host>/mcp" }
   }
 }
 ```
@@ -137,8 +137,8 @@ It earned its place immediately: the first run found the missing Host and
 Origin validation above.
 
 ```sh
-go build -o /tmp/mygnoscan .
-/tmp/mygnoscan -listen 127.0.0.1:8901 -db /tmp/c.db -network conformance   -indexer http://127.0.0.1:1/graphql/query -sync=false -block-history-days -1   -mcp-rate 0 -mcp-concurrency 0 -mcp-public-origin http://127.0.0.1:8901 &
+go build -o /tmp/gnoscope .
+/tmp/gnoscope -listen 127.0.0.1:8901 -db /tmp/c.db -network conformance   -indexer http://127.0.0.1:1/graphql/query -sync=false -block-history-days -1   -mcp-rate 0 -mcp-concurrency 0 -mcp-public-origin http://127.0.0.1:8901 &
 npx @modelcontextprotocol/conformance server --url http://127.0.0.1:8901/mcp   --expected-failures mcp/conformance-baseline.yaml
 ```
 

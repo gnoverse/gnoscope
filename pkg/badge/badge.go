@@ -1,6 +1,6 @@
 // Package badge draws the small SVG cards other documents embed.
 //
-// The point is a graph that survives leaving mygnoscan. A realm's Render()
+// The point is a graph that survives leaving gnoscope. A realm's Render()
 // returns markdown, gnoweb turns it into HTML, and an `![](…)` is the only
 // hook a realm has into anything the chain does not store. So the unit here is
 // an image, not a component: whatever a browser will paint inside an <img> and
@@ -14,7 +14,7 @@
 // hand rather than by measuring text.
 //
 // It also has to be inert as a *document*. Served at its own URL it is a
-// top-level document on mygnoscan's origin, and every string it interpolates
+// top-level document on gnoscope's origin, and every string it interpolates
 // (a package path off the chain, a label off a query string) is attacker
 // controlled. So: one escaper, applied at the single point where text becomes
 // markup, and no code path that writes a caller's bytes any other way.
@@ -150,7 +150,7 @@ func describe(c Card) string {
 		}
 	}
 	if len(parts) == 0 {
-		return "mygnoscan badge"
+		return "gnoscope badge"
 	}
 	return strings.Join(parts, " · ")
 }
