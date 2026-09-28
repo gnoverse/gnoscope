@@ -89,9 +89,19 @@ and the one-pixel text shadow are copied from shields deliberately.
 `status` is the only kind that asks the chain rather than the index, because
 `absent` has to be answerable for a path nothing has ever been deployed to: a
 badge in the README of a realm that is not live yet is exactly the case it
-exists for. An RPC that does not answer reads `unknown`, never `absent` — the
-difference is "we could not ask" versus "your realm is not there", and one of
-those is alarming.
+exists for.
+
+**An unreachable RPC never reads `absent`.** "We could not ask" and "your realm
+is not there" are different sentences and only one of them is alarming. What it
+reads instead is the last answer the chain gave about that path, for up to a
+day, and only `unknown` when there is no such answer. That is not a performance
+cache (the response cache already holds the rendered badge for five minutes):
+`rpc.gno.land` answered 403 to every request for minutes on 2026-09-28,
+`health` included, measured from two hosts, and every status badge in every
+README would have gone grey for the duration. The asymmetry is what makes it
+safe to prefer the old answer: a package's status changes when somebody
+deploys, which is rare and deliberate, while the public RPC being unreachable
+is common and says nothing about the package.
 
 `version` is the closest thing a chain can answer. gno stores no version field,
 so this counts the submissions at the path that were accepted: `r3` is the

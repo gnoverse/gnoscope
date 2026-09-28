@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gnoverse/gnoscope/pkg/badge"
@@ -231,14 +232,86 @@ func shieldMissing(label, status string) (_, message, color, errMsg string) {
 	return "", "", "", "no such package"
 }
 
-// chainStatus reads one path's current status off the chain, or "" if it could
-// not be asked.
+// chainStatus reads one path's current status off the chain, falling back to
+// the last answer the chain gave about it, and only then to "".
 func (a *API) chainStatus(r *http.Request, network, path string) string {
+	key := network + "\x00" + path
+
 	meta, err := fetchPackageMeta(r.Context(), a.rpcURLFor(network), path)
 	if err != nil {
+		return a.pkgStatus.recall(key)
+	}
+	a.pkgStatus.remember(key, meta.Status)
+	return meta.Status
+}
+
+// statusMemory remembers the last answer the chain gave about a path.
+//
+// Not a performance cache: the response cache already keeps a rendered badge
+// for five minutes. This exists because the public RPC goes away. rpc.gno.land
+// answered 403 to every request for minutes on 2026-09-28, `health` included,
+// measured from two hosts, and every status badge in every README went grey
+// with `unknown` for the duration. The last answer is the better answer, and
+// the asymmetry is what makes it safe: a package's status changes when
+// somebody deploys, which is rare and deliberate, while the RPC being
+// unreachable is common and says nothing about the package.
+type statusMemory struct {
+	mu  sync.Mutex
+	ttl time.Duration
+	m   map[string]statusEntry
+}
+
+type statusEntry struct {
+	status string
+	at     time.Time
+}
+
+// statusMemoryTTL is how long an answer stands in for a chain that cannot be
+// asked. A day, because the failure it covers is measured in minutes and the
+// fact it covers changes in weeks; past that, saying nothing is honest and
+// saying "live" is a guess about a chain nobody has reached since yesterday.
+const statusMemoryTTL = 24 * time.Hour
+
+// statusMemoryMax caps the map. Every key is a path out of a URL anybody can
+// write, so uncapped this is a memory leak with a public endpoint in front of
+// it. Dropped wholesale rather than evicted one at a time: what is lost is one
+// RPC round trip per badge on the next read, which is what the code did before
+// this type existed, so an LRU here would be more machinery than the thing it
+// protects.
+const statusMemoryMax = 4096
+
+func newStatusMemory(ttl time.Duration) *statusMemory {
+	return &statusMemory{ttl: ttl, m: make(map[string]statusEntry)}
+}
+
+// remember records an answer the chain actually gave.
+//
+// Nil-safe: the tools and tests that build an API struct literally have no
+// memory, and a badge without one behaves exactly as it did before.
+func (s *statusMemory) remember(key, status string) {
+	if s == nil || status == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.m) >= statusMemoryMax {
+		s.m = make(map[string]statusEntry, statusMemoryMax/4)
+	}
+	s.m[key] = statusEntry{status: status, at: time.Now()}
+}
+
+// recall returns the last answer, or "" if there is none or it is too old.
+func (s *statusMemory) recall(key string) string {
+	if s == nil {
 		return ""
 	}
-	return meta.Status
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.m[key]
+	if !ok || time.Since(e.at) > s.ttl {
+		return ""
+	}
+	return e.status
 }
 
 // shieldStatus asks the chain what is at the path, right now.

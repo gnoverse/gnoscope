@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -289,6 +292,109 @@ func TestShieldCountsStillFailWhenTheChainCannotBeAsked(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/_badges/shield/txs/r/alpha/nope?network=alpha", nil))
 	if got := rec.Header().Get("X-Badge-Error"); got != "no such package" {
 		t.Errorf("X-Badge-Error = %q, want \"no such package\"", got)
+	}
+}
+
+// The public RPC goes away for minutes at a time (rpc.gno.land answered 403 to
+// everything, `health` included, on 2026-09-28), and a README full of grey
+// `unknown` badges for the duration reads as the badges being broken.
+func TestShieldStatusSurvivesAnRPCOutage(t *testing.T) {
+	var fail atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			// What the outage actually looks like: not a refusal, a 403 page.
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte("<html><head><title>403 Forbidden</title></head></html>"))
+			return
+		}
+		data := `{"path":"gno.land/r/alpha/board","status":"live"}`
+		json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"response": map[string]any{
+			"ResponseBase": map[string]any{"Data": base64.StdEncoding.EncodeToString([]byte(data))},
+		}}})
+	}))
+	defer srv.Close()
+
+	api, _ := newTestAPI(t)
+	api.networks = []config.NetworkConfig{{ID: "alpha"}}
+	api.rpcPick = map[string]string{"alpha": srv.URL}
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	get := func() string {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", "/_badges/shield/status/r/alpha/board?network=alpha", nil))
+		m := regexp.MustCompile(`aria-label="([^"]*)"`).FindStringSubmatch(rec.Body.String())
+		if m == nil {
+			t.Fatalf("no aria-label in:\n%s", rec.Body.String())
+		}
+		return m[1]
+	}
+
+	if got := get(); got != "realm: live" {
+		t.Fatalf("with the chain up: %q, want realm: live", got)
+	}
+	fail.Store(true)
+	if got := get(); got != "realm: live" {
+		t.Errorf("through the outage: %q, want the last answer the chain gave", got)
+	}
+
+	// A path nobody has ever asked about has no last answer, and inventing one
+	// would be the whole point of this thing missed.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/_badges/shield/status/r/alpha/never?network=alpha", nil))
+	if !strings.Contains(rec.Body.String(), ">unknown<") {
+		t.Errorf("an unseen path through an outage should be unknown:\n%s", rec.Body.String())
+	}
+}
+
+// A day is the limit. Past it, "we could not reach the chain" is the honest
+// answer and the remembered one is a guess about a chain nobody has reached
+// since yesterday.
+func TestStatusMemoryForgets(t *testing.T) {
+	m := newStatusMemory(time.Hour)
+	m.remember("k", PackageStatusLive)
+	if got := m.recall("k"); got != PackageStatusLive {
+		t.Fatalf("recall = %q, want live", got)
+	}
+
+	m.mu.Lock()
+	e := m.m["k"]
+	e.at = time.Now().Add(-2 * time.Hour)
+	m.m["k"] = e
+	m.mu.Unlock()
+
+	if got := m.recall("k"); got != "" {
+		t.Errorf("recall of a stale entry = %q, want empty", got)
+	}
+}
+
+// Every key is a path out of a URL anybody can write, so the map has to have
+// a ceiling or the badge route is a memory leak with a public endpoint on it.
+func TestStatusMemoryIsBounded(t *testing.T) {
+	m := newStatusMemory(time.Hour)
+	for i := 0; i < statusMemoryMax*2+10; i++ {
+		m.remember("gno.land/r/x/"+strconv.Itoa(i), PackageStatusAbsent)
+	}
+	m.mu.Lock()
+	n := len(m.m)
+	m.mu.Unlock()
+	if n > statusMemoryMax {
+		t.Errorf("held %d entries, cap is %d", n, statusMemoryMax)
+	}
+	// And the thing just written is still there, or the drop took the answer
+	// the caller is about to ask for.
+	if got := m.recall("gno.land/r/x/" + strconv.Itoa(statusMemoryMax*2+9)); got != PackageStatusAbsent {
+		t.Errorf("the most recent entry was dropped: %q", got)
+	}
+}
+
+// A nil memory is the shape every tool and several tests build, and it has to
+// behave exactly as the code did before the memory existed.
+func TestStatusMemoryNilIsUsable(t *testing.T) {
+	var m *statusMemory
+	m.remember("k", PackageStatusLive)
+	if got := m.recall("k"); got != "" {
+		t.Errorf("nil memory recalled %q", got)
 	}
 }
 
