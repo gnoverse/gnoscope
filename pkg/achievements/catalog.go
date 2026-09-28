@@ -119,6 +119,21 @@ type Def struct {
 	// row; the API says which it is so the UI can explain itself rather than
 	// look broken.
 	Live bool `json:"live,omitempty"`
+
+	// Marker says this badge describes what an address *is*, not something it
+	// did, so it is not earnable and must not be counted.
+	//
+	// There is one: session-key, which marks a delegated signing address. A
+	// master account cannot become one, by construction, and the entry's own
+	// How line says so. It was still inside the denominator, so every human
+	// reading their own page had a ceiling one lower than the page claimed with
+	// nothing saying which badge was the impossible one. moul's read "21 of 26"
+	// against a real ceiling of 25.
+	//
+	// Kept in the catalog rather than deleted: on a session address it is the
+	// most useful thing on the page, and it is what stops one reading as an
+	// account that never did anything.
+	Marker bool `json:"marker,omitempty"`
 }
 
 // Catalog is every achievement, in display order within its group.
@@ -155,9 +170,15 @@ var Catalog = []Def{
 		Slug: "first-gnot-received", Name: "Received GNOT", Emoji: "📥", Group: GroupStart,
 		What: "was on the receiving end of a BankMsgSend carrying ugnot",
 		How:  "ask someone to send you some, or use a faucet. This one is not something you do to yourself.",
+		// `from_address <> to_address`, because the How line above promises it.
+		// Without it a send to your own address awarded the badge, which made
+		// the sentence a lie the site was telling with its own authority.
+		// called-by-other and imported-by-other already excluded self; these two
+		// did not.
 		SQL: `SELECT to_address AS address, MIN(block_height) AS block_height, block_time, tx_hash
 			FROM bank_sends
 			WHERE network = @net AND success = 1 AND COALESCE(ugnot_amount, 0) > 0 AND to_address <> ''
+			  AND from_address <> to_address
 			GROUP BY to_address`,
 	},
 	{
@@ -296,8 +317,13 @@ var Catalog = []Def{
 		Slug: "grc20-received", Name: "Received a token", Emoji: "💰", Group: GroupMoney,
 		What: "a GRC20 Transfer event moved tokens into this address",
 		How:  "hold any GRC20. Wrapping ugnot is the shortest path and earns two badges at once.",
+		// Self-excluded for the same reason as first-gnot-received. A mint has an
+		// empty `from`, so it is not caught by this and still counts, which is
+		// right: a token arriving from nowhere is not one you sent yourself.
 		SQL: `SELECT to_addr AS address, MIN(block_height) AS block_height, block_time, tx_hash
-			FROM token_transfers WHERE network = @net AND to_addr <> '' AND value > 0 GROUP BY to_addr`,
+			FROM token_transfers
+			WHERE network = @net AND to_addr <> '' AND value > 0 AND from_addr <> to_addr
+			GROUP BY to_addr`,
 	},
 	{
 		Slug: "token-issuer", Name: "Issued a token", Emoji: "🏭", Group: GroupMoney,
@@ -341,7 +367,7 @@ var Catalog = []Def{
 			FROM session_grants WHERE network = @net AND master <> '' AND revoked_height IS NOT NULL GROUP BY master`,
 	},
 	{
-		Slug: "session-key", Name: "Is a session key", Emoji: "🗝", Group: GroupKeys,
+		Slug: "session-key", Name: "Is a session key", Emoji: "🗝", Group: GroupKeys, Marker: true,
 		What: "this address is itself a delegated key, granted by another account",
 		How:  "not earned by an account: this marks the delegated address, so a page that looks empty says why rather than reading as an unused account.",
 		SQL: `SELECT session_addr AS address, MIN(granted_height) AS block_height, granted_time AS block_time, granted_tx AS tx_hash
@@ -370,7 +396,7 @@ var Catalog = []Def{
 	{
 		Slug: "validator", Name: "Registered a validator", Emoji: "🛡", Group: GroupGovern,
 		What: "appears in the valopers registry as a registered validator",
-		How:  "run a node, then register it in `r/gnoland/valopers`. Registration is public; being in the valset is a separate GovDAO decision.",
+		How:  "run a node, then register it in `gno.land/r/gnops/valopers`. Registration is public and being in the valset is a separate GovDAO decision. ⚠️ `Register` rejects a key that is **already** an active validator (`ErrFrontrunValidator`), so an operator in the set cannot register a profile for that key.",
 		SQL: `SELECT address, MIN(block_height) AS block_height, block_time, tx_hash
 			FROM valoper_registrations
 			WHERE network = @net AND success = 1 AND address <> '' GROUP BY address`,
