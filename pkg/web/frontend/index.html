@@ -1018,9 +1018,10 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a onclick="navigate('/dashboards')" id="nav-dashboards" title="dashboards"><span class="rail-label">dashboards</span></a>
         </div>
       </div>
-      <div class="nav-group">
-        <a onclick="navigate('/discover')" id="nav-discover" title="what is new on this chain, in plain words, and whether it is worth sharing"><svg aria-hidden="true"><use href="#i-compass"/></svg><span class="rail-label">discover</span></a>
-      </div>
+      <!-- Childless, so a bare link and not a .nav-group: every group is
+           asserted to carry a .nav-kids, the same shape glossary and watch
+           already use at the bottom of this rail. -->
+      <a onclick="navigate('/discover')" id="nav-discover" title="what is new on this chain, in plain words, and whether it is worth sharing"><svg aria-hidden="true"><use href="#i-compass"/></svg><span class="rail-label">discover</span></a>
       <div class="nav-group">
         <a onclick="navigate('/contracts')" id="nav-contracts" title="contracts map, realms, packages, apps"><svg aria-hidden="true"><use href="#i-bubbles"/></svg><span class="rail-label">contracts</span></a>
         <div class="nav-kids">
