@@ -1,0 +1,171 @@
+// gnohub: the experimental /lab surface that reads a realm as a repository.
+//
+// It reuses /api/realm and /api/packages and adds one endpoint of its own
+// (/api/realm/deploys), so what these cover is the half no Go test can: the
+// route grammar, the file browser, and that none of it throws.
+import { test, expect } from '@playwright/test';
+
+import { DEPENDENTS, HUB, HUB_ROUTE, HUB_CREATOR, SHARED_PACKAGES } from '../harness/fixture.mjs';
+import { settle, unexpected, watch } from './helpers.js';
+
+const NET = '?network=alpha';
+
+test('the lab index offers gnohub and nothing else claims to be finished', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/lab' + NET);
+  await settle(page);
+
+  await expect(page.locator('.gh-lab-card-title')).toContainText('gnohub');
+  await expect(page.locator('.gh-lab-card-title .badge')).toHaveText('experimental');
+
+  await page.locator('.gh-lab-card-foot a').click();
+  await expect(page).toHaveURL(/\/gnohub/);
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});
+
+test('the hub lists owners and the newest repos, and an owner tile opens that owner', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/gnohub' + NET);
+  await settle(page);
+
+  const owners = page.locator('.gh-owner-tile');
+  expect(await owners.count()).toBeGreaterThan(0);
+  await expect(page.locator('.gh-repo-row').first()).toBeVisible();
+
+  await page.locator('.gh-owner-tile', { hasText: 'hub' }).first().click();
+  await settle(page);
+  await expect(page).toHaveURL(/\/gnohub\/hub/);
+  await expect(page.locator('.gh-owner-title')).toHaveText('hub');
+  // The owner's address is counted from what it deployed, not asserted from
+  // the namespace, so it has to actually appear.
+  await expect(page.locator('.gh-owner-sub').first()).toContainText('deployed by');
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});
+
+test('a repo page carries the path, the deploy, the files and a way back to the realm page', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/gnohub/' + HUB_ROUTE + NET);
+  await settle(page);
+
+  await expect(page.locator('.gh-repo-title-path')).toHaveText(HUB);
+  await expect(page.locator('.gh-repo-facts')).toContainText('deployed');
+  await expect(page.locator('.gh-file-row')).toHaveCount(1);
+  await expect(page.locator('.gh-file-name')).toContainText('core.gno');
+
+  // The breadcrumb owner is a link to the owner page, which is most of what
+  // makes the github shape navigable at all.
+  await page.locator('.gh-crumbs a', { hasText: /^hub$/ }).click();
+  await settle(page);
+  await expect(page).toHaveURL(/\/gnohub\/hub/);
+
+  await page.goBack();
+  await settle(page);
+  await page.locator('.gh-tab-out').click();
+  await settle(page);
+  await expect(page).toHaveURL(new RegExp('/realm/' + HUB_ROUTE));
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});
+
+test('a file opens with a gutter, and a line number marks the line without repainting the page', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/gnohub/' + HUB_ROUTE + NET);
+  await settle(page);
+  await page.locator('.gh-file-name a').click();
+  await settle(page);
+
+  await expect(page).toHaveURL(/\/-\/blob\/core\.gno/);
+  await expect(page.locator('.gh-blob-name')).toHaveText('core.gno');
+  const lines = await page.locator('.gh-ln').count();
+  expect(lines).toBeGreaterThan(1);
+
+  // The click writes the hash with replaceState rather than letting the anchor
+  // through, because a hash change fires popstate and route() would repaint the
+  // whole view and lose the line the reader just asked for.
+  await page.locator('.gh-ln').nth(1).click();
+  await expect(page).toHaveURL(/#gh-core-gno-L2$/);
+  await expect(page.locator('.gh-ln.gh-line-on')).toHaveText('2');
+  await expect(page.locator('span.gh-line-on')).toHaveCount(1);
+  // Still the blob, not a repainted code tab: a repaint would have thrown the
+  // mark away.
+  await expect(page.locator('.gh-blob-name')).toHaveText('core.gno');
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});
+
+test('the deploys tab lists the submission that created the package', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/gnohub/' + HUB_ROUTE + '/-/commits' + NET);
+  await settle(page);
+
+  const rows = page.locator('.gh-commits tbody tr');
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText(HUB_CREATOR.slice(0, 8));
+  await expect(rows.first().locator('.gh-dot.ok')).toBeVisible();
+  // The first submission at a path is tagged as such, and a single deploy is
+  // the first one.
+  await expect(rows.first().locator('.gh-tag')).toHaveText('first');
+  // The panel says what a "commit" here is and is not, rather than leaving the
+  // github analogy to imply a diff that does not exist.
+  await expect(page.locator('.gh-note')).toContainText('MsgAddPackage');
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});
+
+test('the dependencies tab names both directions, and a dependent links onward', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/gnohub/' + HUB_ROUTE + '/-/deps' + NET);
+  await settle(page);
+
+  const panels = page.locator('.gh-panel-head');
+  await expect(panels.nth(0)).toContainText('imports (' + SHARED_PACKAGES + ')');
+  // The account count beside the dependent count is the whole reason it is
+  // shown: 60 importers is adoption if they are 60 accounts and version churn
+  // if they are two, and the fixture makes them two on purpose.
+  await expect(panels.nth(1)).toContainText('dependents (' + DEPENDENTS + ', from 2 accounts)');
+  const first = page.locator('.gh-dep-row a').first();
+  await expect(first).toBeVisible();
+  await first.click();
+  await settle(page);
+  await expect(page).toHaveURL(/\/gnohub\/[rp]\//);
+  await expect(page.locator('.gh-repo-title-path')).toBeVisible();
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});
+
+// r/gnoswap/v1 is nobody's deploy and everybody's breadcrumb. A 404 would be
+// correct and useless; the listing is what a reader clicking a path element
+// actually wanted.
+test('a path that is a prefix rather than a package answers as a directory', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/gnohub/r/hub/nothing-here' + NET);
+  await settle(page);
+
+  await expect(page.locator('.gh-repo-title')).toContainText('directory');
+  await expect(page.locator('.gh-note')).toContainText('prefix');
+  expect(w.jsErrors).toEqual([]);
+  // The 404 from /api/realm is the mechanism, not a bug: it is how the page
+  // learns the path is not a package.
+  expect(unexpected(w.failedRequests).filter(f => !/\/api\/realm\/r\/hub\/nothing-here/.test(f)))
+    .toEqual([]);
+});
+
+// The rail is described twice on purpose (a Go test keeps the two identical);
+// this is the half that says the entry actually navigates.
+test('the rail reaches lab and gnohub', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/' + NET);
+  await settle(page);
+
+  await page.locator('#nav-gnohub').click();
+  await settle(page);
+  await expect(page).toHaveURL(/\/gnohub/);
+  await expect(page.locator('#nav-gnohub')).toHaveClass(/active/);
+  await expect(page.locator('#nav-lab')).toHaveClass(/in-section/);
+  // A section strip, because lab has children.
+  await expect(page.locator('.pagenav a', { hasText: 'experiments' })).toBeVisible();
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});

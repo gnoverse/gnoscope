@@ -49,6 +49,12 @@ type StorageCell struct {
 // message caller (`processStorageDeposit(ctx, caller, ...)` in
 // gno.land/pkg/sdk/vm/keeper.go), so a realm anyone can write to is paid for by
 // its users, and its deployer may hold almost none of its bytes.
+//
+// ⚠️ "The message caller" is the rule for a call and not for a deploy. Under
+// the inert submission policy the deposit for a package's own bytes is taken on
+// an approver's enable transaction and billed to the creator, so the payer is
+// an account the transaction never names. payerExpr's fifth arm is what
+// recovers those; see the note there.
 type StoragePayer struct {
 	Network string `json:"network"`
 	Address string `json:"address"`
@@ -150,7 +156,28 @@ func (d *DB) StorageCells(network string, limit int) ([]StorageCell, error) {
 //  2. this realm's own deploy, where the creator pays;
 //  3. any MsgCall in the transaction, for a cross-realm write where the caller
 //     touched realm A and realm B grew;
-//  4. a MsgRun, whose script did the same.
+//  4. a MsgRun, whose script did the same;
+//  5. the account that parked the package, for an **enable** transaction, where
+//     the payer appears nowhere in the transaction at all.
+//
+// The fifth arm is not an edge case. This chain runs the inert submission
+// policy, under which MsgAddPackage parks the package and takes no deposit, so
+// a package's own bytes, which are the largest single charge on the chain, are
+// paid on the approver's MsgEnablePackage and billed by the chain to the
+// package's *creator* (gno.land/pkg/sdk/vm/keeper_inert.go: "Charged to the
+// creator, not the approver"). None of the first four arms can match one: an
+// enable has no message row of any kind. Without it, 482 events carrying
+// **1,348.59 of mainnet's 5,581.41 GNOT of storage spend, 24.2%**, grouped
+// under the unattributed bucket. With it, nothing does: measured 2026-09-28,
+// 0 events and 0 GNOT left over.
+//
+// ⚠️ Ordered and bounded to the submission live at the time, not simply the
+// newest. A redeploy at the same path later would otherwise reattribute every
+// earlier enable to whoever last touched the path, which is an attribution
+// table quietly rewriting its own history. ORDER BY ... LIMIT 1 rather than
+// MIN() for the same reason the others use MIN(): it has to return exactly one
+// row, and here the one it must return is the newest qualifying, not the
+// alphabetically smallest.
 //
 // MIN() rather than a bare column: a multicall bundles several MsgCall rows
 // under one tx_hash, and a join that returned all of them would multiply the
@@ -168,6 +195,10 @@ const payerExpr = `COALESCE(
 	  WHERE c2.network = s.network AND c2.tx_hash = s.tx_hash),
 	(SELECT MIN(m.caller) FROM msg_runs m
 	  WHERE m.network = s.network AND m.tx_hash = s.tx_hash),
+	(SELECT p2.creator FROM package_submissions p2
+	  WHERE p2.network = s.network AND p2.path = s.pkg_path
+	    AND p2.block_height <= s.block_height
+	  ORDER BY p2.block_height DESC LIMIT 1),
 	'')`
 
 // StoragePayers ranks accounts by the bytes they are paying to keep on chain.
