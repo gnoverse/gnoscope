@@ -444,6 +444,10 @@ html.embed .pagenav { display: none; }
    compete with the seven words they qualify. */
 .tab-count { color: var(--fg2); font-size: 11px; opacity: 0.75; font-weight: 400; font-variant-numeric: tabular-nums; }
 .tab.active .tab-count { opacity: 0.9; }
+/* The one door into /lab from a page outside it. Pushed to the far end and
+   never `active`: it navigates away rather than switching a panel. */
+.tab-lab { margin-left: auto; color: var(--fg2); opacity: 0.7; }
+.tab-lab:hover { opacity: 1; text-decoration: none; }
     /* The state tree. Monospace throughout: these are values a developer will
        compare, copy and paste, and a proportional font makes two addresses that
        differ in one character look identical. */
@@ -509,6 +513,104 @@ pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4p
 #contract-map { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; }
 #contract-map svg { display: block; }
 #dep-graph svg { display: block; }
+
+/* gnohub (experimental, /lab). Scoped under gh- so nothing here can reach a
+   page outside it, which is the point of an experiment: reverting it is one
+   block, not a hunt through the shared rules above. */
+.gh-lab-intro h2, .gh-hero h2 { font-size: 22px; margin-bottom: 6px; }
+.gh-lab-intro p, .gh-hero p { color: var(--fg2); max-width: 70ch; margin-bottom: 20px; }
+.gh-lab-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.gh-lab-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 16px; }
+.gh-lab-card-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: bold; margin-bottom: 8px; }
+.gh-lab-card p { color: var(--fg2); font-size: 13px; margin-bottom: 12px; }
+.gh-lab-card-foot { font-size: 13px; }
+
+.gh-crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; margin-bottom: 14px; }
+.gh-crumb-sep { color: var(--fg2); }
+.gh-crumb-here { font-weight: bold; }
+.gh-dim { color: var(--fg2); }
+
+.gh-two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .gh-two-col { grid-template-columns: minmax(0, 1fr); } }
+
+.gh-panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 16px; overflow: hidden; }
+.gh-panel-head { padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg3);
+  font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg2); }
+.gh-panel-body { padding: 4px 0; }
+.gh-empty { padding: 16px 14px; color: var(--fg2); font-size: 13px; }
+
+.gh-owner-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px; padding: 8px; }
+.gh-owner-tile { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 4px; color: var(--fg); }
+.gh-owner-tile:hover { background: var(--bg3); text-decoration: none; }
+.gh-owner-name { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-owner-count { color: var(--fg2); font-size: 11px; margin-left: auto; white-space: nowrap; }
+.gh-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+  flex: 0 0 24px; border-radius: 50%; background: var(--bg3); border: 1px solid var(--border);
+  color: var(--accent); font-size: 11px; font-weight: bold; text-transform: uppercase; }
+.gh-avatar-lg { width: 52px; height: 52px; flex-basis: 52px; font-size: 20px; }
+
+.gh-owner-head { display: flex; gap: 14px; align-items: center; margin-bottom: 20px; }
+.gh-owner-title { font-size: 22px; }
+.gh-owner-sub { font-size: 13px; }
+
+.gh-repo-list { display: flex; flex-direction: column; }
+.gh-repo-row { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.gh-repo-row:last-child { border-bottom: none; }
+.gh-repo-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gh-repo-name { font-weight: bold; }
+.gh-repo-row-facts { display: flex; gap: 14px; flex-wrap: wrap; color: var(--fg2); font-size: 12px; margin-top: 3px; }
+
+.gh-repo-head { border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.gh-repo-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 19px; }
+.gh-repo-title-path { font-weight: bold; word-break: break-all; }
+.gh-repo-facts { display: flex; gap: 20px; flex-wrap: wrap; margin: 10px 0 12px; }
+.gh-meta { display: flex; flex-direction: column; }
+.gh-meta-k { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg2); }
+.gh-meta-v { font-size: 13px; }
+.gh-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.gh-tab { padding: 6px 12px; color: var(--fg2); border-bottom: 2px solid transparent; font-size: 13px; }
+.gh-tab:hover { color: var(--fg); text-decoration: none; }
+.gh-tab.active { color: var(--fg); border-bottom-color: var(--accent2); font-weight: bold; }
+.gh-tab-out { margin-left: auto; color: var(--accent); }
+
+.gh-readme { padding: 14px; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.7; }
+.gh-file-list { display: flex; flex-direction: column; }
+.gh-file-row { display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-bottom: 1px solid var(--border); }
+.gh-file-row:last-child { border-bottom: none; }
+.gh-file-row:hover { background: var(--bg3); }
+.gh-file-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.gh-file-name svg { width: 14px; height: 14px; flex: 0 0 14px; stroke: currentColor; fill: none;
+  stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; color: var(--fg2); }
+.gh-file-size { margin-left: auto; color: var(--fg2); font-size: 11px; white-space: nowrap; }
+.gh-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
+.gh-chip { padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; background: var(--bg3); }
+
+.gh-blob-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.gh-blob-name { font-weight: bold; }
+/* The gutter is its own column rather than a ::before on each line, so the
+   line numbers cannot be selected along with the code a reader is copying. */
+.gh-blob { display: flex; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.gh-gutter { display: flex; flex-direction: column; padding: 16px 0; background: var(--bg3);
+  border-right: 1px solid var(--border); user-select: none; flex: 0 0 auto; }
+.gh-ln { padding: 0 10px; text-align: right; color: var(--fg2); font-size: 13px; line-height: 1.5; font-family: var(--mono); }
+.gh-ln:hover { color: var(--accent); text-decoration: none; }
+.gh-ln.gh-line-on { color: var(--bg); background: var(--amber); font-weight: bold; }
+.gh-code { margin: 0; border: none; border-radius: 0; flex: 1 1 auto; min-width: 0; }
+.gh-code span.gh-line-on { display: inline-block; width: 100%; background: rgba(255, 217, 61, 0.14); }
+
+.gh-commits { font-size: 13px; }
+.gh-commits th { text-align: left; padding: 6px 14px; }
+.gh-commits td { padding: 6px 14px; }
+.gh-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.gh-dot.ok { background: var(--green); }
+.gh-dot.fail { background: var(--red); }
+.gh-tag { margin-left: 8px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px;
+  font-size: 10px; color: var(--fg2); text-transform: uppercase; letter-spacing: 1px; }
+.gh-note { color: var(--fg2); font-size: 12px; line-height: 1.7; max-width: 80ch; margin-bottom: 16px; }
+
+.gh-dep-list { display: flex; flex-direction: column; }
+.gh-dep-row { padding: 6px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.gh-dep-row:last-child { border-bottom: none; }
 .view { display: none; }
 .view.active { display: block; }
 .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-bottom: 8px; }
@@ -1022,6 +1124,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 <symbol id="i-gavel" viewBox="0 0 16 16"><path d="M2 14.2h8"/><path d="M6 11.4V6.6"/><path d="M2.6 6.6h6.8"/><path d="M11 1.8 14.4 5.2"/><path d="m9.3 5.2 3.4-3.4"/><path d="M6 6.6 12.7 5.2"/></symbol>
 <symbol id="i-gauge" viewBox="0 0 16 16"><path d="M2 12a6.6 6.6 0 1 1 12 0"/><path d="m8 12 3-4.4"/><circle cx="8" cy="12" r="1"/></symbol>
 <symbol id="i-collapse" viewBox="0 0 16 16"><path d="M9.6 3.4 5 8l4.6 4.6"/><path d="M13.2 2.4v11.2"/></symbol>
+<symbol id="i-flask" viewBox="0 0 16 16"><path d="M6.4 1.8v4.3L2.6 12a1.4 1.4 0 0 0 1.2 2.2h8.4a1.4 1.4 0 0 0 1.2-2.2L9.6 6.1V1.8"/><path d="M5.4 1.8h5.2"/><path d="M4.4 9.4h7.2"/></symbol>
 <symbol id="i-compass" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="m10.6 5.4-1.4 3.8-3.8 1.4 1.4-3.8z"/></symbol>
 <!-- Tab icons. Same 16x16 stroke grid as the rail's, referenced from the
      script below through the icon() helper rather than from markup, which is
@@ -1117,6 +1220,12 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a onclick="navigate('/govdao/voters')" id="nav-govdao-voters" title="who votes, and who does not"><span class="rail-label">voters</span></a>
           <a onclick="navigate('/govdao/options')" id="nav-govdao-options" title="what govdao can be asked to execute"><span class="rail-label">options</span></a>
           <a onclick="navigate('/govdao/params')" id="nav-params" title="chain parameters"><span class="rail-label">params</span></a>
+        </div>
+      </div>
+      <div class="nav-group">
+        <a onclick="navigate('/lab')" id="nav-lab" title="surfaces being tried out"><svg aria-hidden="true"><use href="#i-flask"/></svg><span class="rail-label">lab</span></a>
+        <div class="nav-kids">
+          <a onclick="navigate('/gnohub')" id="nav-gnohub" title="a realm read as a repository: owners, files, deploys"><span class="rail-label">gnohub</span></a>
         </div>
       </div>
       <a onclick="navigate('/glossary')" id="nav-glossary" title="what the words on this site mean"><svg aria-hidden="true"><use href="#i-info"/></svg><span class="rail-label">glossary</span></a>
@@ -1328,6 +1437,8 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
     <div class="tab-content" id="tab-defi"></div>
     <div class="tab-content" id="tab-deps"></div>
   </main></div>
+  <div class="view" id="view-lab"><main><div id="lab-content"></div></main></div>
+  <div class="view" id="view-gnohub"><main><div id="gnohub-content"></div><div id="gnohub-body"></div></main></div>
   <div class="view" id="view-tx-detail"><main><div id="tx-detail-content"></div></main></div>
   <div class="view" id="view-address-detail"><main><div id="address-detail-content"></div></main></div>
 </div>
@@ -3562,6 +3673,9 @@ const NAV = [
     { id: 'govdao-options', label: 'options', path: '/govdao/options' },
     { id: 'params', label: 'params', path: '/govdao/params' },
   ] },
+  { id: 'lab', label: 'lab', path: '/lab', own: 'experiments', children: [
+    { id: 'gnohub', label: 'gnohub', path: '/gnohub' },
+  ] },
   { id: 'glossary', label: 'glossary', path: '/glossary' },
   { id: 'watch', label: 'watch', path: '/watch' },
 ];
@@ -3732,6 +3846,11 @@ function route() {
   // redirects: a redirect would rewrite a reader's URL under them for no
   // gain, and an old bookmark is not a mistake to correct.
   else if (path === '/params' || path === '/govdao/params') { view = 'params'; }
+  else if (path === '/lab') { view = 'lab'; }
+  // The whole gnohub tree is one view: the sub-page is data, not a second
+  // `view-` container, which is what keeps the experiment to one block of
+  // markup and one block of script.
+  else if (path === '/gnohub' || path.startsWith('/gnohub/')) { view = 'gnohub'; data = path.slice(8); }
   else if (path === '/glossary') { view = 'glossary'; }
   else if (path === '/sanity') { view = 'sanity'; }
   else if (path === '/watch') { view = 'watch'; }
@@ -3773,6 +3892,8 @@ function route() {
   switch (view) {
     case 'home': loadHome(); break;
     case 'watch': loadWatchlist(); break;
+    case 'lab': loadLab(); break;
+    case 'gnohub': loadGnohub(data); break;
     case 'realms': loadRealms(); break;
     case 'packages': enterPackages(urlPv); break;
     case 'contracts': loadContracts(); break;
@@ -13508,6 +13629,22 @@ async function loadRealmDetail(path, initialTab) {
         if (n) tab.appendChild(el('span', { className: 'tab-count' }, '(' + fmtNum(n) + ')'));
         tabs.appendChild(tab);
       });
+      // The only way into gnohub from a page that is not itself in /lab, and
+      // the reason it is here rather than in the rail: the experiment's whole
+      // question is whether the repository shape reads better than this one,
+      // and that is only answerable with both a click apart on the same realm.
+      // Pushed to the far end, not a tab: it leaves the page.
+      const hubLink = el('a', {
+        className: 'tab tab-lab',
+        href: '/gnohub/' + detail.path.replace('gno.land/', '') + netSuffix(detail.network),
+      }, icon('flask'), 'gnohub');
+      hubLink.title = 'the same realm read as a repository (experimental)';
+      hubLink.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        e.preventDefault();
+        navigate(hubLink.getAttribute('href'));
+      });
+      tabs.appendChild(hubLink);
       // Info
       const info = clear('tab-info');
       if (activeTab === 'info') info.classList.add('active'); else info.classList.remove('active');
@@ -15735,10 +15872,48 @@ function scheduleEnhance() {
     enhanceTables();
   }, Math.max(0, Math.min(ENHANCE_DEBOUNCE_MS, _enhanceDeadline - now)));
 }
+// A repaint of a table's own rows is not something to coalesce.
+//
+// The debounce above exists so unrelated churn does not run the enhance pass
+// on every node the page adds, and the cap exists so that churn cannot starve
+// it. Both are about *other* people's mutations. When the mutation IS a table
+// body being rewritten, waiting is the bug: between the loader painting rows in
+// the server's order and `restoreTableState` re-applying the reader's chosen
+// order, the directory shows one thing under a header that promises another.
+// The cap bounds that window at 250ms rather than closing it, and a contended
+// CI runner delays timer callbacks past their nominal deadline, which is how
+// 250ms becomes long enough to see and to fail a test on.
+//
+// So table repaints take the immediate path, on the next frame rather than on
+// a timer, and everything else keeps the debounce it had. Reproduced by raising
+// ENHANCE_MAX_DELAY_MS to 3000 and running the package-facets sort test: the
+// column read 23, 20, 9, 7, 6, 2 after the click asking for ascending, and with
+// this it reads ascending at any cap.
+//
+// `closest` runs only once per mutation batch, not once per node, and stops at
+// the first table it finds.
+function mutationTouchesTable(mutations) {
+  for (const m of mutations) {
+    const t = m.target;
+    if (t && t.nodeType === 1 && t.closest && t.closest('table')) return true;
+  }
+  return false;
+}
+let _enhanceFrame = 0;
+function enhanceNow() {
+  if (_enhanceFrame) return;
+  _enhanceFrame = requestAnimationFrame(() => {
+    _enhanceFrame = 0;
+    clearTimeout(_enhanceTimer);
+    _enhanceTimer = null;
+    enhanceTables();
+  });
+}
 if (document.body) {
-  new MutationObserver(() => {
+  new MutationObserver((mutations) => {
     if (_clampQueue.length) setTimeout(processClampQueue, 0);
-    scheduleEnhance();
+    if (mutationTouchesTable(mutations)) enhanceNow();
+    else scheduleEnhance();
   }).observe(document.body, { childList: true, subtree: true });
 }
 
@@ -22890,6 +23065,621 @@ function renderContractRankings() {
       value: fmtNum(n) + (n === 1 ? ' contract' : ' contracts'),
     }));
   root.appendChild(contractRankCard('top deployers', deployers));
+}
+
+// --- gnohub: a GitHub-shaped read of a realm (experimental) ------------------
+//
+// A realm is a repository in every way that matters: an owner namespace, source
+// files, a deploy history, imports, dependents. mygnoscan already holds all of
+// that and draws it as an explorer — stat tiles, tables, nine tabs. This is the
+// other mental model, side by side rather than instead of: /realm/<path> is
+// untouched and stays the answer to "what is the chain's state here".
+//
+// It lives under /lab because it is allowed to be wrong. Nothing else on the
+// site links into it except the one card on /lab and the one pill on a realm
+// page, so reshaping or deleting it costs two edits.
+//
+// Route grammar, GitLab's rather than GitHub's:
+//
+//   /gnohub                              the hub
+//   /gnohub/moul   /gnohub/r/moul        an owner
+//   /gnohub/r/moul/home                  a repo
+//   /gnohub/r/moul/home/-/blob/home.gno  a file
+//   /gnohub/r/moul/home/-/commits        the deploy history
+//   /gnohub/r/moul/home/-/deps           imports and dependents
+//
+// The `/-/` infix is load-bearing. A gno path is arbitrarily deep
+// (gno.land/r/gnoswap/v1/pool), so a trailing /blob/<file> is ambiguous with a
+// real path element and /-/ is the one separator that cannot be one.
+const GNOHUB_TABS = [
+  { id: 'code', label: 'code', suffix: '' },
+  { id: 'commits', label: 'deploys', suffix: '/-/commits' },
+  { id: 'deps', label: 'dependencies', suffix: '/-/deps' },
+];
+
+// gnohubParse turns the path after /gnohub/ into what the loader needs.
+//
+// `kind` is decided by segment count, not by a lookup: one or two segments is
+// an owner (`moul`, `r/moul`), three or more is a repo. A prefix that is not a
+// package — r/gnoswap/v1, which nobody deployed but plenty of things live under
+// — comes back as a repo here and is answered as a tree by the loader, because
+// only the API knows which it is and guessing in the router would cost a round
+// trip on every navigation.
+function gnohubParse(rest) {
+  rest = (rest || '').replace(/^\/+|\/+$/g, '');
+  if (!rest) return { kind: 'home' };
+
+  let left = rest, sub = '';
+  const cut = rest.indexOf('/-/');
+  if (cut >= 0) { left = rest.slice(0, cut); sub = rest.slice(cut + 3); }
+
+  const segs = left.split('/').filter(Boolean);
+  if (segs.length <= 2 && !sub) {
+    // `r/moul` and `moul` both name the same owner; the marker is noise once
+    // the owner page shows realms and packages side by side.
+    return { kind: 'owner', owner: segs.length === 2 ? segs[1] : segs[0] };
+  }
+  const out = { kind: 'repo', path: 'gno.land/' + left, tab: 'code' };
+  if (sub.startsWith('blob/')) { out.tab = 'blob'; out.file = decodeURIComponent(sub.slice(5)); }
+  else if (sub === 'commits') out.tab = 'commits';
+  else if (sub === 'deps') out.tab = 'deps';
+  return out;
+}
+
+// gnohubURL is the inverse, and the only place a gnohub link is built. The
+// network suffix rides along because every page here is per-chain and a shared
+// link that silently resolves against whatever chain the reader last picked is
+// a link that shows them something else.
+function gnohubURL(pathOrOwner, suffix) {
+  const rel = pathOrOwner.startsWith('gno.land/') ? pathOrOwner.slice(9) : pathOrOwner;
+  return '/gnohub/' + rel + (suffix || '') + netSuffix();
+}
+
+function ghNav(url) { return (e) => { if (e) e.preventDefault(); navigate(url); }; }
+
+// ghLink is an <a> with a real href, not a span with a click handler.
+//
+// Everything on this surface is a path someone will want to open in a new tab,
+// copy, or hand to somebody else — which is most of what makes GitHub usable as
+// a reference. A click handler alone breaks middle-click and cmd-click silently.
+function ghLink(text, url, cls) {
+  const a = el('a', { href: url, className: cls || '' }, text);
+  a.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    navigate(url);
+  });
+  return a;
+}
+
+function ghPanel(title, ...body) {
+  const p = el('div', { className: 'gh-panel' });
+  if (title) p.appendChild(el('div', { className: 'gh-panel-head' }, title));
+  const b = el('div', { className: 'gh-panel-body' });
+  body.forEach(n => n && b.appendChild(n));
+  p.appendChild(b);
+  return p;
+}
+
+function ghMeta(label, value) {
+  return el('div', { className: 'gh-meta' },
+    el('span', { className: 'gh-meta-k' }, label),
+    typeof value === 'string' ? el('span', { className: 'gh-meta-v' }, value) : value);
+}
+
+function ghEmpty(text) { return el('div', { className: 'gh-empty' }, text); }
+
+function ghKindBadge(isRealm) {
+  const b = badge(isRealm ? 'ok' : 'info', isRealm ? 'realm' : 'package');
+  b.title = isRealm ? 'stateful: it has an address and keeps state between calls'
+    : 'pure: imported by other code, holds no state of its own';
+  return b;
+}
+
+// --- /lab -------------------------------------------------------------------
+
+function loadLab() {
+  const root = clear('lab-content');
+  root.appendChild(el('div', { className: 'gh-lab-intro' },
+    el('h2', {}, 'lab'),
+    el('p', {}, 'Surfaces that are being tried out. They read the same data as the rest of the ' +
+      'site through the same public API, they are not a second source of truth, and any of them ' +
+      'may change shape or disappear. The rest of the site does not depend on anything in here.')));
+
+  const grid = el('div', { className: 'gh-lab-grid' });
+  const card = el('div', { className: 'gh-lab-card' });
+  card.appendChild(el('div', { className: 'gh-lab-card-title' },
+    ghLink('gnohub', '/gnohub' + netSuffix()), badge('info', 'experimental')));
+  card.appendChild(el('p', {},
+    'A realm read as a repository. Owner pages, a file browser with line anchors, and the ' +
+    'deploy history as a commit list. Answers "what is this code and who wrote it", where the ' +
+    'realm page answers "what is this contract doing right now".'));
+  card.appendChild(el('div', { className: 'gh-lab-card-foot' },
+    ghLink('open the hub →', '/gnohub' + netSuffix())));
+  grid.appendChild(card);
+  root.appendChild(grid);
+}
+
+// --- the hub ----------------------------------------------------------------
+
+// route() runs twice on every initial page load (see the
+// loadProposerMonikers().then(route) call near the bottom of this script), so
+// two loaders for the same view are routinely in flight together, and a reader
+// clicking through the hub can leave a third behind. Everything below either
+// rebuilds its container inside one synchronous block or checks this token
+// before it paints; nothing appends across an await.
+let _ghGen = 0;
+
+function loadGnohub(rest) {
+  const gen = ++_ghGen;
+  const r = gnohubParse(rest);
+  if (r.kind === 'home') return ghHome(gen);
+  if (r.kind === 'owner') return ghOwner(r.owner, gen);
+  return ghRepo(r, gen);
+}
+
+function ghCrumbs(...parts) {
+  const bar = el('div', { className: 'gh-crumbs' });
+  parts.forEach((p, i) => {
+    if (i) bar.appendChild(el('span', { className: 'gh-crumb-sep' }, '/'));
+    bar.appendChild(p);
+  });
+  return bar;
+}
+
+async function ghHome(gen) {
+  const root = clear('gnohub-content');
+  root.appendChild(el('div', { className: 'gh-hero' },
+    el('h2', {}, 'gnohub'),
+    el('p', {}, 'Every package on this chain, read as a repository. ' +
+      'Deployed code is public by construction, so all of it is here.')));
+
+  await apiSWR(['packages/facets?kind=all', 'packages?kind=all&limit=12&sort=newest'],
+    ([facets, recent]) => {
+      // The stale pass and the fresh one both land here, and a reader who has
+      // already clicked through to an owner must not have this painted over
+      // their page.
+      if (gen !== undefined && gen !== _ghGen) return;
+      const c = clear('gnohub-body');
+      const cols = el('div', { className: 'gh-two-col' });
+
+      // Named owners first, then the address-shaped namespaces
+      // (gno.land/r/g1../thing), which are real owners and also unreadable: a
+      // dozen `g1qp..` tiles at the top buries every name there is.
+      const isAddr = (n) => n.startsWith('g1');
+      const owners = (facets.namespaces || []).slice().sort((a, b) =>
+        (isAddr(a.namespace) - isAddr(b.namespace)) || (b.packages - a.packages));
+      const list = el('div', { className: 'gh-owner-grid' });
+      owners.forEach(o => {
+        const tile = el('a', { href: gnohubURL(o.namespace), className: 'gh-owner-tile' });
+        tile.addEventListener('click', ghNav(gnohubURL(o.namespace)));
+        tile.appendChild(el('span', { className: 'gh-avatar' }, o.namespace.slice(0, 2)));
+        tile.appendChild(el('span', { className: 'gh-owner-name' }, o.namespace));
+        tile.appendChild(el('span', { className: 'gh-owner-count' },
+          fmtNum(o.packages) + (o.packages === 1 ? ' repo' : ' repos')));
+        list.appendChild(tile);
+      });
+      cols.appendChild(ghPanel('owners (' + fmtNum(owners.length) + ')',
+        owners.length ? list : ghEmpty('no packages indexed on this chain yet')));
+
+      const items = recent.items || [];
+      const recentList = el('div', { className: 'gh-repo-list' });
+      items.forEach(p => recentList.appendChild(ghRepoRow(p)));
+      cols.appendChild(ghPanel('newest', items.length ? recentList : ghEmpty('nothing deployed yet')));
+
+      c.appendChild(cols);
+    });
+}
+
+// ghRepoRow is one repository in a list: path, kind, when it landed, and the
+// two numbers that say whether anyone is using it.
+function ghRepoRow(p) {
+  const row = el('div', { className: 'gh-repo-row' });
+  const head = el('div', { className: 'gh-repo-row-head' });
+  head.appendChild(ghLink(p.path.replace('gno.land/', ''), gnohubURL(p.path), 'gh-repo-name'));
+  head.appendChild(ghKindBadge(p.is_realm));
+  const parked = parkedBadgeEl(p.status);
+  if (parked) head.appendChild(parked);
+  head.appendChild(netBadgeEl(p.network));
+  row.appendChild(head);
+
+  const facts = el('div', { className: 'gh-repo-row-facts' });
+  facts.appendChild(el('span', {}, fmtNum(p.num_files) + (p.num_files === 1 ? ' file' : ' files')));
+  if (p.calls) facts.appendChild(el('span', {}, fmtNum(p.calls) + ' calls'));
+  if (p.importers) facts.appendChild(el('span', {}, fmtNum(p.importers) + ' importers'));
+  // blockWithAge, not a bare height: "which block" without "when" is the half
+  // of the question a reader of a list did not have.
+  const when = el('span', {});
+  when.appendChild(document.createTextNode('deployed '));
+  when.appendChild(blockWithAge(p.block_height, p.block_time, p.network));
+  facts.appendChild(when);
+  row.appendChild(facts);
+  return row;
+}
+
+// --- an owner ---------------------------------------------------------------
+
+async function ghOwner(owner, gen) {
+  const root = clear('gnohub-content');
+  root.appendChild(ghCrumbs(ghLink('gnohub', '/gnohub' + netSuffix()),
+    el('span', { className: 'gh-crumb-here' }, owner)));
+
+  await apiSWR('packages?kind=all&limit=500&namespace=' + encodeURIComponent(owner), (data) => {
+    if (gen !== undefined && gen !== _ghGen) return;
+    const c = clear('gnohub-body');
+    const items = (data.items || []).slice().sort((a, b) => b.block_height - a.block_height);
+
+    const head = el('div', { className: 'gh-owner-head' });
+    head.appendChild(el('div', { className: 'gh-avatar gh-avatar-lg' }, owner.slice(0, 2)));
+    const ident = el('div', {});
+    ident.appendChild(el('h2', { className: 'gh-owner-title' }, owner));
+
+    // The owner's address is not asserted, it is counted. A namespace is a path
+    // prefix, and who may deploy under it is a registry question this page does
+    // not ask; what it can say honestly is which account actually deployed
+    // these packages, and say so when more than one did.
+    const byCreator = new Map();
+    items.forEach(p => byCreator.set(p.creator, (byCreator.get(p.creator) || 0) + 1));
+    const creators = Array.from(byCreator.entries()).sort((a, b) => b[1] - a[1]);
+    if (creators.length) {
+      const line = el('div', { className: 'gh-owner-sub' });
+      line.appendChild(document.createTextNode('deployed by '));
+      line.appendChild(addrLink(creators[0][0], items[0] && items[0].network));
+      if (creators.length > 1) {
+        line.appendChild(el('span', { className: 'gh-dim' },
+          ' and ' + (creators.length - 1) + ' other ' +
+          (creators.length === 2 ? 'account' : 'accounts')));
+      }
+      ident.appendChild(line);
+    }
+    const realms = items.filter(p => p.is_realm).length;
+    ident.appendChild(el('div', { className: 'gh-owner-sub gh-dim' },
+      fmtNum(items.length) + ' repos · ' + fmtNum(realms) + ' realms · ' +
+      fmtNum(items.length - realms) + ' pure packages'));
+    head.appendChild(ident);
+    c.appendChild(head);
+
+    const list = el('div', { className: 'gh-repo-list' });
+    items.forEach(p => list.appendChild(ghRepoRow(p)));
+    c.appendChild(ghPanel('repositories', items.length ? list
+      : ghEmpty('nothing deployed under ' + owner + ' on this chain')));
+  });
+}
+
+// --- a repo -----------------------------------------------------------------
+
+async function ghRepo(r, gen) {
+  const root = clear('gnohub-content');
+  const rel = r.path.replace('gno.land/', '');
+  const segs = rel.split('/');
+  const owner = segs[1] || segs[0];
+
+  const crumbs = [ghLink('gnohub', '/gnohub' + netSuffix()), ghLink(owner, gnohubURL(owner))];
+  crumbs.push(el('span', { className: 'gh-crumb-here' }, segs.slice(2).join('/') || rel));
+  root.appendChild(ghCrumbs(...crumbs));
+
+  let detail;
+  try {
+    detail = await api('realm/' + rel);
+  } catch (_) {
+    // Not a package. It is still very likely a real prefix — r/gnoswap/v1 has
+    // nine packages under it and no package of its own — so answer the question
+    // a reader clicking a breadcrumb actually had.
+    return ghTree(r.path, gen);
+  }
+  if (gen !== undefined && gen !== _ghGen) return;
+
+  // One synchronous block from here: clearing before the await above and
+  // appending after it is what put two headers on the directory page.
+  const host = clear('gnohub-body');
+  host.appendChild(ghRepoHeader(detail, r));
+  const body = el('div', { className: 'gh-repo-body' });
+  host.appendChild(body);
+
+  if (r.tab === 'blob') ghBlob(body, detail, r.file);
+  else if (r.tab === 'commits') ghCommits(body, detail);
+  else if (r.tab === 'deps') ghDeps(body, detail);
+  else ghCode(body, detail);
+}
+
+function ghRepoHeader(d, r) {
+  const wrap = el('div', { className: 'gh-repo-head' });
+  const title = el('div', { className: 'gh-repo-title' });
+  title.appendChild(el('span', { className: 'gh-repo-title-path' }, d.path));
+  title.appendChild(copyButton(d.path, 'copy the import path'));
+  title.appendChild(ghKindBadge(d.is_realm));
+  const parked = parkedBadgeEl(d.status);
+  if (parked) title.appendChild(parked);
+  title.appendChild(netBadgeEl(d.network));
+  wrap.appendChild(title);
+
+  const facts = el('div', { className: 'gh-repo-facts' });
+  const addFact = (k, v) => { if (v !== null && v !== undefined) facts.appendChild(ghMeta(k, v)); };
+  const when = el('span', { className: 'gh-meta-v' });
+  when.appendChild(blockWithAge(d.block_height, d.block_time, d.network));
+  addFact('deployed', when);
+  addFact('by', addrLink(d.creator, d.network));
+  addFact('files', fmtNum((d.files || []).length));
+  // Counted from the table, not read from `symbols`: the listing's `symbols` is
+  // an integer and the detail response shadows that name with the whole symbol
+  // table, so printing it rendered "[object Object]" on every repo page.
+  const decls = countSymbols(d.symbols);
+  if (decls) addFact('declarations', fmtNum(decls));
+  if (d.calls) addFact('calls', fmtNum(d.calls));
+  if (d.unique_users) addFact('callers', fmtNum(d.unique_users));
+  if (d.importers) addFact('imported by', fmtNum(d.importers));
+  wrap.appendChild(facts);
+
+  const tabs = el('div', { className: 'gh-tabs' });
+  GNOHUB_TABS.forEach(t => {
+    const url = gnohubURL(d.path, t.suffix);
+    // A blob is inside the code tab, so it lights code rather than nothing.
+    const active = (r.tab === t.id) || (r.tab === 'blob' && t.id === 'code');
+    tabs.appendChild(ghLink(t.label, url, 'gh-tab' + (active ? ' active' : '')));
+  });
+  // The one link back out. gnohub deliberately cannot answer state, events,
+  // storage, balances or the call feed, and pretending otherwise by stubbing
+  // them would be worse than sending the reader to the page that does.
+  const out = ghLink('full explorer view →', '/realm/' + d.path.replace('gno.land/', '') + netSuffix(), 'gh-tab gh-tab-out');
+  out.title = 'the realm page: state, events, storage, balances, the call feed';
+  tabs.appendChild(out);
+  wrap.appendChild(tabs);
+  return wrap;
+}
+
+// ghReadme finds the closest thing a gno package has to a README.
+//
+// In order: an actual README.md in the package (the chain stores whatever files
+// were submitted, and some packages ship one), then the doc comment above
+// `package X`, which is Go's own answer to the same question. Neither is
+// invented and nothing is summarised: if a package has neither, it gets no
+// README panel rather than a generated sentence about itself.
+function ghReadme(d) {
+  const md = (d.files || []).find(f => /^readme(\.md)?$/i.test(f.name));
+  if (md) return { kind: 'md', name: md.name, body: md.body };
+  // The doc comment above `package X`, already parsed for us by go/ast on the
+  // server. Not re-derived with a regex here: a comment block above an import
+  // or a build tag looks identical to one and would be shown as the package's
+  // own description.
+  const doc = d.symbols && d.symbols.package_doc;
+  if (doc && doc.trim()) return { kind: 'doc', body: doc.trim() };
+  return null;
+}
+
+
+function ghCode(body, d) {
+  const readme = ghReadme(d);
+  if (readme) {
+    const head = readme.kind === 'md' ? readme.name : 'package documentation';
+    // Deliberately not rendered as markdown or as HTML. Every byte here is
+    // on-chain content, which is attacker-controlled, and the site's rule is
+    // that the frontend builds DOM and never HTML strings. Monospace and
+    // linkified is honest and cannot be turned into a payload.
+    body.appendChild(ghPanel(head, el('div', { className: 'gh-readme' }, linkify(readme.body))));
+  }
+
+  const files = (d.files || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const list = el('div', { className: 'gh-file-list' });
+  files.forEach(f => {
+    const row = el('div', { className: 'gh-file-row' });
+    const name = el('span', { className: 'gh-file-name' });
+    name.appendChild(icon('doc'));
+    name.appendChild(ghLink(f.name, gnohubURL(d.path, '/-/blob/' + encodeURIComponent(f.name))));
+    row.appendChild(name);
+    const lines = (f.body || '').split('\n').length;
+    row.appendChild(el('span', { className: 'gh-file-size' },
+      fmtNum(lines) + ' lines · ' + fmtNum(new Blob([f.body || '']).size) + ' B'));
+    list.appendChild(row);
+  });
+  body.appendChild(ghPanel('files', files.length ? list : ghEmpty('this package has no files indexed')));
+
+  if ((d.exported_funcs || []).length) {
+    const fns = el('div', { className: 'gh-chips' });
+    d.exported_funcs.forEach(f => fns.appendChild(el('span', { className: 'gh-chip' }, f)));
+    body.appendChild(ghPanel('exported functions (' + fmtNum(d.exported_funcs.length) + ')', fns));
+  }
+}
+
+function ghBlob(body, d, fileName) {
+  const f = (d.files || []).find(x => x.name === fileName);
+  if (!f) {
+    body.appendChild(ghPanel(fileName, ghEmpty('this package has no file by that name')));
+    return;
+  }
+  const head = el('div', { className: 'gh-blob-head' });
+  head.appendChild(ghLink('← files', gnohubURL(d.path), 'gh-dim'));
+  head.appendChild(el('span', { className: 'gh-blob-name' }, f.name));
+  const lines = (f.body || '').split('\n');
+  head.appendChild(el('span', { className: 'gh-dim' }, fmtNum(lines.length) + ' lines'));
+  head.appendChild(copyButton(f.body, 'copy the whole file'));
+  body.appendChild(head);
+
+  // A gutter of anchors beside the source, so #L42 in a link lands somewhere.
+  // codeBlock already ids every line as <fileId>-L<n>; the gutter reuses those
+  // ids rather than keeping a second numbering that can drift from them.
+  const fileId = 'gh-' + f.name.replace(/[^A-Za-z0-9]/g, '-');
+  const wrap = el('div', { className: 'gh-blob' });
+  const gutter = el('div', { className: 'gh-gutter' });
+  for (let i = 1; i <= lines.length; i++) {
+    const id = fileId + '-L' + i;
+    const a = el('a', { href: '#' + id, className: 'gh-ln' }, String(i));
+    // replaceState, not the browser's own anchor jump. A hash change fires
+    // popstate, route() is bound to popstate and reads only the pathname, so
+    // letting the anchor through would repaint the whole view and throw away
+    // the scroll position the click was asking for.
+    a.addEventListener('click', (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+      e.preventDefault();
+      ghFocusLine(id, true);
+    });
+    gutter.appendChild(a);
+  }
+  wrap.appendChild(gutter);
+  const code = codeBlock(f.body, fileId);
+  code.className = 'gh-code';
+  wrap.appendChild(code);
+  body.appendChild(wrap);
+
+  // A #L42 that arrived in the URL, honoured after the paint rather than by
+  // the browser: the line did not exist when the document loaded.
+  const want = decodeURIComponent(window.location.hash.slice(1));
+  if (want && want.startsWith(fileId + '-L')) ghFocusLine(want, false);
+}
+
+// ghFocusLine scrolls a source line into view and marks it, and optionally
+// writes it into the URL so the address bar is what a reader copies.
+function ghFocusLine(id, writeHash) {
+  document.querySelectorAll('.gh-line-on').forEach(n => n.classList.remove('gh-line-on'));
+  const target = document.getElementById(id);
+  if (!target) return;
+  target.classList.add('gh-line-on');
+  const n = id.slice(id.lastIndexOf('-L') + 2);
+  const ln = Array.from(document.querySelectorAll('.gh-ln')).find(a => a.textContent === n);
+  if (ln) ln.classList.add('gh-line-on');
+  target.scrollIntoView({ block: 'center' });
+  if (writeHash) {
+    history.replaceState(history.state, '', window.location.pathname + window.location.search + '#' + id);
+  }
+}
+
+// ghCommits is the deploy history, which is the only history a package has.
+//
+// Not a diff: package_files stores the current body and nothing else, so what
+// changed between two submissions is not a question this data can answer. The
+// panel says so rather than leaving a reader to assume the "commits" analogy
+// goes further than it does.
+function ghCommits(body, d) {
+  const holder = el('div', {});
+  body.appendChild(holder);
+  apiSWR('realm/deploys/' + d.path.replace('gno.land/', '') + '?limit=200', (data) => {
+    // No generation check: `holder` belongs to this render's own body, so a
+    // late arrival paints into a node that is no longer in the document
+    // rather than over whatever replaced it.
+    holder.textContent = '';
+    const deploys = data.deploys || [];
+    const table = el('table', { className: 'gh-commits' });
+    const thead = el('thead', {}, el('tr', {},
+      el('th', {}, ''), el('th', {}, 'transaction'), el('th', {}, 'by'),
+      el('th', {}, 'block'), el('th', {}, 'files')));
+    table.appendChild(thead);
+    const tbody = el('tbody', {});
+    deploys.forEach((dp, i) => {
+      const tr = el('tr', {});
+      const dot = el('td', {}, el('span', {
+        className: 'gh-dot ' + (dp.success ? 'ok' : 'fail'),
+        title: dp.success ? 'accepted' : 'failed',
+      }));
+      tr.appendChild(dot);
+      const what = el('td', {});
+      // showBlock off: the block column beside it already says which, with
+      // the age blockWithAge exists to carry.
+      what.appendChild(txLink(dp.tx_hash, dp.block_height, dp.network, { showBlock: false }));
+      if (i === deploys.length - 1) what.appendChild(el('span', { className: 'gh-tag' }, 'first'));
+      else if (i === 0 && dp.success) what.appendChild(el('span', { className: 'gh-tag' }, 'current'));
+      tr.appendChild(what);
+      tr.appendChild(el('td', {}, addrLink(dp.creator, dp.network)));
+      const when = el('td', {});
+      when.appendChild(blockWithAge(dp.block_height, dp.block_time, dp.network));
+      tr.appendChild(when);
+      tr.appendChild(el('td', {}, fmtNum(dp.num_files)));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    const title = 'deploys (' + fmtNum(data.total || deploys.length) + ')';
+    holder.appendChild(ghPanel(title, deploys.length ? table
+      : ghEmpty('no submission indexed for this path')));
+
+    const note = el('div', { className: 'gh-note' },
+      'A deploy is one MsgAddPackage. Resubmission at the same path is routine ' +
+      'under the inert code-submission policy, so several rows here can be the ' +
+      'same code sent again rather than a change. What changed between two of ' +
+      'them is not shown: the chain stores the current files and this explorer ' +
+      'indexes those, so a diff would need each submission re-fetched.');
+    if (data.truncated) {
+      note.appendChild(el('div', { className: 'gh-dim' },
+        'Showing the newest ' + fmtNum(deploys.length) + ' of ' + fmtNum(data.total) + '.'));
+    }
+    holder.appendChild(note);
+  }).catch(() => {
+    // Rebuilt, not appended to: the stale pass may already have painted.
+    holder.textContent = '';
+    holder.appendChild(ghPanel('deploys', ghEmpty(
+      'the deploy history endpoint did not answer. /api/realm/deploys is newer ' +
+      'than some running binaries, so an explorer that has not been redeployed ' +
+      'has no route for it.')));
+  });
+}
+
+function ghDeps(body, d) {
+  const network = d.network;
+  const imports = (d.imports || []).slice().sort();
+  const impList = el('div', { className: 'gh-dep-list' });
+  imports.forEach(p => {
+    const row = el('div', { className: 'gh-dep-row' });
+    if (p.startsWith('gno.land/')) row.appendChild(ghLink(p, gnohubURL(p)));
+    else row.appendChild(el('span', { className: 'gh-dim' }, p));
+    impList.appendChild(row);
+  });
+  body.appendChild(ghPanel('imports (' + fmtNum(imports.length) + ')',
+    imports.length ? impList : ghEmpty('this package imports nothing outside the standard library')));
+
+  // Dependents carry their creator, and that is the whole point of showing it:
+  // twenty-five importers is adoption if they are twenty-five accounts and
+  // version churn if they are one. See the note on store.PackageDetail.
+  const deps = d.dependents || [];
+  const owners = new Set(deps.map(x => x.creator).filter(Boolean));
+  const depList = el('div', { className: 'gh-dep-list' });
+  deps.forEach(x => {
+    const row = el('div', { className: 'gh-dep-row' });
+    row.appendChild(ghLink(x.path, gnohubURL(x.path)));
+    if (x.creator) {
+      const by = el('span', { className: 'gh-dim' });
+      by.appendChild(document.createTextNode(' by '));
+      by.appendChild(addrLink(x.creator, network));
+      row.appendChild(by);
+    }
+    depList.appendChild(row);
+  });
+  const depTitle = 'dependents (' + fmtNum(deps.length) +
+    (owners.size ? ', from ' + fmtNum(owners.size) + (owners.size === 1 ? ' account' : ' accounts') : '') + ')';
+  body.appendChild(ghPanel(depTitle, deps.length ? depList
+    : ghEmpty('nothing on this chain imports this package')));
+}
+
+// ghTree answers a path that is a prefix rather than a package.
+//
+// gno.land/r/gnoswap/v1 is nobody's deploy and everybody's breadcrumb. GitHub
+// would 404; a directory listing is both more useful and more honest, and it
+// says in one line why the page is not a repo.
+async function ghTree(prefix, gen) {
+  const rel = prefix.replace('gno.land/', '');
+  const owner = rel.split('/')[1] || rel.split('/')[0];
+
+  let items = [];
+  try {
+    const data = await api('packages?kind=all&limit=500&namespace=' + encodeURIComponent(owner));
+    items = (data.items || []).filter(p => p.path.startsWith(prefix + '/'));
+  } catch (_) { /* falls through to the empty state below */ }
+  if (gen !== undefined && gen !== _ghGen) return;
+
+  // Cleared here and not before the await: two loaders in flight would
+  // otherwise both clear, then both append, and the page would carry two of
+  // everything.
+  const body = clear('gnohub-body');
+  body.appendChild(el('div', { className: 'gh-repo-head' },
+    el('div', { className: 'gh-repo-title' },
+      el('span', { className: 'gh-repo-title-path' }, prefix),
+      badge('info', 'directory')),
+    el('div', { className: 'gh-note' },
+      'Nothing was deployed at this exact path. It is a prefix, and these are ' +
+      'the packages under it.')));
+
+  const list = el('div', { className: 'gh-repo-list' });
+  items.slice().sort((a, b) => a.path.localeCompare(b.path))
+    .forEach(p => list.appendChild(ghRepoRow(p)));
+  body.appendChild(ghPanel('under ' + prefix, items.length ? list
+    : ghEmpty('no package on this chain sits under this path')));
 }
 
 // --- Routing ---

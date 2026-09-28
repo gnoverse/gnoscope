@@ -400,12 +400,30 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/symbols/status` | what the symbol index covers |
 | `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset` |
 | `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
+| `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
 | `GET /api/deps/{path...}` | dependency graph as `{path: [imports]}`. `dir=dependents` reverses direction, and defaults to one hop; `depth=N` caps the reverse walk, `depth=0` is unbounded |
 | `GET /api/realm/cousage/{path...}` | co-usage: what else the addresses that called this realm also called. `{path, network, window, callers, partners[], truncated}`, each partner `{path, shared, calls, callers}` ordered by `shared` descending. `window` = `all` (default), `90d`, `30d`, `7d`, `24h`, unknown values are a 400. `limit` defaults to 100, capped at 1000. **Resolves a single network** the same way the contracts map does |
 | `GET /api/storage/{path...}` | storage events for a package. **Requires `network`**: the figures are denominated amounts and blending chains would be meaningless |
 | `GET /api/realm/defi/{path...}` | what a package holds: its two accounts' live balances, every native transfer through them, and its GRC20 positions. **Requires `network`**. The `flows[]` table pages with `flows_limit` (default 500, capped at 5000, `0` for a totals-only read) and `flows_offset`, counting back from the newest leg; `flows_total` is the whole history and every balance figure is summed over all of it, never over the page. `counterparties[]` is the same legs collapsed by who was at the other end (`sent`, `received`, `net` from *that account's* side, `legs`), always over every leg and never over the page, ranked by gross and capped at 50 with `counterparties_total` beside it. See below |
 | `GET /api/events/{path...}` | every event tagged with a package's path. Bounded: `limit` defaults to 200, capped at 2000. In all-networks mode it queries every chain and tags each row with its `network`. Unlike `/api/allevents` this is not filtered to `GnoEvent`, so the chain's own `StorageDepositEvent` / `StorageUnlockEvent` for that path are included; the realm page hides those behind a toggle rather than dropping them here |
+
+### The deploy history is the submissions, not the package row
+
+`/api/realm/deploys` reads `package_submissions`, which holds one row per
+message and is never overwritten. `packages` is a current-state projection with
+one row per path, so reading a history out of it returns exactly one entry and
+presents it as the whole story.
+
+This is not a rare edge. Under gno.land's inert code submission policy a parked
+package is invisible to every liveness probe (`vm/qfile`, `vm/qrender`), so a
+deployer who verifies by querying the path concludes the deploy failed and
+resubmits, once per retry, for as long as an approver is stuck. Several rows at
+one path are therefore usually the same code sent again rather than a change.
+
+What changed *between* two submissions is not answerable here: `package_files`
+stores the current body and nothing else, so a diff needs each submission's
+files re-fetched from the chain.
 
 ### The two accounts a package owns
 
@@ -1444,7 +1462,21 @@ document, including a gno realm's own `Render()`.
 ```
 /_badges/realm/{path...}?network=&metric=messages|callers&days=&theme=
 /_badges/network?network=&days=&theme=
+/_badges/shield/{kind}/{path...}?network=&days=&label=&color=&labelColor=&style=
 ```
+
+`shield` is the other shape: the 20-pixel label/message plate a README carries
+in a row at the top. `{kind}` is one of `status`, `txs`, `messages`, `users`,
+`version`. The same five answers are also served as shields.io endpoint JSON,
+for anyone who would rather their renderer drew it:
+
+```
+GET /api/shield/{kind}/{path...}   → {"schemaVersion":1,"label":…,"message":…,"color":…}
+```
+
+That one answers `200` with `"isError":true` on a failure rather than a 4xx,
+because shields draws its own generic error for a non-200 and discards the
+message that said which path was not found.
 
 They are registered through the same route table as everything above, so they
 appear in `/api/endpoints`. Windows, caching, the drawn-not-returned error
