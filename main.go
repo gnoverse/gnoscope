@@ -257,10 +257,14 @@ func run() error {
 			// live syncer, so this is the backfill: it is what fills the table
 			// on a database built before it existed. Two hashes per path over a
 			// few hundred paths, so it rides along rather than earning a ticker.
+			paStart := time.Now()
 			if n, err := db.RefreshPackageAccounts(); err != nil {
 				log.Printf("package_accounts: %v", err)
 			} else {
-				log.Printf("package_accounts: %d paths indexed", n)
+				// Its own duration, like the other passes that take the write
+				// slot wholesale: a number to read rather than to guess at.
+				log.Printf("package_accounts: %d paths indexed in %s", n,
+					time.Since(paStart).Round(time.Millisecond))
 			}
 			// Third separate call, same reasoning, plus one of its own: this
 			// one runs generated prose through the grounding gate, and a build

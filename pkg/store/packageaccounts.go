@@ -32,32 +32,42 @@ type PackageAccount struct {
 	Deposit bool `json:"deposit"`
 }
 
-// upsertPackageAccounts writes the two rows a path owns.
+// accountsFor is the two rows a path owns, or none.
 //
-// Caller holds writeMu. A run path (gno.land/e/<g1…>/run) is skipped: its
-// "address" is the caller's own, so a row for it would label a human's account
-// with a realm path.
-func (d *DB) upsertPackageAccounts(network, path string) error {
+// A run path (gno.land/e/<g1…>/run) yields none: its "address" is the caller's
+// own, so a row for it would label a human's account with a realm path. An
+// empty address is a path with no account of its own, a bare std library name
+// with no domain; see gnoaddr.Derive.
+func accountsFor(path string) []PackageAccount {
 	if path == "" || gnoaddr.IsRunPath(path) {
 		return nil
 	}
-	accounts := []PackageAccount{
+	out := make([]PackageAccount, 0, 2)
+	for _, pa := range [...]PackageAccount{
 		{Address: gnoaddr.Derive(path), Path: path},
 		{Address: gnoaddr.DeriveStorageDeposit(path), Path: path, Deposit: true},
-	}
-	for _, pa := range accounts {
-		// Empty for a path with no account of its own: a bare std library name
-		// with no domain. See gnoaddr.Derive.
-		if pa.Address == "" {
-			continue
+	} {
+		if pa.Address != "" {
+			out = append(out, pa)
 		}
-		// REPLACE, not IGNORE: the address is a hash of the path, so two paths
-		// colliding is not a case to design for, but a row left over from a
-		// bad write must not outlive the correction.
-		if _, err := d.db.Exec(`
-			INSERT OR REPLACE INTO package_accounts (network, address, path, deposit)
-			VALUES (?, ?, ?, ?)
-		`, network, pa.Address, pa.Path, pa.Deposit); err != nil {
+	}
+	return out
+}
+
+// upsertPackageAccountsSQL is shared by the per-package write and the bulk
+// rebuild so the two cannot disagree about what a row looks like.
+//
+// REPLACE, not IGNORE: the address is a hash of the path, so two paths
+// colliding is not a case to design for, but a row left over from a bad write
+// must not outlive the correction.
+const upsertPackageAccountsSQL = `
+	INSERT OR REPLACE INTO package_accounts (network, address, path, deposit)
+	VALUES (?, ?, ?, ?)`
+
+// upsertPackageAccounts writes the two rows a path owns. Caller holds writeMu.
+func (d *DB) upsertPackageAccounts(network, path string) error {
+	for _, pa := range accountsFor(path) {
+		if _, err := d.db.Exec(upsertPackageAccountsSQL, network, pa.Address, pa.Path, pa.Deposit); err != nil {
 			return err
 		}
 	}
@@ -103,12 +113,33 @@ func (d *DB) RefreshPackageAccounts() (int, error) {
 
 	// Collected first, written second. Holding the read lock across the writes
 	// would nest two locks that every other path takes independently.
+	//
+	// One transaction for the lot, which is how the other wholesale rebuilds in
+	// this file work and is not a micro-optimisation here: a statement of its
+	// own per row means two fsyncs per package, and on a database with a few
+	// thousand packages that is thousands of them with SQLite's single writer
+	// slot held throughout and the syncer queued behind it.
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
+	tx, err := d.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(upsertPackageAccountsSQL)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
 	for i, p := range pkgs {
-		if err := d.upsertPackageAccounts(p.network, p.path); err != nil {
-			return i, err
+		for _, pa := range accountsFor(p.path) {
+			if _, err := stmt.Exec(p.network, pa.Address, pa.Path, pa.Deposit); err != nil {
+				return i, err
+			}
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
 	return len(pkgs), nil
 }
