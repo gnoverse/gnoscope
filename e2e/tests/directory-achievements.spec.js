@@ -15,6 +15,8 @@ import { expect, test } from '@playwright/test';
 import { BUSY_CALLER } from '../harness/fixture.mjs';
 import { settle, unexpected, watch } from './helpers.js';
 
+const pane = (page, name) => page.locator(`#address-detail-content [data-pane="${name}"]`);
+
 // waitForBadges polls the API until the rollup has produced something, and
 // fails loudly rather than letting an empty grid read as a rendering bug.
 async function waitForBadges(page) {
@@ -165,6 +167,29 @@ test('the achievements tab survives a reload, and the overview comes back', asyn
   await settle(page);
   await expect(page).not.toHaveURL(/tab=/);
   await expect(page.locator('#address-detail-content canvas').first()).toBeVisible();
+});
+
+// A marker badge is not scored, on the page or in the payload.
+//
+// session-key describes what an address *is*, and a master account can never
+// become one. Counted, it put a badge in a denominator nobody reading their own
+// page can move: moul's read "21 of 26" against a real ceiling of 25.
+test('a marker badge is drawn but not scored', async ({ page }) => {
+  await waitForBadges(page);
+
+  const cat = await (await page.request.get('/api/achievements')).json();
+  const markers = (cat.achievements || []).filter(a => a.marker);
+  expect(markers.length, 'no marker in the catalog, so this test proves nothing').toBeGreaterThan(0);
+
+  const res = await (await page.request.get(`/api/address/${BUSY_CALLER}/achievements`)).json();
+  expect(res.total, 'the payload counted a badge nobody can earn')
+    .toBe(res.achievements.length - markers.length);
+
+  await page.goto(`/address/${BUSY_CALLER}?tab=achievements`);
+  await settle(page);
+  // The headline reads out of the same number.
+  await expect(pane(page, 'achievements').first().locator('.stats-bar'))
+    .toContainText(String(res.total));
 });
 
 test('the unknown-badge case is a 400, not an empty list', async ({ page }) => {

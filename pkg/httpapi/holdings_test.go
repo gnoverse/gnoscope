@@ -80,3 +80,49 @@ func TestAddressHoldingsRefusesTheAllNetworksCase(t *testing.T) {
 		t.Errorf("status %d with no network, want 400", rec.Code)
 	}
 }
+
+// The denominator counts only what can be earned.
+//
+// session-key marks a delegated signing address, which a master account can
+// never become. Counted, it gave every human reader a ceiling one below the one
+// printed with nothing saying which badge was impossible: moul's page read
+// "21 of 26" against a real 25.
+func TestAddressAchievementsExcludeMarkersFromTheScore(t *testing.T) {
+	db := store.NewTestDB(t)
+	api := NewAPI(db, nil, nil, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/address/g1nobody/achievements", nil)
+	req.SetPathValue("addr", "g1nobody")
+	api.HandleAddressAchievements(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var got struct {
+		Total        int `json:"total"`
+		Achievements []struct {
+			Slug   string `json:"slug"`
+			Marker bool   `json:"marker"`
+		} `json:"achievements"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	markers := 0
+	for _, a := range got.Achievements {
+		if a.Marker {
+			markers++
+		}
+	}
+	if markers == 0 {
+		t.Fatal("no marker came back, so this test proves nothing")
+	}
+	// Still served: on a session address the marker is the useful line. Just
+	// not counted.
+	if want := len(got.Achievements) - markers; got.Total != want {
+		t.Errorf("total %d over %d entries with %d markers, want %d",
+			got.Total, len(got.Achievements), markers, want)
+	}
+}

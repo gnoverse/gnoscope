@@ -957,7 +957,13 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/views", a.HandleViews)
 	mux.HandleFunc("GET /api/packages", a.HandlePackages)
 	mux.HandleFunc("GET /api/packages/facets", a.HandlePackageFacets)
-	mux.HandleFunc("GET /api/tx/{hash}", a.HandleTx)
+	// {hash...}, not {hash}: roughly a third of gno transaction hashes are
+	// base64 carrying a slash, and pasted unescaped that is two path segments.
+	// A single-segment wildcard matched neither, so the request fell through to
+	// the SPA and came back 200 with a page of HTML, which a caller cannot tell
+	// apart from an answer. The trailing form matches the escaped spelling too,
+	// so nothing that worked before changes.
+	mux.HandleFunc("GET /api/tx/{hash...}", a.HandleTx)
 	mux.HandleFunc("GET /api/txs", a.HandleTxs)
 	mux.HandleFunc("GET /api/address/{addr}", a.HandleAddress)
 	mux.HandleFunc("GET /api/address/{addr}/sessions", a.HandleAddressSessions)
