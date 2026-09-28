@@ -168,6 +168,25 @@ func TestSplitPath(t *testing.T) {
 		{"gno.land/r/moul/x/vm/bf", "moul", "bf"},
 		{"gno.land/r/g1abc/kourt", "g1abc", "kourt"},
 		{"weird", "", "weird"},
+
+		// A version is a generation, never a project. Every one of these was
+		// live on mainnet on 2026-09-28 and every one of them reached the page
+		// as the sentence "put a new library on the chain, called v0".
+		{"gno.land/p/moul/x/vm/riscv/v0", "moul", "riscv"},
+		{"gno.land/r/moul/x/daily/fenwickdemo/v0", "moul", "fenwickdemo"},
+		{"gno.land/r/moul/faucet/v1", "moul", "faucet"},
+		{"gno.land/r/gov/dao/memberstore/v0", "gov", "memberstore"},
+		// Not always trailing: gnoswap deploys the version in the middle.
+		{"gno.land/r/gnoswap/v1/position", "gnoswap", "position"},
+		{"gno.land/r/gnoswap/v1/pool/v2", "gnoswap", "pool"},
+		// Nothing but a version after the namespace, so the version comes back:
+		// it is the only name the path has, and a blank one is worse.
+		{"gno.land/r/moul/v0", "moul", "v0"},
+		// Not versions. "v" alone is a name, and so is a word that starts with
+		// one; only v-then-digits is a generation marker.
+		{"gno.land/p/demo/v", "demo", "v"},
+		{"gno.land/p/demo/vault", "demo", "vault"},
+		{"gno.land/p/demo/v2x", "demo", "v2x"},
 	}
 	for _, c := range cases {
 		ns, name := splitPath(c.in)
@@ -472,5 +491,33 @@ func TestTheArticleAgreesWithTheNoun(t *testing.T) {
 		if got := article(word); got != want {
 			t.Errorf("article(%q) = %q, want %q", word, got, want)
 		}
+	}
+}
+
+// Layer 2 is the card's headline row and the gate drops an event that overruns
+// it, silently. Three emitters shed a clause to stay inside; package.deployed
+// was the fourth and did not, which was safe only while every name was short.
+func TestDeployedMeansShedsRatherThanOverruns(t *testing.T) {
+	// 21 characters is the longest package name on mainnet, pearl or staging
+	// (memba_weighted_policy, measured 2026-09-28). This has to keep its name.
+	got := deployedMeans("@somebodywithalonghandle", "library", "memba_weighted_policy")
+	if !strings.Contains(got, "memba_weighted_policy") {
+		t.Errorf("a real-length name was dropped: %q", got)
+	}
+	if n := len([]rune(got)); n > MaxMeans {
+		t.Errorf("the realistic worst case is %d chars, over the %d budget: %q", n, MaxMeans, got)
+	}
+
+	// Past the budget, the name clause goes and the sentence still stands.
+	long := strings.Repeat("x", 60)
+	shed := deployedMeans("@moul", "app", long)
+	if n := len([]rune(shed)); n > MaxMeans {
+		t.Errorf("shed line is %d chars, still over %d: %q", n, MaxMeans, shed)
+	}
+	if strings.Contains(shed, long[:40]) {
+		t.Errorf("the name should be dropped whole, not truncated into a different name: %q", shed)
+	}
+	if !strings.HasSuffix(shed, "put a new app on the chain.") {
+		t.Errorf("shed line lost its meaning: %q", shed)
 	}
 }
