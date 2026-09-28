@@ -203,8 +203,19 @@ func (d *DB) DiscoverEvents(q DiscoverQuery) ([]DiscoverEvent, string, error) {
 	if q.Network == "" {
 		return nil, "", fmt.Errorf("discover is per chain: a network is required")
 	}
-	if q.Limit <= 0 || q.Limit > DiscoverLimitMax {
+	// Clamp to the cap when asked for too much; fall back to the default only
+	// when nothing usable was asked for.
+	//
+	// These were one branch, and a request for more than the cap silently
+	// became the *default* rather than the cap. That is a surprising way to
+	// answer "give me 1000" with 50, and it was not theoretical: the API's
+	// candidate pool asked for 1000, got 50, and ranked an eighth of the window
+	// while reporting nothing unusual.
+	if q.Limit <= 0 {
 		q.Limit = 50
+	}
+	if q.Limit > DiscoverLimitMax {
+		q.Limit = DiscoverLimitMax
 	}
 
 	where := []string{"network = ?"}
