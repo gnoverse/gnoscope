@@ -289,3 +289,45 @@ func TestAtLabel(t *testing.T) {
 		t.Errorf("atLabel(moul) = %q", got)
 	}
 }
+
+// Every stored event carries a score, because the endpoint ranks on it and a
+// zero there sorts the event off the bottom of the page rather than failing
+// visibly. The first build of this table shipped without it and every row
+// scored 0; nothing said so, because nothing read the column yet.
+func TestEveryBuiltEventCarriesAScore(t *testing.T) {
+	withGlossary(t)
+	db := NewTestDB(t)
+
+	MustPackageSubmission(t, db, "alpha", "TX1", "gno.land/r/moul/hello", "g1moul", 100, recent(3), true, 3)
+	MustPackageSubmission(t, db, "alpha", "TX2", "gno.land/r/moul/second", "g1moul", 110, recent(2), true, 1)
+	if err := db.RefreshFirstSeen(); err != nil {
+		t.Fatal(err)
+	}
+
+	events := buildAndRead(t, db, "alpha")
+	if len(events) == 0 {
+		t.Fatal("nothing built")
+	}
+	for _, e := range events {
+		if e.ScoreBase <= 0 {
+			t.Errorf("%s scored %v", e.ID, e.ScoreBase)
+		}
+	}
+
+	// And the editorial prior is actually applied: a debut outranks an ordinary
+	// deploy, which is the comparison the whole table of bases exists for.
+	var debut, deploy float64
+	for _, e := range events {
+		switch e.Kind {
+		case "deployer.first":
+			debut = e.ScoreBase
+		case "package.deployed":
+			if e.ScoreBase > deploy {
+				deploy = e.ScoreBase
+			}
+		}
+	}
+	if debut <= deploy {
+		t.Errorf("a first-ever deployer scores %.1f against a deploy's %.1f", debut, deploy)
+	}
+}

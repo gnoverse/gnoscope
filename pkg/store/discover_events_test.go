@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -56,10 +57,12 @@ func TestARebuildInsertsNothingAndChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The same events again, as a rebuild would produce them.
+	// The same events again, as a rebuild would produce them. Nothing changed,
+	// so nothing is written: an unchanged row must not count, or every tick
+	// reports hundreds of writes and the number stops meaning anything.
 	n, err = db.UpsertDiscoverEvents(batch)
 	if err != nil || n != 0 {
-		t.Fatalf("rebuild inserted %d rows, want 0: %v", n, err)
+		t.Fatalf("rebuild wrote %d rows, want 0: %v", n, err)
 	}
 	after, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha"})
 	if err != nil {
@@ -352,5 +355,51 @@ func TestUpsertRejectsAnEventWithNoIdentity(t *testing.T) {
 		if _, err := db.UpsertDiscoverEvents([]DiscoverEvent{bad}); err == nil {
 			t.Errorf("accepted %+v", bad)
 		}
+	}
+}
+
+// The derived half of a row refreshes; its identity does not.
+//
+// This is the failure that produced the rule. A layer 1 template fix left
+// already-stored rows carrying the old wording, and adding a score column left
+// every existing row at zero, which would have sorted them all off the bottom
+// of the page with nothing to say why. Neither is history a subscriber read.
+func TestARebuildRefreshesTheDerivedHalfAndNotTheIdentity(t *testing.T) {
+	db := NewTestDB(t)
+	first := ev("alpha", "package.deployed", "hello", 0, "2026-09-20T10:00:00Z", 100)
+	first.ScoreBase = 0
+	if _, err := db.UpsertDiscoverEvents([]DiscoverEvent{first}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same event, rebuilt by software that now scores it and words it
+	// differently. Same id, because the id is a function of the event.
+	second := first
+	second.ScoreBase = 41.8
+	second.Layers = []byte(`{"means":{"text":"An app was published, reworded."}}`)
+	n, err := db.UpsertDiscoverEvents([]DiscoverEvent{second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("the refresh wrote %d rows, want 1", n)
+	}
+
+	got, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("%d rows, want 1: a refresh must not duplicate the event", len(got))
+	}
+	if got[0].ScoreBase != 41.8 {
+		t.Errorf("score = %v, want the refreshed 41.8", got[0].ScoreBase)
+	}
+	if !strings.Contains(string(got[0].Layers), "reworded") {
+		t.Errorf("layers were not refreshed: %s", got[0].Layers)
+	}
+	// Identity untouched, which is the whole contract: consumers dedupe on it.
+	if got[0].ID != first.ID || got[0].At != first.At || got[0].Height != first.Height {
+		t.Errorf("identity changed: %+v", got[0])
 	}
 }

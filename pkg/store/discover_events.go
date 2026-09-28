@@ -69,15 +69,32 @@ func EventID(network, kind, subject string, ordinal int) string {
 	return fmt.Sprintf("%s/%s/%s/%d", network, kind, subject, ordinal)
 }
 
-// UpsertDiscoverEvents writes events, skipping any id already present.
+// UpsertDiscoverEvents writes events, refreshing the derived half of any row
+// that already exists.
 //
-// DO NOTHING rather than DO UPDATE: the table is append-only by design, and a
-// row whose id already exists is by construction the same event, because the id
-// is a function of the event's own identity. Updating would mean a rebuild
-// could silently rewrite history that a subscriber has already read.
+// The split is between identity and derivation. network, id, kind, at and
+// height are what the event *is*, and they are a pure function of the chain, so
+// a rebuild reproduces them exactly and there is nothing to update. facts,
+// layers and the score are *derived* from source rows and from templates, and
+// both of those legitimately change: a template fix, a new score term, a source
+// query learning to fill a field it used to leave empty.
 //
-// Returns the number of rows actually inserted, which is the number of new
-// events and the figure worth logging on a tick.
+// This began as DO NOTHING, on the reasoning that the table is append-only.
+// That froze the derived half, and it went wrong twice within a day. A layer 1
+// template fix left already-stored rows carrying the old wording, and adding
+// score_base left 930 rows scoring zero, which would have sorted every one of
+// them off the bottom of the page with nothing to say why. Neither is history a
+// subscriber read; both are this software's own rendering of a fact that has
+// not changed.
+//
+// Updating is safe for the one contract that matters here: consumers dedupe on
+// id, the id is unchanged, so a refreshed body is not a new item and nobody
+// re-notifies. What must never change is the id, and nothing here can change
+// it.
+//
+// Returns how many rows were new and how many were refreshed. Both are worth
+// logging: a steady stream of refreshes on a tick that should be idempotent
+// means a template or a source is not deterministic.
 func (d *DB) UpsertDiscoverEvents(events []DiscoverEvent) (int, error) {
 	if len(events) == 0 {
 		return 0, nil
@@ -96,7 +113,22 @@ func (d *DB) UpsertDiscoverEvents(events []DiscoverEvent) (int, error) {
 			(network, id, kind, at, height, actor, target, namespace,
 			 facts, layers, evidence_tx, first_ever, reach, magnitude, score_base, built_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (network, id) DO NOTHING`)
+		ON CONFLICT (network, id) DO UPDATE SET
+			facts      = excluded.facts,
+			layers     = excluded.layers,
+			actor      = excluded.actor,
+			target     = excluded.target,
+			namespace  = excluded.namespace,
+			first_ever = excluded.first_ever,
+			reach      = excluded.reach,
+			magnitude  = excluded.magnitude,
+			score_base = excluded.score_base
+		WHERE facts      IS NOT excluded.facts
+		   OR layers     IS NOT excluded.layers
+		   OR score_base IS NOT excluded.score_base
+		   OR reach      IS NOT excluded.reach
+		   OR magnitude  IS NOT excluded.magnitude
+		   OR first_ever IS NOT excluded.first_ever`)
 	if err != nil {
 		return 0, err
 	}
@@ -113,6 +145,11 @@ func (d *DB) UpsertDiscoverEvents(events []DiscoverEvent) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("insert %s: %w", e.ID, err)
 		}
+		// RowsAffected counts an insert and a real update alike, which is
+		// what "this row changed" means here. The WHERE on the conflict
+		// clause is what keeps an unchanged row from counting: without it
+		// every tick would report 930 writes and the number would stop
+		// meaning anything.
 		if n, _ := res.RowsAffected(); n > 0 {
 			inserted++
 		}

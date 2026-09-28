@@ -115,7 +115,12 @@ type discoverCandidate struct {
 	Namespace string
 	Evidence  string
 	FirstEver bool
-	Reach     int64
+	// Reach is unique actors and never a call count: a bot making thousands of
+	// calls from one address must not be able to buy the top slot.
+	Reach int64
+	// Magnitude is the kind's natural quantity, raw. It is divided by that
+	// kind's own floor when scored, so the number here stays the thing the
+	// chain said rather than a ratio nobody can check.
 	Magnitude float64
 	Input     interface {
 		Emit() (discover.Facts, discover.Layers)
@@ -134,6 +139,7 @@ func (c discoverCandidate) event(facts discover.Facts, layers discover.Layers, n
 	return DiscoverEvent{
 		Network:    network,
 		ID:         EventID(network, c.Kind, c.Subject, c.Ordinal),
+		ScoreBase:  discover.ScoreBase(c.Kind, c.FirstEver, c.Reach, c.Magnitude),
 		Kind:       c.Kind,
 		At:         c.At,
 		Height:     c.Height,
