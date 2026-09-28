@@ -39,6 +39,11 @@ export const EXPECTED_FAILURES = [
   // vm/qobject_json). Realm state is not in the transaction stream, so the fake
   // indexer cannot stand in for it the way it does for everything else here.
   { pattern: /\/api\/state\//, why: 'realm state needs RPC' },
+  // Stdlib ships inside the node binary and is crawled over RPC (vm/qpaths,
+  // vm/qfile). With no RPC configured nothing is crawled, so every stdlib
+  // package is legitimately a 404 here. That is the case the stdlib spec is
+  // pinning: it has to read as an answer, not as a broken page.
+  { pattern: /\/api\/stdlib/, why: 'the stdlib crawl needs RPC' },
 ];
 
 export function unexpected(failures) {
