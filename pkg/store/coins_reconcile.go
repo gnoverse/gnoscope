@@ -17,10 +17,11 @@ import (
 //	derived           SUM over coin_transfers. Every bank transfer emits one.
 //	gas               transactions.gas_fee, for every transaction this address
 //	                  paid for. SendCoinsUnrestricted, so no event.
-//	storage_deposit   storage_events.fee, signed. Over the same transactions,
-//	                  *plus* the enable transactions for packages this address
-//	                  submitted, which are charged to it and signed by somebody
-//	                  else. Also SendCoinsUnrestricted, also no event.
+//	storage_deposit   storage_events.fee, signed, over the events payerExpr
+//	                  attributes to this address. Not "over the transactions it
+//	                  paid for": a package's deposit is taken on an approver's
+//	                  enable and billed to the creator, so the payer is not in
+//	                  the transaction. Also SendCoinsUnrestricted, also no event.
 //	genesis           an allocation written into the bank at InitChain. No
 //	                  transaction, no event, and not derivable from anything
 //	                  here: the chain exposes only the *vesting* portion of it
@@ -98,35 +99,28 @@ func (d *DB) UnemittedSpendFor(network, addr string) (UnemittedSpend, error) {
 		UNION SELECT tx_hash FROM bank_sends   WHERE from_address = ? AND %s`,
 		nf("network"), nf("network"), nf("network"), nf("network"))
 
-	// An enable transaction is identified by shape, because nothing stores the
-	// message type: it carries storage events and has no message row of its
-	// own, being neither a call, a run, nor a submission. 449 such
-	// transactions on mainnet. Their deposits belong to whoever submitted the
-	// package at that path, not to the approver who signed the enable.
-	enableDeposits := fmt.Sprintf(`
-		SELECT COALESCE(SUM(s.fee), 0) FROM storage_events s
-		 WHERE %s
-		   AND s.tx_hash NOT IN (SELECT tx_hash FROM paid)
-		   AND s.pkg_path IN (SELECT path FROM package_submissions
-		                       WHERE creator = ? AND %s)
-		   AND NOT EXISTS (SELECT 1 FROM calls c
-		                    WHERE c.tx_hash = s.tx_hash AND %s)
-		   AND NOT EXISTS (SELECT 1 FROM msg_runs r
-		                    WHERE r.tx_hash = s.tx_hash AND %s)
-		   AND NOT EXISTS (SELECT 1 FROM package_submissions ps
-		                    WHERE ps.tx_hash = s.tx_hash AND %s)`,
-		nf("s.network"), nf("network"), nf("c.network"), nf("r.network"), nf("ps.network"))
-
+	// Storage is attributed with payerExpr, the same expression the storage map
+	// uses, rather than with a second rule written here.
+	//
+	// It used to be a second rule: this query reconstructed the enable case by
+	// shape while storagemap.go reconstructed it with a COALESCE ladder, and
+	// two derivations of one fact is one of them going stale. payerExpr owns
+	// it; this reads it.
+	//
+	// Note what that changes beyond tidiness. The old rule here only claimed a
+	// deposit when the transaction was not the address's own, which meant a
+	// call paying for a realm the address happens to have deployed could be
+	// counted twice. payerExpr returns exactly one payer per event, so the sum
+	// partitions by construction.
 	q := fmt.Sprintf(`
 		WITH paid AS (%s)
 		SELECT
 		  (SELECT COALESCE(SUM(t.gas_fee), 0) FROM transactions t
 		     JOIN paid p ON p.tx_hash = t.tx_hash WHERE %s),
 		  (SELECT COALESCE(SUM(s.fee), 0) FROM storage_events s
-		     JOIN paid p ON p.tx_hash = s.tx_hash WHERE %s)
-		  + (%s),
+		     WHERE %s AND %s = ?),
 		  (SELECT COUNT(*) FROM paid)`,
-		payer, nf("t.network"), nf("s.network"), enableDeposits)
+		payer, nf("t.network"), nf("s.network"), payerExpr)
 
 	args := []any{addr, addr, addr, addr, addr}
 	err := d.db.QueryRow(q, args...).Scan(&out.GasUgnot, &out.StorageDepositUgnot, &out.Transactions)
