@@ -3,6 +3,9 @@ package store
 import (
 	"testing"
 	"time"
+
+	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/moul/mygnoscan/pkg/gnoaddr"
 )
 
 func TestParseUgnot(t *testing.T) {
@@ -192,5 +195,65 @@ func TestAccountPopulationDeduplicates(t *testing.T) {
 	}
 	if pop.Known < 2 {
 		t.Errorf("known = %d, want at least 2", pop.Known)
+	}
+}
+
+// The rich list's defect: an account that has never transacted did not exist
+// here, so the largest accounts on the chain were absent from the ranking.
+//
+// On mainnet that put the fourth-largest account at rank 1 and left roughly 45%
+// of the supply off the page, because the institutional genesis buckets have
+// never sent a transaction and a genesis allocation emits no event for any
+// message table to record.
+func TestKnownAddressesCoversAccountsThatNeverTransacted(t *testing.T) {
+	db := NewTestDB(t)
+	db.SetConfiguredNetworks([]config.NetworkConfig{{ID: "alpha"}})
+
+	const when = "2026-01-01T00:00:00Z"
+	// The only address any message table knows.
+	if err := db.InsertCall("alpha", "TX1", 10, 0, when, "g1caller",
+		"gno.land/r/x/y", "F", true); err != nil {
+		t.Fatalf("InsertCall: %v", err)
+	}
+	// A realm's treasury: derived from its path, never a caller.
+	if err := db.UpsertPackage("alpha", "gno.land/r/x/y", "y", "g1creator", "TX1", 10,
+		when, true, 1); err != nil {
+		t.Fatalf("UpsertPackage: %v", err)
+	}
+	// Somebody paid through a realm banker, which writes no BankMsgSend.
+	if err := db.InsertCoinTransfer("alpha", "TX2", 0, CoinTransfer{
+		From: "g1bankerpayer", To: "g1recipient", Coins: "5ugnot", Ugnot: 5,
+		BlockHeight: 11, BlockTime: when,
+	}); err != nil {
+		t.Fatalf("InsertCoinTransfer: %v", err)
+	}
+	// A seeded genesis bucket: swept once from outside, and it has to stay in
+	// the set afterwards or the seeding has to be repeated forever.
+	if err := db.UpsertBalances("alpha", []BalanceRow{
+		{Address: "g1genesisbucket", Amount: "332000000000000ugnot", Height: 1},
+	}); err != nil {
+		t.Fatalf("UpsertBalances: %v", err)
+	}
+
+	got, err := db.KnownAddresses("alpha", 100)
+	if err != nil {
+		t.Fatalf("KnownAddresses: %v", err)
+	}
+	have := map[string]bool{}
+	for _, a := range got {
+		have[a] = true
+	}
+	for _, tt := range []struct{ name, addr string }{
+		{"a caller, as before", "g1caller"},
+		{"a realm's treasury, derived from its path", gnoaddr.Derive("gno.land/r/x/y")},
+		{"both ends of a banker transfer", "g1bankerpayer"},
+		{"the recipient of one", "g1recipient"},
+		{"a seeded account stays in the set once swept", "g1genesisbucket"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if !have[tt.addr] {
+				t.Errorf("%s is not a known address; got %v", tt.addr, got)
+			}
+		})
 	}
 }
