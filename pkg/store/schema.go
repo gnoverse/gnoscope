@@ -1337,6 +1337,9 @@ func initSchema(db *sql.DB) error {
 	if _, err := db.Exec(codeIndexSchema); err != nil {
 		return fmt.Errorf("create code index: %w", err)
 	}
+	if _, err := db.Exec(stdlibSchema); err != nil {
+		return fmt.Errorf("create stdlib tables: %w", err)
+	}
 	return nil
 }
 

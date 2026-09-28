@@ -466,6 +466,10 @@ html.embed .pagenav { display: none; }
     /* Code search results. One hit is a path, a file and the matched line;
        the line is the part people scan, so it gets the monospace and the
        highlight and everything else stays quiet. */
+    /* A stdlib path is not a chain path: no namespace, no identicon, so it
+       renders as plain monospace rather than through realmPathEl. */
+    .code-hit-std { font-family: var(--mono, monospace); color: var(--fg); }
+
     .code-hits { display: flex; flex-direction: column; gap: 2px; }
     .code-hit { padding: 6px 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
     .code-hit:hover { background: var(--bg2, rgba(127,127,127,.07)); border-color: var(--border, rgba(127,127,127,.2)); }
@@ -1291,6 +1295,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-contracts"><main><div id="contracts-content"></div></main></div>
   <div class="view" id="view-apps"><main><div id="apps-content"></div></main></div>
   <div class="view" id="view-developer"><main><div id="developer-content"></div></main></div>
+  <div class="view" id="view-stdlib"><main><div id="stdlib-content"></div></main></div>
   <div class="view" id="view-devapi"><main><div id="devapi-content"></div></main></div>
   <div class="view" id="view-devmcp"><main><div id="devmcp-content"></div></main></div>
   <div class="view" id="view-gas"><main><div id="gas-content"></div></main></div>
@@ -3642,6 +3647,7 @@ function route() {
   else if (path === '/contracts') { view = 'contracts'; }
   else if (path === '/apps') { view = 'apps'; }
   else if (path === '/developer' || path === '/developer/search') { view = 'developer'; }
+  else if (path.startsWith('/stdlib/')) { view = 'stdlib'; data = path.slice(8); }
   else if (path === '/developer/api') { view = 'devapi'; }
   else if (path === '/developer/mcp') { view = 'devmcp'; }
   else if (path === '/txs') { view = 'txs'; }
@@ -3733,6 +3739,7 @@ function route() {
     case 'contracts': loadContracts(); break;
     case 'apps': loadApps(); break;
     case 'developer': loadDeveloper(); break;
+    case 'stdlib': loadStdlib(data); break;
     case 'devapi': loadDevApi(); break;
     case 'devmcp': loadDevMcp(); break;
     case 'txs': enterTxs(); break;
@@ -9043,16 +9050,24 @@ function runCodeSearch(into, term, kind) {
     const list = el('div', { className: 'code-hits' });
     d.hits.forEach(h => {
       const hit = el('div', { className: 'code-hit' });
+      // Stdlib is neither a realm nor a deployed package: it ships inside the
+      // node, so it gets its own badge and its path is not a chain path that
+      // realmPathEl could linkify.
       const head = el('div', { className: 'code-hit-head' },
-        el('span', { className: 'badge' }, h.is_realm ? 'realm' : 'package'),
-        realmPathEl(h.path),
+        el('span', { className: 'badge' }, h.is_stdlib ? 'stdlib' : h.is_realm ? 'realm' : 'package'),
+        h.is_stdlib ? el('span', { className: 'code-hit-std' }, h.path) : realmPathEl(h.path),
         el('span', { className: 'code-hit-file' }, h.file));
       hit.appendChild(head);
       // The snippet arrives with the match wrapped in « », not in markup: the
       // frontend builds DOM and must never parse a server string as HTML, and
       // this is on-chain source, which is attacker-controlled.
       hit.appendChild(snippetEl(h.snippet));
-      hit.addEventListener('click', () => navigate('/realm/' + h.path.replace('gno.land/', '') + '?tab=source&file=' + encodeURIComponent(h.file)));
+      // A stdlib package has no realm page, so routing it to one would make
+      // every `strings` hit a dead end. A result you cannot open is worse than
+      // one that is not listed.
+      hit.addEventListener('click', () => navigate(h.is_stdlib
+        ? '/stdlib/' + h.path + '?file=' + encodeURIComponent(h.file)
+        : '/realm/' + h.path.replace('gno.land/', '') + '?tab=source&file=' + encodeURIComponent(h.file)));
       list.appendChild(hit);
     });
     into.appendChild(list);
@@ -9107,6 +9122,62 @@ async function renderVersions(into) {
   row('explorer build', ver && ver.git_hash, 'the commit this instance of mygnoscan was built from');
   row('explorer built', ver && ver.build_time);
   into.appendChild(tbl);
+}
+
+// A standard library package.
+//
+// Its own page rather than the realm page, because a stdlib package is not a
+// deployment: it has no height, no publisher, no transaction and no storage
+// bill, and the realm header is built entirely out of those. Rendering it
+// there would mean either inventing a provenance or leaving five fields blank.
+async function loadStdlib(pkgPath) {
+  const container = clear('stdlib-content');
+  skeletonBlock(container);
+  let d;
+  try {
+    d = await api('stdlib/' + pkgPath);
+  } catch (err) {
+    container.textContent = '';
+    container.appendChild(el('div', { style: { color: 'var(--fg2)' } }, String(err.message || err)));
+    return;
+  }
+  container.textContent = '';
+
+  const titleRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', margin: '16px 0 8px' } },
+    el('h2', { style: { margin: 0 } }, d.path));
+  titleRow.appendChild(copyButton(d.path, 'copy package path'));
+  container.appendChild(titleRow);
+
+  container.appendChild(el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' } },
+    badge('pkg', 'stdlib'),
+    el('span', { style: { color: 'var(--fg2)', fontSize: '12px' } }, d.provenance)));
+
+  // The import line, which is the thing a reader most often came for.
+  container.appendChild(el('div', { className: 'card', style: { marginBottom: '14px' } },
+    el('div', { className: 'section-title' }, 'import'),
+    el('code', {}, 'import "' + d.path + '"')));
+
+  const files = d.files || [];
+  const want = new URL(window.location).searchParams.get('file');
+  container.appendChild(el('div', { className: 'section-title' },
+    fmtNum(files.length) + ' file' + (files.length === 1 ? '' : 's')));
+
+  files.forEach(f => {
+    const open = want ? f.name === want : false;
+    const body = el('pre', { className: 'src' }, f.body);
+    body.style.display = open ? '' : 'none';
+    const tw = el('span', { className: 'state-twisty' }, open ? '\u25be' : '\u25b8');
+    const head = el('div', {
+      className: 'state-head', style: { cursor: 'pointer' },
+      onclick: () => {
+        const showing = body.style.display !== 'none';
+        body.style.display = showing ? 'none' : '';
+        tw.textContent = showing ? '\u25b8' : '\u25be';
+      },
+    }, tw, el('span', { className: 'state-name' }, f.name),
+       el('span', { className: 'state-size' }, shortBytes(f.body.length)));
+    container.appendChild(el('div', {}, head, body));
+  });
 }
 
 async function loadDevApi() {
