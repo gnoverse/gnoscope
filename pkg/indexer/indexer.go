@@ -309,7 +309,7 @@ func typeSupportKey(url, typeName string) string { return url + "\x00" + typeNam
 // back with its real __typename and NO fields, because the fragment that would
 // have selected them was stripped and the UnexpectedMessage fragment no longer
 // matches. Measured on mainnet 2026-09-25, where it silently dropped ten
-// session grants (gnoverse/mygnoscan#353 follow-up).
+// session grants (gnoverse/gnoscope#353 follow-up).
 //
 // Asked rather than inferred from an error, so the first query of a sync pass
 // does not have to fail to find out. A probe that cannot reach the indexer

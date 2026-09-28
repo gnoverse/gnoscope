@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // seedSharedRealm deploys the same package path on two chains and gives it very

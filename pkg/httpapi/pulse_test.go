@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/gnoaddr"
-	"github.com/moul/mygnoscan/pkg/web"
+	"github.com/gnoverse/gnoscope/pkg/gnoaddr"
+	"github.com/gnoverse/gnoscope/pkg/web"
 )
 
 func TestResolvePulseWindow(t *testing.T) {

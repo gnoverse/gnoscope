@@ -57,7 +57,7 @@ fi
 #
 # Both forms GitHub understands: the full URL, and the owner/repo#N or slug#N
 # shorthand. A bare #N is same-repo and always fine.
-allowed='gnoverse/mygnoscan
+allowed='gnoverse/gnoscope
 gnolang/gno
 gnolang/hackerspace
 gnolang/tx-indexer

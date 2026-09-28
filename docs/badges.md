@@ -2,7 +2,7 @@
 
 `GET /_badges/…` serves small SVG cards that other documents embed as images.
 
-The point is a graph that survives leaving mygnoscan. A gno realm's `Render()`
+The point is a graph that survives leaving gnoscope. A gno realm's `Render()`
 returns markdown and gnoweb turns that into HTML, so an `![](…)` is the only
 hook a realm has into anything the chain does not store. Point one at a route
 here and a realm page shows its own usage graph, drawn from the index, with the
@@ -87,7 +87,7 @@ where the surrounding document knows better.
 
 ```go
 func Render(path string) string {
-	return "![usage](https://mygnoscan.example/_badges/realm/r/moul/home?network=mainnet)\n"
+	return "![usage](https://gnoscope.example/_badges/realm/r/moul/home?network=mainnet)\n"
 }
 ```
 

@@ -11,7 +11,7 @@ import (
 
 	"regexp"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 // Assembling a proposal's provenance: the creating transaction, the

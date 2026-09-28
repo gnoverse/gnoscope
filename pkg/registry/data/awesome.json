@@ -257,10 +257,10 @@
           "description": "A real-time web dashboard for monitoring validator node health."
         },
         {
-          "name": "mygnoscan",
-          "url": "https://github.com/gnoverse/mygnoscan",
+          "name": "gnoscope",
+          "url": "https://github.com/gnoverse/gnoscope",
           "description": "A fast, minimal block explorer with realm dependency graphs and usage tracking.",
-          "site": "https://mygnoscan.moul.p2p.team/",
+          "site": "https://gnoscope.com/",
           "site_from": "repo-homepage"
         }
       ]

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mygnoscan</title>
+<title>gnoscope</title>
 <script>
 // Embed mode, applied before the body exists so the chrome never paints.
 //
@@ -16,11 +16,33 @@
       document.documentElement.classList.add('embed');
     }
   } catch (e) { /* a malformed query string is not a reason to fail to render */ }
+  // Carry settings across the 2026-09-28 rename.
+  //
+  // The keys were `mygnoscan-*` and are now `gnoscope-*`. Renaming a
+  // persistence key is a silent data loss: nothing errors, the reader simply
+  // finds their chain back on "all networks" and their rail wide open, and
+  // there is no way for them to tell a rename from a bug. So the old keys are
+  // read once and moved.
+  //
+  // Before the rail read below, not after: that read happens pre-paint, and a
+  // migration running later would still flash the wrong rail on the first load
+  // after the rename, which is precisely the visit this exists to protect.
+  // `-build` is included for completeness; losing it costs one extra "new
+  // build" notice. `-swr:` is not, because it is a cache in sessionStorage and
+  // dies with the tab anyway.
+  try {
+    for (const key of ['rail', 'network', 'build']) {
+      const from = 'mygnoscan-' + key, to = 'gnoscope-' + key;
+      const v = localStorage.getItem(from);
+      if (v !== null && localStorage.getItem(to) === null) localStorage.setItem(to, v);
+      if (v !== null) localStorage.removeItem(from);
+    }
+  } catch (e) { /* denied storage has nothing to migrate */ }
   // The nav rail's collapsed state, applied here for the same reason: doing it
   // from the app's own startup would paint a 172px rail and then snap it to
   // 52px, shifting every page a reader has ever collapsed it on.
   try {
-    if (localStorage.getItem('mygnoscan-rail') === 'collapsed') {
+    if (localStorage.getItem('gnoscope-rail') === 'collapsed') {
       document.documentElement.classList.add('rail-collapsed');
     }
   } catch (e) { /* storage can be denied outright; the rail just opens wide */ }
@@ -31,7 +53,7 @@
      A blocky monospace "m" in the accent teal on the app's own dark
      chrome: it carries its own background, so it stays legible whether
      the browser draws tabs light or dark. -->
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNyIgZmlsbD0iIzBhMGEwYSIvPjxyZWN0IHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgcng9IjciIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzJhMmEyYSIgc3Ryb2tlLXdpZHRoPSIyIi8+PGcgZmlsbD0iIzRlY2RjNCI+PHJlY3QgeD0iNiIgeT0iMTAiIHdpZHRoPSIyMCIgaGVpZ2h0PSI0Ii8+PHJlY3QgeD0iNiIgeT0iMTAiIHdpZHRoPSI0IiBoZWlnaHQ9IjEzIi8+PHJlY3QgeD0iMTQiIHk9IjEwIiB3aWR0aD0iNCIgaGVpZ2h0PSIxMyIvPjxyZWN0IHg9IjIyIiB5PSIxMCIgd2lkdGg9IjQiIGhlaWdodD0iMTMiLz48L2c+PC9zdmc+">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNyIgZmlsbD0iIzBhMGEwYSIvPjxyZWN0IHg9IjEiIHk9IjEiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgcng9IjYiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzJhMmEyYSIgc3Ryb2tlLXdpZHRoPSIyIi8+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iOC42IiBmaWxsPSJub25lIiBzdHJva2U9IiM0ZWNkYzQiIHN0cm9rZS13aWR0aD0iMi4yIi8+PHBhdGggZD0iTTE2IDE2TDE2LjAwIDcuNDBNMTYgMTZMMjMuNDUgMjAuMzBNMTYgMTZMOC41NSAyMC4zMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNGVjZGM0IiBzdHJva2Utd2lkdGg9IjIuMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iNC4wMCIgZmlsbD0iIzBhMGEwYSIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTYiIHI9IjMuMDAiIGZpbGw9IiM0ZWNkYzQiLz48L3N2Zz4=">
 <style>
 :root {
   --bg: #0a0a0a; --bg2: #141414; --bg3: #1e1e1e;
@@ -55,6 +77,16 @@ header { border-bottom: 1px solid var(--border); padding: 12px 0; position: stic
    a realm path slid *under* the rail; anchored here it simply cannot reach it. */
 header .container { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; position: relative; }
 .logo { font-size: 18px; font-weight: bold; color: var(--accent); cursor: pointer; }
+.logo { display: inline-flex; align-items: center; gap: 7px; }
+.logo-mark { width: 19px; height: 19px; flex: 0 0 19px; color: var(--accent); }
+#rename-notice { background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 13px; }
+#rename-notice .container { display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+  white-space: nowrap; overflow: hidden; }
+#rename-notice b { color: var(--accent); }
+#rename-notice button { margin-left: auto; margin-right: 190px; background: none; border: 1px solid var(--border);
+  color: var(--fg2); font: inherit; font-size: 12px; padding: 2px 9px; border-radius: 4px; cursor: pointer; }
+#rename-notice button:hover { color: var(--fg); border-color: var(--fg2); }
+html.rail-collapsed .logo { gap: 0; }
 
 /* The nav rail.
    It was a horizontal bar in the header and had reached eighteen entries,
@@ -1014,6 +1046,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 </head>
 <body>
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true"><defs>
+<symbol id="i-mark" viewBox="0 0 32 32"><circle cx="16" cy="16" r="8.6" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M16 16L16.00 7.40M16 16L23.45 20.30M16 16L8.55 20.30" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="round"/><circle cx="16" cy="16" r="4.00" fill="var(--bg, #0a0a0a)"/><circle cx="16" cy="16" r="3.00" fill="currentColor"/></symbol>
 <symbol id="i-home" viewBox="0 0 16 16"><path d="M2 6.5 8 2l6 4.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><path d="M6.2 14V9.3h3.6V14"/></symbol>
 <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1 8s2.6-4.3 7-4.3S15 8 15 8s-2.6 4.3-7 4.3S1 8 1 8z"/><circle cx="8" cy="8" r="1.9"/></symbol>
 <symbol id="i-bubbles" viewBox="0 0 16 16"><circle cx="5" cy="5.4" r="3.1"/><circle cx="11.9" cy="4.6" r="1.9"/><circle cx="10.4" cy="11.4" r="3.1"/><circle cx="3.4" cy="12" r="1.7"/></symbol>
@@ -1041,7 +1074,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 <symbol id="i-message" viewBox="0 0 16 16"><path d="M13.6 9.6a1.6 1.6 0 0 1-1.6 1.6H5.2L2.4 14V4a1.6 1.6 0 0 1 1.6-1.6h8A1.6 1.6 0 0 1 13.6 4z"/></symbol>
 </defs></svg>
 <aside class="rail">
-  <div class="rail-top"><span class="logo" onclick="navigate('/')">m<span class="rail-label">ygnoscan</span></span></div>
+  <div class="rail-top"><span class="logo" onclick="navigate('/')" title="gnoscope, formerly mygnoscan"><svg class="logo-mark" aria-hidden="true"><use href="#i-mark"/></svg><span class="rail-label">gnoscope</span></span></div>
   <!-- Kept in lockstep with the NAV table in the script below, which drives
        the .pagenav strips and route()'s active-state bookkeeping off the same
        sections. TestRailMatchesNavTable fails the build if the two drift.
@@ -1139,6 +1172,17 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div id="refresh-bar" aria-hidden="true"></div>
   <div id="stale-chip" role="status" aria-live="polite"></div>
 </header>
+<!-- The rename notice. Hidden by default and revealed by script, so a reader
+     who has already dismissed it never sees it flash on the way to being
+     removed. Every URL still works, which is the whole message. -->
+<div id="rename-notice" hidden>
+  <div class="container">
+    <svg class="logo-mark" aria-hidden="true"><use href="#i-mark"/></svg>
+    <span><b>mygnoscan is now gnoscope.</b> Same tool, same data, every URL still works.
+      <a href="https://github.com/gnoverse/gnoscope/blob/main/docs/rename.md" target="_blank" rel="noopener">what changed</a></span>
+    <button type="button" onclick="dismissRenameNotice()" aria-label="dismiss the rename notice">dismiss</button>
+  </div>
+</div>
 <div id="sanity-subbar">
   <div class="container" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
     <div id="sanity-days-group" style="display:flex; gap:4px;"></div>
@@ -1333,7 +1377,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 </div>
 <footer>
   <div class="container">
-    <span>mygnoscan — <a href="https://github.com/gnoverse/mygnoscan" target="_blank">github.com/gnoverse/mygnoscan</a> @ <a id="footer-hash" href="#" target="_blank">...</a></span>
+    <span>gnoscope — <a href="https://github.com/gnoverse/gnoscope" target="_blank">github.com/gnoverse/gnoscope</a> @ <a id="footer-hash" href="#" target="_blank">...</a></span>
     <span id="footer-indexer">data from tx-indexer</span>
   </div>
 </footer>
@@ -2525,8 +2569,8 @@ function linkify(text) {
 }
 
 // --- Network management ---
-function getNetwork() { return localStorage.getItem('mygnoscan-network') || 'all'; }
-function setNetwork(n) { localStorage.setItem('mygnoscan-network', n); }
+function getNetwork() { return localStorage.getItem('gnoscope-network') || 'all'; }
+function setNetwork(n) { localStorage.setItem('gnoscope-network', n); }
 function onNetworkChange() {
   const sel = document.getElementById('network-select');
   const n = sel.value;
@@ -2856,7 +2900,7 @@ async function api(path, network) {
 // explorer displays attacker-controlled on-chain text, and reviving a stored
 // innerHTML would be the one place that stopped being true.
 
-const SWR_PREFIX = 'mygnoscan-swr:';
+const SWR_PREFIX = 'gnoscope-swr:';
 // sessionStorage is ~5 MB for the whole origin and /api/txs alone can be 3.5 MB,
 // so only modest payloads are persisted. Bigger ones still get the in-memory
 // cache, which covers navigating within a tab — just not a reload.
@@ -3178,7 +3222,7 @@ function usageLink(realm, kind) {
 // every chain and a realm path can exist on several, so the watchlist follows
 // whatever network is selected — watch gno.land/r/demo/boards once and see it on
 // whichever chain you are looking at.
-const WATCH_KEY = 'mygnoscan-watch';
+const WATCH_KEY = 'gnoscope-watch';
 
 // What the page currently being viewed would watch, for the `w` shortcut.
 let _watchTarget = null;
@@ -7283,7 +7327,7 @@ async function renderSanityCharts(container) {
 // Whether we can read each chain, which is not the same question as whether
 // each chain is alive, and used to be invisible when the two disagreed.
 //
-// gno.land's mainnet indexer once rejected every query mygnoscan sent it for
+// gno.land's mainnet indexer once rejected every query gnoscope sent it for
 // more than a day. A fallback endpoint in the same pool answered, so the data
 // stayed fresh, this page reported the chain alive and reachable, and nothing
 // anywhere said the primary had stopped answering. That is what these two rows
@@ -8929,8 +8973,8 @@ const APP_WINDOWS = ['24h', '7d', '30d', '90d'];
 const APP_WINDOW_DEFAULT = '30d';
 const AWESOME_REPO = 'https://github.com/gnoverse/awesome-gno';
 const AWESOME_EDIT_URL = AWESOME_REPO + '/edit/main/README.md';
-const APPS_JSON_URL = 'https://github.com/gnoverse/mygnoscan/blob/main/pkg/registry/data/apps.json';
-const MODERATION_URL = 'https://github.com/gnoverse/mygnoscan/blob/main/pkg/registry/data/moderation.toml';
+const APPS_JSON_URL = 'https://github.com/gnoverse/gnoscope/blob/main/pkg/registry/data/apps.json';
+const MODERATION_URL = 'https://github.com/gnoverse/gnoscope/blob/main/pkg/registry/data/moderation.toml';
 
 function appsWindow() {
   const w = urlParam('window');
@@ -9119,7 +9163,7 @@ async function renderVersions(into) {
     row('height', net.height ? fmtNum(net.height) : null);
     row('node software', net.node_version, 'the gnoland release this RPC endpoint is running');
   }
-  row('explorer build', ver && ver.git_hash, 'the commit this instance of mygnoscan was built from');
+  row('explorer build', ver && ver.git_hash, 'the commit this instance of gnoscope was built from');
   row('explorer built', ver && ver.build_time);
   into.appendChild(tbl);
 }
@@ -9232,9 +9276,9 @@ async function loadDevMcp() {
   conn.appendChild(el('div', { style: { color: 'var(--fg2)', fontSize: '12px', marginBottom: '10px' } },
     'streamable HTTP, no authentication, no API key. Opening it in a browser answers 405: it speaks JSON-RPC over POST.'));
 
-  conn.appendChild(snippetBlock('claude mcp add --transport http mygnoscan ' + url, 'claude code'));
+  conn.appendChild(snippetBlock('claude mcp add --transport http gnoscope ' + url, 'claude code'));
   conn.appendChild(snippetBlock(JSON.stringify({
-    mcpServers: { mygnoscan: { type: 'http', url: url } },
+    mcpServers: { gnoscope: { type: 'http', url: url } },
   }, null, 2), 'any client that takes a JSON config'));
   container.appendChild(conn);
 
@@ -9557,7 +9601,7 @@ const APP_FACETS = [
     options: [
       { v: 'discovered', label: 'auto-discovered', why: 'the chain ranked it here by what people do with it; nobody wrote an entry',
         match: (a) => a.via === 'discovered' && a.name_from !== 'curated' },
-      { v: 'curated', label: 'described here', why: 'somebody wrote this entry in mygnoscan’s own apps.json: a better name, a real sentence, the website',
+      { v: 'curated', label: 'described here', why: 'somebody wrote this entry in gnoscope’s own apps.json: a better name, a real sentence, the website',
         match: (a) => a.name_from === 'curated' || a.description_from === 'curated' },
       { v: 'community', label: 'on awesome-gno', why: 'named by the community list, which is the only source for the apps that are not realms',
         match: (a) => a.via === 'community' || a.name_from === 'community' || a.description_from === 'community' },
@@ -10559,9 +10603,36 @@ function storageStats(cap, capacity) {
   return bar;
 }
 
+// The rename notice: shown once per browser, and only for as long as anyone
+// could still be surprised by it.
+//
+// RENAME_NOTICE_UNTIL is the point past which this stops appearing on its own.
+// A banner that has to be deleted by hand is a banner still up two years later,
+// because nobody owns removing it; an expiry means the worst case is dead markup
+// rather than a stale announcement on the front page.
+const RENAME_NOTICE_UNTIL = Date.parse('2027-01-31T00:00:00Z');
+
+function dismissRenameNotice() {
+  try { localStorage.setItem('rename-notice-dismissed', '1'); } catch (e) { /* private mode */ }
+  const el = document.getElementById('rename-notice');
+  if (el) el.hidden = true;
+}
+
+function initRenameNotice() {
+  if (Date.now() > RENAME_NOTICE_UNTIL) return;
+  let dismissed = false;
+  // Private mode throws on access, not only on write. Treating that as
+  // "dismissed" would hide the notice from exactly the readers least likely to
+  // have seen the announcement anywhere else, so it shows instead.
+  try { dismissed = localStorage.getItem('rename-notice-dismissed') === '1'; } catch (e) { /* ignore */ }
+  if (dismissed) return;
+  const el = document.getElementById('rename-notice');
+  if (el) el.hidden = false;
+}
+
 function toggleRail() {
   const collapsed = document.documentElement.classList.toggle('rail-collapsed');
-  try { localStorage.setItem('mygnoscan-rail', collapsed ? 'collapsed' : 'open'); } catch (e) { /* denied storage just means it does not persist */ }
+  try { localStorage.setItem('gnoscope-rail', collapsed ? 'collapsed' : 'open'); } catch (e) { /* denied storage just means it does not persist */ }
 }
 
 async function loadStorage() {
@@ -12735,7 +12806,7 @@ function renderOpenedHere(stats, path, gen) {
     const stat = usageStat('opened here', fmtNum(row.views), 'in the last ' + (d.window || '30d'));
     const mark = provenanceMark('inferred');
     if (mark) {
-      mark.title = 'how many times this realm was opened on mygnoscan. this explorer’s own '
+      mark.title = 'how many times this realm was opened on gnoscope. this explorer’s own '
         + 'count, not a chain fact: the chain records no reads, and this sees nothing served '
         + 'by gnoweb, Gnoscan or a wallet.';
       stat.appendChild(document.createTextNode(' '));
@@ -14202,7 +14273,7 @@ async function loadTxDetail(hash) {
     const msgData = (tx.response?.data || '').split('\n\n').map(s => s.trim()).filter(Boolean);
     // Storage section (dedicated, separate from events) — shown unconditionally
     // above the messages/events tabs below, rather than folded into "events":
-    // it is mygnoscan's own before/delta/after-by-realm view rather than a
+    // it is gnoscope's own before/delta/after-by-realm view rather than a
     // dump of the raw StorageDepositEvent/StorageUnlockEvent rows, which the
     // events tab below leaves out entirely, and it is useful often enough on
     // a storage-heavy tx that hiding it behind a click cost more than it saved.
@@ -15415,7 +15486,7 @@ function download(name, mime, text) {
 function exportName(ext, rows) {
   const view = (window.location.pathname.replace(/^\//, '') || 'home').replace(/\//g, '-');
   const net = getNetwork() || 'all';
-  return 'mygnoscan-' + view + '-' + net + '-' + rows + 'rows.' + ext;
+  return 'gnoscope-' + view + '-' + net + '-' + rows + 'rows.' + ext;
 }
 
 function addTableExport(container, table) {
@@ -15678,7 +15749,7 @@ function enhanceTables() {
 // calls then read 23, 20, 9, 7, 6, 2 after the click that asks for ascending,
 // which is the descending page unchanged, and it stayed that way for as long as
 // the stream ran. Stopping it and waiting 400ms produced 0, 0, 0, 0, 0, 0. That
-// is the CI failure in gnoverse/mygnoscan's package-facets sort test, which
+// is the CI failure in gnoverse/gnoscope's package-facets sort test, which
 // reddened `main` on commits that could not have caused it.
 //
 // The cap is a deadline set when a pass first becomes pending, not a fixed
@@ -18766,7 +18837,7 @@ renderWatchBadge();
 api('version').then(v => {
   const el = document.getElementById('footer-hash');
   el.textContent = v.git_hash;
-  el.href = 'https://github.com/gnoverse/mygnoscan/commit/' + v.git_hash;
+  el.href = 'https://github.com/gnoverse/gnoscope/commit/' + v.git_hash;
 
   // A deploy can change any payload's shape, and the optimistic-UI cache holds
   // payloads across reloads — so a reader with an open tab would paint the old
@@ -18774,9 +18845,9 @@ api('version').then(v => {
   // is wrapped), but the result is a flash of a broken page for no reason.
   // Dropping the cache once, on the build actually changing, avoids it.
   try {
-    const seen = localStorage.getItem('mygnoscan-build');
+    const seen = localStorage.getItem('gnoscope-build');
     if (seen && seen !== v.git_hash) swrClear();
-    localStorage.setItem('mygnoscan-build', v.git_hash);
+    localStorage.setItem('gnoscope-build', v.git_hash);
   } catch (_) {}
 }).catch(() => {});
 
@@ -18790,7 +18861,7 @@ let _liveActive = false;
 let _liveTxCount = 0;
 let _liveBlockCount = 0;
 
-const LIVE_PREF_KEY = 'mygnoscan-live';
+const LIVE_PREF_KEY = 'gnoscope-live';
 
 function liveWanted() {
   // Absent means on: a first-time reader gets the live page. Only an explicit
@@ -22855,6 +22926,7 @@ function renderContractRankings() {
 
 // --- Routing ---
 window.addEventListener('popstate', route);
+initRenameNotice();
 route();
 
 // Live mode starts here, at the bottom, and not in the --- Init --- block

@@ -194,7 +194,7 @@ func (d *DB) RichList(network string, limit, offset int) ([]BalanceRow, error) {
 //
 // The rich list can only rank what has been swept, and the page has to print
 // that boundary rather than implying it ranked everyone. Mintscan can claim to
-// rank a whole chain; mygnoscan cannot, because gno offers no way to enumerate
+// rank a whole chain; gnoscope cannot, because gno offers no way to enumerate
 // the auth module.
 type BalanceCoverage struct {
 	// Swept is how many addresses have a cached balance, Known how many this

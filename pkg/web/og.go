@@ -80,7 +80,7 @@ func requestOrigin(r *http.Request) string {
 // attribute through html.EscapeString and the query string through
 // url.Values.Encode, never by concatenation.
 func ogTags(origin, pkgPath, network string, withImage bool) []byte {
-	title := pkgPath + " on mygnoscan"
+	title := pkgPath + " on gnoscope"
 	desc := "What " + pkgPath + " looks like, what it holds, and who has been calling it."
 
 	var b bytes.Buffer
@@ -89,7 +89,7 @@ func ogTags(origin, pkgPath, network string, withImage bool) []byte {
 		b.WriteString(`<meta ` + attr + `="` + key + `" content="` + html.EscapeString(value) + `">` + "\n")
 	}
 	meta("property", "og:type", "website")
-	meta("property", "og:site_name", "mygnoscan")
+	meta("property", "og:site_name", "gnoscope")
 	meta("property", "og:title", title)
 	meta("property", "og:description", desc)
 	meta("name", "description", desc)

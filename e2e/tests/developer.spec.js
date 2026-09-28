@@ -105,7 +105,7 @@ test('the mcp endpoint completes a handshake and answers a tool call', async ({ 
   });
   expect(init.result.protocolVersion).toBe('2025-06-18');
   expect(init.result.capabilities.tools).toBeTruthy();
-  expect(init.result.serverInfo.name).toBe('mygnoscan');
+  expect(init.result.serverInfo.name).toBe('gnoscope');
 
   const listed = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
   const names = listed.result.tools.map(t => t.name);

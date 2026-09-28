@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/badge"
+	"github.com/gnoverse/gnoscope/pkg/badge"
 )
 
 // Embeddable badges: the explorer's answers, as images other documents carry.
@@ -24,7 +24,7 @@ import (
 //     arrives as a broken-image icon that says nothing. Hence errorBadge and
 //     the 200 it is served with (see badgeError).
 //   - It is embedded, so it is fetched every time the embedding page is read,
-//     by readers who never visit mygnoscan. That makes the cache headers part
+//     by readers who never visit gnoscope. That makes the cache headers part
 //     of the feature rather than a nicety, and it is why /_badges/ is in
 //     cacheable().
 //
@@ -151,7 +151,7 @@ func (a *API) HandleBadgeRealm(w http.ResponseWriter, r *http.Request) {
 // only "this was the busiest bucket" and not how busy that was.
 func badgeMessagesText(total, peak, days int, gran string) (headline, sub string) {
 	return humanInt(total) + " messages",
-		"peak " + humanInt(peak) + " per " + bucketNoun(gran) + " · last " + humanInt(days) + " days · mygnoscan"
+		"peak " + humanInt(peak) + " per " + bucketNoun(gran) + " · last " + humanInt(days) + " days · gnoscope"
 }
 
 // badgeCallersText does the same for the callers metric.
@@ -162,7 +162,7 @@ func badgeMessagesText(total, peak, days int, gran string) (headline, sub string
 // the chain corresponds to.
 func badgeCallersText(peak, days int, gran string) (headline, sub string) {
 	return "peak " + plural(peak, "caller"),
-		"distinct callers per " + bucketNoun(gran) + " · last " + humanInt(days) + " days · mygnoscan"
+		"distinct callers per " + bucketNoun(gran) + " · last " + humanInt(days) + " days · gnoscope"
 }
 
 func bucketNoun(gran string) string {
@@ -220,7 +220,7 @@ func (a *API) HandleBadgeNetwork(w http.ResponseWriter, r *http.Request) {
 	writeBadge(w, r, badge.Render(badge.Card{
 		Title:    network,
 		Headline: plural(total, "message"),
-		Sub:      "peak " + humanInt(peak) + " per " + bucketNoun(gran) + " · last " + humanInt(days) + " days · mygnoscan",
+		Sub:      "peak " + humanInt(peak) + " per " + bucketNoun(gran) + " · last " + humanInt(days) + " days · gnoscope",
 		Series:   series,
 		Empty:    "nothing indexed in this window",
 		Theme:    badge.ParseTheme(q.Get("theme")),
@@ -250,7 +250,7 @@ func (a *API) badgeNetwork(r *http.Request) (string, bool) {
 // writeBadge serves an SVG with the headers an embedded image needs.
 //
 // A badge is fetched once per read of whatever embeds it, by readers who will
-// never see mygnoscan, so the caching is the difference between a realm page
+// never see gnoscope, so the caching is the difference between a realm page
 // that paints and one that waits on a SQLite aggregate. max-age is five
 // minutes because the syncer's own cadence puts a floor under how fresh this
 // can be anyway; stale-while-revalidate lets a shared cache keep serving while
@@ -260,7 +260,7 @@ func (a *API) badgeNetwork(r *http.Request) (string, bool) {
 // whose numbers did not move costs a 304 instead of a redraw.
 //
 // Content-Security-Policy is on the response, not only on whoever embeds it:
-// at its own URL this is a top-level document on mygnoscan's origin carrying
+// at its own URL this is a top-level document on gnoscope's origin carrying
 // strings that came off the chain. `default-src 'none'` means that even if the
 // escaping in pkg/badge were wrong one day, there is nothing for injected
 // markup to load or call.
@@ -323,7 +323,7 @@ func badgeError(w http.ResponseWriter, msg, detail string) {
 	// graph, and the renderer's own "not enough history to draw" is a sentence
 	// about a graph nobody asked for. The footer says who is speaking.
 	w.Write(badge.Render(badge.Card{
-		Title:    "mygnoscan",
+		Title:    "gnoscope",
 		Headline: msg,
 		Empty:    detail,
 		Sub:      "badge error",

@@ -11,7 +11,7 @@
 // The derivation mirrors gnovm/pkg/gnolang/misc.go (DerivePkgBech32Addr and
 // DeriveStorageDepositBech32Addr): the first twenty bytes of the SHA-256 of the
 // preimage, bech32-encoded under the "g" prefix. Reimplemented in forty lines
-// rather than imported, because mygnoscan's go.mod depends on neither the gno
+// rather than imported, because gnoscope's go.mod depends on neither the gno
 // monorepo nor a bech32 library and taking both on for this would be the more
 // expensive half of the trade. The test pins it to three live mainnet balances,
 // which is what keeps the reimplementation honest.

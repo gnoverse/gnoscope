@@ -138,7 +138,7 @@ bounded at 3650 days instead.
 **Discover recommends nothing it has not been told it may.** `verdict` is a closed
 enum and **`share` requires `clearance == "ours"`**, with no other path to it at
 any interest level. Who owns what comes from `-clearance=<file>`
-([example](./clearance.example.json)), and the default is empty: mygnoscan ships
+([example](./clearance.example.json)), and the default is empty: gnoscope ships
 no opinion, because a public explorer asserting an affiliation on somebody else's
 behalf is not its job. With no config every attributable event is `unclear` and
 tops out at `maybe`; chain-wide facts are `ours` regardless, because nobody
@@ -615,7 +615,7 @@ make.
 
 `by_network` answers "is this chain producing blocks". `sync` answers "are we
 managing to read it", and the two come apart: `indexer.gno.land` once rejected
-every query mygnoscan sent it for more than a day while liveness stayed green,
+every query gnoscope sent it for more than a day while liveness stayed green,
 because a fallback endpoint in the same pool was answering. Nothing surfaced
 that the primary had stopped, which is why `indexers` names the endpoint
 actually serving each network alongside the pool it was chosen from.
@@ -1085,7 +1085,7 @@ safe to make about money.
 | `GET /api/validators` | valoper registrations, **served from storage** rather than the indexer. Flat rows with `address`, `moniker`, `func` and `success` — `address` is the validator the call is about, which is not always the caller |
 | `GET /api/validators/monikers` | consensus-address → name, for labelling block proposers. Sourced from [gnockpit](https://gnockpit.gno.land), not this chain's own data — a proposer's consensus key is never published to the valopers realm, which registers the *operator* key instead, so nothing indexed here can answer this. Best-effort and cached 5 minutes: an unreachable gnockpit yields `{}`, not an error |
 | `GET /api/govdao` | governance calls, **served from local storage** as a prefix match on `gno.land/r/gov/dao`. The indexer cannot answer this: its filter is a substring match over an unindexed field, so it scans until the deadline on a chain with no governance activity, and its predicate can match a message carrying no `pkg_path` at all |
-| `GET /api/govdao/overview` | proposal list plus memberstore tiers/members, parsed live from gov/dao's own `Render()` output over RPC (`vm/qrender`) — not reimplemented against its storage, so a rule mygnoscan does not know about (a tier threshold changing, say) still shows correctly. Cached 30s per network; a failed RPC round trip serves the last good result rather than an empty page |
+| `GET /api/govdao/overview` | proposal list plus memberstore tiers/members, parsed live from gov/dao's own `Render()` output over RPC (`vm/qrender`) — not reimplemented against its storage, so a rule gnoscope does not know about (a tier threshold changing, say) still shows correctly. Cached 30s per network; a failed RPC round trip serves the last good result rather than an empty page |
 | `GET /api/govdao/proposals/{id}` | one proposal's full detail: description, executor package, status, vote percentages, per-address votes (all parsed from the realm's own render), plus two independently sourced "how did this happen" trails — `related_calls` (vote/execute MsgCalls naming this proposal ID, found live on the indexer since the local `calls` table does not keep call arguments) and `related_msgruns` (`maketx run` scripts that plausibly created it, found by searching locally synced script source for both `gov/dao` and the proposal's executor package path — a heuristic, not a guarantee, given gov/dao's low proposal volume) |
 | `GET /api/govdao/voters` | the per-member voting record: one row per address with `yes`/`no`/`abstain`/`cast`, `authored`, `last_voted`, plus `member` (in the memberstore now) and `resolved` (the username mapped to an address). gov/dao publishes the roster and the votes as separate renders and never joins them — the roster has addresses and no votes, the votes have usernames and no notion of who could have voted — so "never voted" is only answerable by doing the join. Reads the same cached per-proposal renders `/api/govdao/overview` already fetched, so on a warm cache it costs no RPC at all |
 | `GET /api/inert/queue` | every package currently parked under the "inert" code submission policy, newest submission first. Read live over RPC (`vm/qinertpaths` for the path list, `vm/qpkgmeta_json` per path for creator/height/reason), cached 20s per network — vm/qinertpaths returns bare paths, so each one needs its own metadata round trip, fanned out concurrently |
@@ -1458,7 +1458,7 @@ host application can iframe one piece of content rather than a whole
 page-in-a-page:
 
 ```html
-<iframe src="https://mygnoscan.example/realm/r/demo/boards?tab=deps&embed=1"
+<iframe src="https://gnoscope.example/realm/r/demo/boards?tab=deps&embed=1"
         width="800" height="600" style="border:0"></iframe>
 ```
 

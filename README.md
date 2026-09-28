@@ -1,4 +1,10 @@
-# mygnoscan
+<img src="docs/images/logo.svg" width="72" align="right" alt="">
+
+# gnoscope
+
+**Formerly `mygnoscan`.** Same tool, same data, same URLs, renamed on 2026-09-28.
+Nothing moved: [`docs/rename.md`](docs/rename.md) lists every old name and where it
+now points.
 
 A fast, minimal block explorer for [gno.land](https://gno.land) — built around the
 question generic explorers answer badly: **what code is deployed, what does it
@@ -29,26 +35,26 @@ a local SQLite cache for the dependency analysis.
 
 ```bash
 make install
-mygnoscan
+gnoscope
 # http://localhost:8888
 ```
 
 Point it at one network:
 
 ```bash
-mygnoscan -indexer https://indexer.pearl.testnets.gno.land/graphql/query -network pearl
+gnoscope -indexer https://indexer.pearl.testnets.gno.land/graphql/query -network pearl
 ```
 
 …or several, with a config file:
 
 ```bash
-mygnoscan -config networks.json
+gnoscope -config networks.json
 ```
 
 With Docker:
 
 ```bash
-docker run -p 8888:8888 ghcr.io/gnoverse/mygnoscan:main
+docker run -p 8888:8888 ghcr.io/gnoverse/gnoscope:main
 ```
 
 ## Documentation
@@ -57,10 +63,11 @@ Everything lives in [`docs/`](docs/) — start there.
 
 | | |
 |---|---|
-| [docs/spec.md](docs/spec.md) | what mygnoscan is, the data model, how networks are scoped |
+| [docs/spec.md](docs/spec.md) | what gnoscope is, the data model, how networks are scoped |
 | [docs/architecture.md](docs/architecture.md) | components, data flow, design decisions, known weak points |
 | [docs/api.md](docs/api.md) | full `/api/*` reference |
 | [docs/mcp.md](docs/mcp.md) | the read-only MCP endpoint at `/mcp`, for agents |
+| [docs/rename.md](docs/rename.md) | mygnoscan became gnoscope: what changed, what did not, and where old links go |
 | [docs/badges.md](docs/badges.md) | `/_badges/*`: SVG cards other documents embed, including a gno realm's `Render()` |
 | [docs/development.md](docs/development.md) | local development loop |
 | [docs/deployment.md](docs/deployment.md) | flags, config, operating notes |

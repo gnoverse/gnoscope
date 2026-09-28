@@ -3,8 +3,8 @@ package store
 import (
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/gnoaddr"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/gnoaddr"
 )
 
 // The three mainnet addresses this file pins are not illustrative. They are the

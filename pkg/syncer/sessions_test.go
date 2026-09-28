@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 // realGrantRaw is UnexpectedMessage.raw for a real mainnet auth/create_session,

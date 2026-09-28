@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The contracts map: one bubble per deployed package, and lines between them.

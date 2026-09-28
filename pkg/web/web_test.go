@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The app is one 450 KB file re-served on every deep link and every cold tab.
@@ -122,7 +123,7 @@ func TestIndexIsCompressedAndRevalidatable(t *testing.T) {
 		}
 		body := rec.Body.Bytes()
 		// Still the whole app: a preview must not cost the reader the page.
-		if !bytes.Contains(body, []byte("<title>mygnoscan</title>")) {
+		if !bytes.Contains(body, []byte("<title>gnoscope</title>")) {
 			t.Error("the realm document is not the app")
 		}
 		if len(body) <= len(index) {
@@ -478,5 +479,93 @@ func TestNoUnguardedShotElAppend(t *testing.T) {
 	if bytes.Contains(index, []byte("appendChild(shotEl(")) {
 		t.Error("appendChild(shotEl(...)) appends a value that is null when screenshots are off, " +
 			"which throws and takes the whole page down; assign it and guard, or pass it through el()")
+	}
+}
+
+// Every persisted setting has to survive the rename, and keep surviving it.
+//
+// The 2026-09-28 rename moved the localStorage keys from `mygnoscan-*` to
+// `gnoscope-*`. Renaming a persistence key is silent data loss: nothing errors,
+// the reader simply finds their chain back on "all networks" and their rail wide
+// open, and cannot tell a rename from a bug. The pre-paint script migrates them,
+// and this test is what keeps that list complete.
+//
+// It fails on a key the app reads but the migration does not carry, which is the
+// shape of the bug: adding a setting is a one-line edit somewhere in 23,000
+// lines, and nothing else would notice that it was left behind.
+func TestEveryPersistedSettingIsMigratedFromTheOldName(t *testing.T) {
+	index, err := Index()
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	html := string(index)
+
+	// What the migration carries: the literal list in the pre-paint loop.
+	migrated := map[string]bool{}
+	for _, m := range regexp.MustCompile(`for \(const key of \[([^\]]*)\]\)`).FindAllStringSubmatch(html, -1) {
+		for _, k := range regexp.MustCompile(`'([a-z-]+)'`).FindAllStringSubmatch(m[1], -1) {
+			migrated[k[1]] = true
+		}
+	}
+	if len(migrated) == 0 {
+		t.Fatal("no migration loop found: the rename carried the settings and something removed it")
+	}
+
+	// Keys that postdate the rename, so there is no old name to carry over.
+	// Explicit rather than inferred: an exemption should be a decision someone
+	// wrote down, not a key that happened not to match a pattern.
+	bornAfterTheRename := map[string]bool{
+		"rename-notice-dismissed": true,
+	}
+
+	used := regexp.MustCompile(`localStorage\.(?:get|set|remove)Item\('([^']+)'`)
+	seen := map[string]bool{}
+	for _, m := range used.FindAllStringSubmatch(html, -1) {
+		key := m[1]
+		if seen[key] || bornAfterTheRename[key] {
+			continue
+		}
+		seen[key] = true
+		short, ok := strings.CutPrefix(key, "gnoscope-")
+		if !ok {
+			t.Errorf("localStorage key %q is neither gnoscope-prefixed nor listed as post-rename", key)
+			continue
+		}
+		if !migrated[short] {
+			t.Errorf("localStorage key %q is read by the app but not carried by the migration: "+
+				"a reader upgrading from mygnoscan loses it silently", key)
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("no gnoscope-prefixed localStorage keys found; the regexp or the code shape moved")
+	}
+}
+
+// The rename notice is a dated announcement, and the date is what stops it
+// becoming permanent furniture. A banner with no expiry is a banner still up in
+// two years, because removing it is nobody's task.
+func TestRenameNoticeExpires(t *testing.T) {
+	index, err := Index()
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	html := string(index)
+
+	if !strings.Contains(html, `id="rename-notice"`) {
+		t.Fatal("the rename notice is gone; if that is deliberate, delete this test in the same commit")
+	}
+	m := regexp.MustCompile(`RENAME_NOTICE_UNTIL = Date\.parse\('([0-9T:-]+Z)'\)`).FindStringSubmatch(html)
+	if m == nil {
+		t.Fatal("the notice has no expiry constant")
+	}
+	until, err := time.Parse(time.RFC3339, m[1])
+	if err != nil {
+		t.Fatalf("unparseable expiry %q: %v", m[1], err)
+	}
+	// Renamed 2026-09-28. Anything beyond a bit over a year is not an
+	// announcement any more, it is a permanent fixture that happens to compile.
+	if latest := time.Date(2027, 12, 31, 0, 0, 0, 0, time.UTC); until.After(latest) {
+		t.Errorf("the notice runs until %s, past %s: that is furniture, not an announcement",
+			until.Format("2006-01-02"), latest.Format("2006-01-02"))
 	}
 }

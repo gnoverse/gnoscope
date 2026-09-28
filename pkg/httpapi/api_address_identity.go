@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // "What is this address?", answered before the reader has to guess.

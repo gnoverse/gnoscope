@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 	_ "modernc.org/sqlite"
 )
 
