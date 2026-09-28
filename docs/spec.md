@@ -111,6 +111,19 @@ everything newer than the build, so the newest bucket does not lag the timer.
   that is 1,333,000,221,686,563 ugnot over 100 ugnot/byte, or 13.33 TB, the same
   sum the monorepo does in a comment beside the default price. `/storage` is built
   on it, and every one of its figures is per chain for that reason.
+- **Whether to share something is two questions, and the config ships empty.**
+  A single interestingness score is dangerous here: measured on mainnet
+  2026-09-21, six of the eight realms with the most unique callers belong to one
+  other team and none of the eight is ours, so one number marks those the most
+  shareable things on the chain. Discover judges `interest` and `clearance`
+  separately, and **`share` requires `clearance == "ours"` with no other path to
+  it at any interest level**. The operator supplies who owns what; mygnoscan
+  ships no opinion, because a public explorer asserting an affiliation on
+  somebody else's behalf is not its job. With the empty default every
+  attributable event is `unclear`, so the best verdict it can reach is `maybe`:
+  a fresh deployment recommends nothing it has not been told it may recommend.
+  `verdict` is a closed enum that errors on write and fails closed to `hold` on
+  read, because a card builds a CSS class from it.
 - **The Discover feed is a rollup, and its ids are its contract.**
   `discover_events` is built on the rollup tick, never queried live: one of the
   twelve kinds costs two indexer calls and an RPC round trip, so a live page
