@@ -2785,16 +2785,55 @@ function renderFooterIndexer() {
 // "all" to the first configured chain, so asking it about a path that exists on
 // three chains would answer for whichever one it picked. 193 package paths on
 // this deployment exist on more than one.
+// Two identical GETs in flight at once are one GET.
+//
+// route() runs twice on initial page load: once synchronously at the bottom of
+// this script, and again when loadProposerMonikers() lands, so a late-arriving
+// proposer name re-renders. That is deliberate, and it means every loader on
+// the landing page fires each of its endpoints twice on every cold visit.
+// Measured on /govdao/proposals against production on 2026-09-24, both copies
+// of /api/govdao/overview cost the full 2.4s, because both missed a cold
+// server cache at the same moment.
+//
+// The server single-flights its own miss path now, so the second copy is no
+// longer expensive there. It is still a second round trip, a second row in
+// every log, and a second tick of the refresh bar. Coalescing here is the same
+// idea one layer up, and it covers every page rather than the one that got
+// noticed.
+//
+// A coalescing map, not a cache: the entry is dropped the moment the request
+// settles, so the next navigation refetches. apiSWR below is the cache, and it
+// is the thing that decides what is stale.
+const _apiInflight = new Map();
+
 async function api(path, network) {
   const sep = path.includes('?') ? '&' : '?';
   const url = '/api/' + path + sep + 'network=' + (network || getNetwork());
-  beginRequest();
+
+  const pending = _apiInflight.get(url);
+  // Joiners share the originator's parsed payload. Safe because nothing here
+  // mutates a payload in place: govDAOSorted and friends slice() before they
+  // sort, and apiSWR stores rather than edits.
+  if (pending) return pending;
+
+  const inflight = (async () => {
+    beginRequest();
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(await r.text());
+      return await r.json();
+    } finally {
+      endRequest();
+    }
+  })();
+  _apiInflight.set(url, inflight);
   try {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(await r.text());
-    return await r.json();
+    return await inflight;
   } finally {
-    endRequest();
+    // Only the originator clears the entry, which is enough: a joiner already
+    // holds the promise object and does not need the map. Clearing in a
+    // finally means a rejected request does not pin a poisoned entry.
+    _apiInflight.delete(url);
   }
 }
 
