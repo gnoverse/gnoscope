@@ -130,9 +130,14 @@ everything newer than the build, so the newest bucket does not lag the timer.
   would be as slow as its worst kind and would answer differently on two
   refreshes a second apart. Each row's id is
   `<network>/<kind>/<subject>/<ordinal>`, a pure function of the event, so a
-  rebuild produces byte-identical rows and the write path is `ON CONFLICT DO
-  NOTHING`. Feed readers dedupe on that id, so an id derived from row order or a
-  sequence would re-notify every subscriber on every rebuild. `score_base` is
+  rebuild reproduces it exactly. Feed readers dedupe on that id, so an id
+  derived from row order or a sequence would re-notify every subscriber on every
+  rebuild. The write path splits identity from derivation: the id, kind, time
+  and height are never updated, while `facts`, `layers` and the score are
+  refreshed on conflict, because a template fix or a new score term must reach
+  rows already stored. Freezing them was the first design and it went wrong
+  twice in a day, leaving old wording and zero scores on rows nothing could
+  correct. `score_base` is
   stored because every factor in it is a pure function of the chain; recency and
   per-actor damping are computed at read time, which is what lets a feed ignore
   scoring and order by time. Paging is keyset on `(at, id)`: the feed grows at
