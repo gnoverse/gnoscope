@@ -952,6 +952,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/realm/cousage/{path...}", a.HandleRealmCoUsage)
 	mux.HandleFunc("GET /api/realm/defi/{path...}", a.HandleRealmDefi)
 	mux.HandleFunc("GET /api/realm/deploys/{path...}", a.HandleRealmDeploys)
+	mux.HandleFunc("GET /api/gnohub/forge/{path...}", a.HandleForgeLink)
 	mux.HandleFunc("GET /api/realm/usage/{path...}", a.HandleRealmUsage)
 	mux.HandleFunc("GET /api/realm/{path...}", a.HandleRealm)
 	mux.HandleFunc("GET /api/views", a.HandleViews)

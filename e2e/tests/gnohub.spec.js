@@ -169,3 +169,46 @@ test('the rail reaches lab and gnohub', async ({ page }) => {
   expect(w.jsErrors).toEqual([]);
   expect(unexpected(w.failedRequests)).toEqual([]);
 });
+
+// The forge tab is the one part of gnohub that is not a chain fact, and the
+// e2e harness has no RPC at all, so what these pin is the honest-degradation
+// half: a realm page must not break because a forge nobody uses is unreachable.
+test('the forge tab says what it is, and degrades without breaking the page', async ({ page }) => {
+  const w = watch(page);
+  await page.goto('/gnohub/' + HUB_ROUTE + '/-/forge' + NET);
+  await settle(page);
+
+  // The distinction is the content of the tab, not a footnote: a reader who
+  // takes "3 open issues" for a chain fact has been misled.
+  await expect(page.locator('.gh-note')).toContainText('gno.land has no');
+  await expect(page.locator('.gh-panel-head').first()).toContainText('forge');
+  // No RPC here, so this is the unavailable path. Either way it is a rendered
+  // panel and not a blank pane or a thrown error.
+  await expect(page.locator('.gh-empty').first()).toBeVisible();
+
+  expect(w.jsErrors).toEqual([]);
+});
+
+// The forge is realm state, so the read has to name a chain. It follows the
+// network the realm detail was resolved on rather than the global selector:
+// with all-networks picked, the detail still came from one chain, and asking
+// the forge about a different one would attribute another chain's issues to
+// this package.
+test('the forge read follows the network the realm was resolved on', async ({ page }) => {
+  const w = watch(page);
+  await page.addInitScript(() => localStorage.setItem('mygnoscan-network', 'all'));
+  const asked = [];
+  page.on('request', (req) => {
+    const u = new URL(req.url());
+    if (u.pathname.startsWith('/api/gnohub/forge/')) asked.push(u.searchParams.get('network'));
+  });
+
+  await page.goto('/gnohub/' + HUB_ROUTE + '/-/forge');
+  await settle(page);
+
+  expect(asked.length).toBeGreaterThan(0);
+  // alpha, never "all" and never empty: the endpoint refuses both, and it is
+  // right to.
+  expect(asked.every((n) => n === 'alpha')).toBe(true);
+  expect(w.jsErrors).toEqual([]);
+});

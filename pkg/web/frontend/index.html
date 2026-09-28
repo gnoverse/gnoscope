@@ -23018,6 +23018,7 @@ const GNOHUB_TABS = [
   { id: 'code', label: 'code', suffix: '' },
   { id: 'commits', label: 'deploys', suffix: '/-/commits' },
   { id: 'deps', label: 'dependencies', suffix: '/-/deps' },
+  { id: 'forge', label: 'forge', suffix: '/-/forge' },
 ];
 
 // gnohubParse turns the path after /gnohub/ into what the loader needs.
@@ -23046,6 +23047,7 @@ function gnohubParse(rest) {
   if (sub.startsWith('blob/')) { out.tab = 'blob'; out.file = decodeURIComponent(sub.slice(5)); }
   else if (sub === 'commits') out.tab = 'commits';
   else if (sub === 'deps') out.tab = 'deps';
+  else if (sub === 'forge') out.tab = 'forge';
   return out;
 }
 
@@ -23302,6 +23304,7 @@ async function ghRepo(r, gen) {
   if (r.tab === 'blob') ghBlob(body, detail, r.file);
   else if (r.tab === 'commits') ghCommits(body, detail);
   else if (r.tab === 'deps') ghDeps(body, detail);
+  else if (r.tab === 'forge') ghForge(body, detail);
   else ghCode(body, detail);
 }
 
@@ -23568,6 +23571,89 @@ function ghDeps(body, d) {
     (owners.size ? ', from ' + fmtNum(owners.size) + (owners.size === 1 ? ' account' : ' accounts') : '') + ')';
   body.appendChild(ghPanel(depTitle, deps.length ? depList
     : ghEmpty('nothing on this chain imports this package')));
+}
+
+// ghForge is the collaboration layer, which the chain does not have.
+//
+// Deploys, files and imports are chain facts and every other tab draws them.
+// Issues, pull requests and releases are not: gno.land has no such concept, so
+// they live in a realm, r/moul/forge, and a package is connected to a repo
+// there by a claim the chain cannot verify. That distinction is the whole
+// content of this tab, and it is said in words rather than implied, because a
+// reader who takes "3 open issues" for a chain fact has been misled by us.
+//
+// The lists themselves are not re-drawn here. The forge realm already renders
+// its own issue and change pages, and a second rendering of the same state is a
+// second thing to keep true; this links to them.
+function ghForge(body, d) {
+  const holder = el('div', {});
+  body.appendChild(holder);
+
+  // Per-chain, and explicitly so: the forge is realm state and the same package
+  // path exists on more than one chain, so an all-networks read would attribute
+  // one chain's issues to another's package. The endpoint refuses without one.
+  const net = d.network || getNetwork();
+  if (!net || net === 'all') {
+    holder.appendChild(ghPanel('forge', ghEmpty(
+      'pick a network: issues and releases are realm state, and the same package ' +
+      'path exists on more than one chain.')));
+    return;
+  }
+
+  holder.appendChild(el('div', { className: 'gh-note' },
+    'Everything on the other tabs is a chain fact. This is not: gno.land has no ' +
+    'issues, pull requests or releases, so they live in a realm and a package is ' +
+    'tied to a repo there by a claim nobody can verify on chain. Read it the way ' +
+    'you read a go.mod: it says where the author says the source lives.'));
+
+  const pane = el('div', {});
+  holder.appendChild(pane);
+  apiSWR('gnohub/forge/' + d.path.replace('gno.land/', '') + '?network=' + encodeURIComponent(net), (data) => {
+    pane.textContent = '';
+    if (data.unavailable) {
+      pane.appendChild(ghPanel('forge', ghEmpty(
+        'the forge could not be read on ' + net + ': ' + data.unavailable)));
+      return;
+    }
+    if (!data.linked) {
+      const none = el('div', { className: 'gh-empty' });
+      none.appendChild(document.createTextNode('No forge repo claims this package. '));
+      none.appendChild(el('a', {
+        href: 'https://gno.land/r/moul/forge/v0', target: '_blank', rel: 'noopener',
+      }, 'r/moul/forge'));
+      none.appendChild(document.createTextNode(
+        ' is where one would be registered, with PublishPackage.'));
+      pane.appendChild(ghPanel('forge', none));
+      return;
+    }
+
+    const facts = el('div', { className: 'gh-repo-facts', style: { padding: '12px 14px' } });
+    const repo = el('a', { href: data.repo_url, target: '_blank', rel: 'noopener' }, data.repo_id);
+    facts.appendChild(ghMeta('repo', repo));
+    if (data.latest_release) facts.appendChild(ghMeta('latest release', data.latest_release));
+    if (data.release_count) facts.appendChild(ghMeta('releases', fmtNum(data.release_count)));
+    // The log digest pins every ref movement the repo has ever recorded, so a
+    // reader who saved it earlier can tell whether the history was rewritten.
+    if (data.log_head) {
+      const dig = el('span', { className: 'gh-meta-v' }, data.log_head.slice(0, 12));
+      dig.title = data.log_head + ' — the hash-chained ref log head';
+      facts.appendChild(ghMeta('log digest', dig));
+    }
+    pane.appendChild(ghPanel('claimed by a forge repo', facts));
+
+    const links = el('div', { className: 'gh-dep-list' });
+    [['issues', ''], ['changes', ''], ['releases', '']].forEach(([label]) => {
+      const row = el('div', { className: 'gh-dep-row' });
+      row.appendChild(el('a', {
+        href: data.repo_url, target: '_blank', rel: 'noopener',
+      }, label + ' \u2192 ' + data.repo_id));
+      links.appendChild(row);
+    });
+    pane.appendChild(ghPanel('on the forge realm', links));
+  }).catch((e) => {
+    pane.textContent = '';
+    pane.appendChild(ghPanel('forge', ghEmpty('the forge read failed: ' + e)));
+  });
 }
 
 // ghTree answers a path that is a prefix rather than a package.
