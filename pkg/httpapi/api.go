@@ -62,6 +62,12 @@ type API struct {
 	// tools and tests that run no sync loop, and nil-safe for that reason.
 	syncHealth *syncer.Registry
 
+	// pkgStatus is the last thing the chain said about each package path, so a
+	// status badge survives an RPC outage (see statusMemory in shields.go).
+	// Nil in the tools and tests that build this struct literally, and every
+	// use of it is nil-safe.
+	pkgStatus *statusMemory
+
 	// rpcOK records, per network, whether its RPC has been confirmed to serve
 	// the same chain as its indexer. Written by a background re-check and read
 	// by every request that wants a balance, hence the mutex.
@@ -100,12 +106,13 @@ func NewAPI(db *store.DB, clients map[string]*indexer.Client, networks []config.
 		panic("registry: " + err.Error())
 	}
 	return &API{
-		db:       db,
-		clients:  clients,
-		networks: networks,
-		analyzer: analyzer,
-		health:   newHealthTracker(),
-		registry: reg,
+		db:        db,
+		clients:   clients,
+		networks:  networks,
+		analyzer:  analyzer,
+		health:    newHealthTracker(),
+		registry:  reg,
+		pkgStatus: newStatusMemory(statusMemoryTTL),
 	}
 }
 
