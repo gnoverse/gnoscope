@@ -98,6 +98,27 @@ type realmDefiResponse struct {
 	// Truncated says the walk stopped before the realm's history did, so the
 	// oldest flows are missing and DerivedUgnot is short by them.
 	Truncated bool `json:"truncated"`
+
+	// The two spends that leave an account without emitting a transfer event,
+	// so that the difference between DerivedUgnot and LiveUgnot is decomposed
+	// rather than disclaimed. Both are zero for a realm's banker, which never
+	// signs and never pays a deposit, and that is why the realm case was exact
+	// to begin with. See store.UnemittedSpendFor.
+	store.UnemittedSpend
+
+	// UnexplainedUgnot is what is left once the reconstruction and both
+	// unemitted spends are accounted for:
+	//
+	//	live - (derived - gas - storage_deposit)
+	//
+	// Zero means the history here is complete and the arithmetic closes, which
+	// is a check rather than a promise. Positive means the account was credited
+	// without a transfer, and the only thing on this chain that does that is a
+	// genesis allocation, so for an account carrying a vesting schedule it is
+	// that allocation. The field is not named "genesis" because nothing here
+	// can prove it is: the chain exposes only the vesting portion and the
+	// genesis file is not reachable through the public RPC.
+	UnexplainedUgnot int64 `json:"unexplained_ugnot"`
 	// FlowsShown and FlowsTotal say whether the page is the whole story.
 	// FlowsOffset is where the page starts, counting back from the newest leg,
 	// so a caller can walk the rest without re-deriving the window.
@@ -214,6 +235,18 @@ func (a *API) writeDefiFor(w http.ResponseWriter, r *http.Request, network, path
 	}
 	resp.DerivedUgnot = stats.DerivedUgnot
 	resp.FlowsTotal = stats.Legs
+
+	// The gas and storage deposits this account paid, which the chain moves
+	// with SendCoinsUnrestricted and therefore never emits. Best-effort: these
+	// turn a caveat into arithmetic, and losing them should cost the
+	// decomposition rather than the page.
+	if spend, err := a.db.UnemittedSpendFor(network, addr); err == nil {
+		resp.UnemittedSpend = spend
+	}
+	if resp.BalanceKnown {
+		resp.UnexplainedUgnot = resp.LiveUgnot -
+			(resp.DerivedUgnot - resp.GasUgnot - resp.StorageDepositUgnot)
+	}
 	// Truncated changed meaning with the source and kept its name, because it
 	// answers the same reader question: may the reconstruction below be short?
 	// It used to mean "the indexer capped the query"; it now means the ledger's
