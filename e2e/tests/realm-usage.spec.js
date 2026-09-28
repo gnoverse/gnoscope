@@ -118,10 +118,40 @@ test('the exported pills tell a called function from an uncalled one', async ({ 
   await page.goto(`/realm/${USAGE_ROUTE}?network=alpha`);
   await settle(page);
 
-  const pill = (name) => page.locator('#tab-info .fnpill', { hasText: new RegExp(`^${name}$`) }).first();
+  // Selected on data-fn, not on the pill's text: a pill that carries a failure
+  // rate reads "Bid17% fail", so a /^Bid$/ matcher finds nothing and the
+  // assertion below would pass for the wrong reason on Withdraw.
+  const pill = (name) => page.locator(`#tab-info .fnpill[data-fn="${name}"]`);
   await expect(pill('Bid')).not.toHaveClass(/uncalled/);
   await expect(pill('Claim')).not.toHaveClass(/uncalled/);
   await expect(pill('Withdraw')).toHaveClass(/uncalled/);
+});
+
+// ok/failed were already in the payload and rendered only inside
+// the calls tab, so a function that fails half the time said nothing about it
+// on the screen where somebody reads its signature and decides to call it.
+//
+// The fixture's Bid is called 6 times and fails once; Claim is called once and
+// never fails; Withdraw is never called at all.
+test('a function that fails says so on its own pill', async ({ page }) => {
+  await page.goto(`/realm/${USAGE_ROUTE}?network=alpha`);
+  await settle(page);
+
+  const pill = (name) => page.locator(`#tab-info .fnpill[data-fn="${name}"]`);
+  // Assert the pill itself resolves first. Without this, a selector that stops
+  // matching fails the badge assertions with "element(s) not found", which
+  // reads identically to the rate simply not being rendered.
+  for (const name of ['Bid', 'Claim', 'Withdraw']) {
+    await expect(pill(name), `${name} pill`).toHaveCount(1);
+  }
+  await expect(pill('Bid').locator('.fnfail')).toHaveText('17% fail');
+  await expect(pill('Bid')).toHaveAttribute('title', /1 of 6 calls failed \(17%\)/);
+
+  // No mark at all on the ones that have never failed. A row of green "0%"
+  // badges is what buries the one that matters.
+  await expect(pill('Claim').locator('.fnfail')).toHaveCount(0);
+  await expect(pill('Claim')).toHaveAttribute('title', /none failed/);
+  await expect(pill('Withdraw').locator('.fnfail')).toHaveCount(0);
 });
 
 // The headings tell the reader which control to reach for, and the control is

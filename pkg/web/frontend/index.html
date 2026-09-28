@@ -1076,6 +1076,7 @@ footer a:hover { color: var(--accent); }
 }
 .fnpill:hover { border-color: var(--accent); background: var(--bg3); }
 .fnpill.uncalled { color: var(--fg2); }
+.fnpill .fnfail { margin-left: 5px; color: var(--red); font-size: 11px; }
 /* Embed mode: ?embed=1 strips the chrome so a host app can iframe one piece of
    content instead of a whole page-in-a-page.
    Class on <html> rather than <body> so it applies before first paint and the
@@ -12928,14 +12929,45 @@ async function loadRealmUsage(host, detail, gen) {
 // Only when nothing is filtered: under a 7d window "never called" would mean
 // "not called this week", which is a different and much less interesting
 // claim than the one the pill's tooltip makes.
+//
+// It also marks the ones that fail. That belongs here, on the signature, and
+// not in the calls tab: this is the screen somebody reads before deciding to
+// call a function, and r/gnoland/blog's ModAddPost has failed half of its 130
+// calls while saying nothing about it here.
+//
+// Two refusals. A percentage over one or two calls is not a rate, so under
+// three the pill shows the raw count and lets the reader judge it. And a
+// function that has never failed gets no mark at all, because a row of green
+// "0%" badges is what buries the two that matter.
+//
+// Matching is on data-fn rather than on textContent, because this appends to
+// the pill: a second pass over "ModAddPost 50% fail" would look that up as a
+// function name, find nothing, and dim a pill that is called constantly.
 function upgradeExportedPills(usage) {
   if (_usageFilter.window !== 'all' || _usageFilter.kind || _usageFilter.status ||
       _usageFilter.func || _usageFilter.caller) return;
-  const called = new Set((usage.functions || []).map(f => f.name));
+  const stats = new Map((usage.functions || []).map(f => [f.name, f]));
   document.querySelectorAll('#tab-info .fnpill').forEach(pill => {
-    const on = called.has(pill.textContent);
-    pill.classList.toggle('uncalled', !on);
-    pill.title = on ? 'called on this chain — click to find it in the source' : 'exported but never called';
+    const f = stats.get(pill.dataset.fn || pill.textContent);
+    pill.classList.toggle('uncalled', !f);
+    const prev = pill.querySelector('.fnfail');
+    if (prev) prev.remove();
+    if (!f) {
+      pill.title = 'exported but never called';
+      return;
+    }
+    const calls = f.calls || 0, failed = f.failed || 0;
+    if (!failed || !calls) {
+      pill.title = fmtNum(calls) + ' call' + (calls === 1 ? '' : 's') + ' on this chain, none failed. '
+        + 'click to find it in the source';
+      return;
+    }
+    const pct = Math.round((failed / calls) * 100);
+    pill.appendChild(el('span', { className: 'fnfail' },
+      calls < 3 ? failed + '/' + calls + ' failed' : pct + '% fail'));
+    pill.title = fmtNum(failed) + ' of ' + fmtNum(calls) + ' calls failed'
+      + (calls < 3 ? ', too few to quote a rate' : ' (' + pct + '%)')
+      + '. click to find it in the source';
   });
 }
 
@@ -13817,7 +13849,7 @@ async function loadRealmDetail(path, initialTab) {
       const fnTd = el('td');
       for (const fn of (detail.exported_funcs || [])) {
         const called = calledFns.has(fn);
-        const pill = el('span', { className: called ? 'fnpill' : 'fnpill uncalled' }, fn);
+        const pill = el('span', { className: called ? 'fnpill' : 'fnpill uncalled', 'data-fn': fn }, fn);
         pill.title = called ? 'called on this chain — click to find it in the source' : 'exported but never called';
         pill.onclick = () => navigate('/realm/' + detail.path.replace('gno.land/', '') + '?tab=source&fn=' + encodeURIComponent(fn));
         fnTd.appendChild(pill);
