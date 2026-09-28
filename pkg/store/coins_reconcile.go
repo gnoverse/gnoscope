@@ -17,8 +17,10 @@ import (
 //	derived           SUM over coin_transfers. Every bank transfer emits one.
 //	gas               transactions.gas_fee, for every transaction this address
 //	                  paid for. SendCoinsUnrestricted, so no event.
-//	storage_deposit   storage_events.fee, signed, over the same transactions.
-//	                  Also SendCoinsUnrestricted, also no event.
+//	storage_deposit   storage_events.fee, signed. Over the same transactions,
+//	                  *plus* the enable transactions for packages this address
+//	                  submitted, which are charged to it and signed by somebody
+//	                  else. Also SendCoinsUnrestricted, also no event.
 //	genesis           an allocation written into the bank at InitChain. No
 //	                  transaction, no event, and not derivable from anything
 //	                  here: the chain exposes only the *vesting* portion of it
@@ -41,6 +43,17 @@ import (
 // why the address page's own query matches both directions, and it is not
 // signing. Matching to_address here would charge the recipient of every
 // transfer for the sender's gas.
+//
+// ⚠️ **A package's storage deposit is not paid on a transaction its creator
+// signed.** This chain runs the inert submission policy, under which
+// MsgAddPackage parks the package and returns before taking any deposit: every
+// post-genesis deploy on mainnet emits no events at all. The deposit is taken
+// later, when an approver sends MsgEnablePackage, and gno charges it to the
+// *creator* rather than to the approver
+// (gno.land/pkg/sdk/vm/keeper_inert.go). So the creator's funds leave on a
+// transaction they do not appear in, and attributing storage purely by the
+// transaction's caller books it to the approver. On mainnet that misplaced
+// 118.91 of one deployer's 119.14 GNOT and made their balance irreconcilable.
 
 // UnemittedSpend is what left an account without emitting a transfer event.
 type UnemittedSpend struct {
@@ -85,17 +98,37 @@ func (d *DB) UnemittedSpendFor(network, addr string) (UnemittedSpend, error) {
 		UNION SELECT tx_hash FROM bank_sends   WHERE from_address = ? AND %s`,
 		nf("network"), nf("network"), nf("network"), nf("network"))
 
+	// An enable transaction is identified by shape, because nothing stores the
+	// message type: it carries storage events and has no message row of its
+	// own, being neither a call, a run, nor a submission. 449 such
+	// transactions on mainnet. Their deposits belong to whoever submitted the
+	// package at that path, not to the approver who signed the enable.
+	enableDeposits := fmt.Sprintf(`
+		SELECT COALESCE(SUM(s.fee), 0) FROM storage_events s
+		 WHERE %s
+		   AND s.tx_hash NOT IN (SELECT tx_hash FROM paid)
+		   AND s.pkg_path IN (SELECT path FROM package_submissions
+		                       WHERE creator = ? AND %s)
+		   AND NOT EXISTS (SELECT 1 FROM calls c
+		                    WHERE c.tx_hash = s.tx_hash AND %s)
+		   AND NOT EXISTS (SELECT 1 FROM msg_runs r
+		                    WHERE r.tx_hash = s.tx_hash AND %s)
+		   AND NOT EXISTS (SELECT 1 FROM package_submissions ps
+		                    WHERE ps.tx_hash = s.tx_hash AND %s)`,
+		nf("s.network"), nf("network"), nf("c.network"), nf("r.network"), nf("ps.network"))
+
 	q := fmt.Sprintf(`
 		WITH paid AS (%s)
 		SELECT
 		  (SELECT COALESCE(SUM(t.gas_fee), 0) FROM transactions t
 		     JOIN paid p ON p.tx_hash = t.tx_hash WHERE %s),
 		  (SELECT COALESCE(SUM(s.fee), 0) FROM storage_events s
-		     JOIN paid p ON p.tx_hash = s.tx_hash WHERE %s),
+		     JOIN paid p ON p.tx_hash = s.tx_hash WHERE %s)
+		  + (%s),
 		  (SELECT COUNT(*) FROM paid)`,
-		payer, nf("t.network"), nf("s.network"))
+		payer, nf("t.network"), nf("s.network"), enableDeposits)
 
-	args := []any{addr, addr, addr, addr}
+	args := []any{addr, addr, addr, addr, addr}
 	err := d.db.QueryRow(q, args...).Scan(&out.GasUgnot, &out.StorageDepositUgnot, &out.Transactions)
 	if err != nil {
 		return UnemittedSpend{}, err
