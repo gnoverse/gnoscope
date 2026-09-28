@@ -415,7 +415,6 @@ func splitGnoPath(path string) (namespace, name string) {
 	return discover.SplitPath(path)
 }
 
-
 // atLabel renders a registered name the way the emitters expect it, and an
 // unregistered address as the empty string rather than as the address: the
 // templates branch on emptiness to choose between naming somebody and saying

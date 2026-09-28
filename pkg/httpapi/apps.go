@@ -132,7 +132,6 @@ func firstSentence(s string) string {
 	return s
 }
 
-
 // nameFromPath is the last resort, and it is a poor one on purpose: it is what
 // a card looks like when nobody has said anything about a realm and the realm
 // says nothing about itself, which is exactly the case a contributor should be
