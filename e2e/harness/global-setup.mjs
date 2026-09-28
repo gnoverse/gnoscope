@@ -44,7 +44,7 @@ async function waitFor(url, timeoutMs = 30000) {
 export default async function globalSetup() {
   mkdirSync(tmpDir, { recursive: true });
 
-  const binary = join(tmpDir, 'mygnoscan');
+  const binary = join(tmpDir, 'gnoscope');
   await run('go', ['build', '-o', binary, '.'], { cwd: repoRoot });
 
   const indexer = await startFakeIndexer();
@@ -102,7 +102,7 @@ export default async function globalSetup() {
   server.stderr.on('data', d => log.push(String(d)));
   server.on('exit', code => {
     if (code !== 0 && code !== null) {
-      console.error(`mygnoscan exited ${code}:\n${log.join('')}`);
+      console.error(`gnoscope exited ${code}:\n${log.join('')}`);
     }
   });
 

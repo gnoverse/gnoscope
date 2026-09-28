@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/syncer"
 )
 
 // The warmer fills the response cache under the keys a browser produces, so

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/analyzer"
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/analyzer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // newShotAPI wires an API against a stub capture service and records what the

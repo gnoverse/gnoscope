@@ -188,7 +188,7 @@ func TestParseGovDAOProposalDetail(t *testing.T) {
 		t.Error("Description is empty")
 	}
 	// The Actions block's vote links must never leak into the description —
-	// mygnoscan has no wallet to sign with, and rendering them as live
+	// gnoscope has no wallet to sign with, and rendering them as live
 	// controls would silently promise a feature that does not exist.
 	if strings.Contains(d.Description, "MustVoteOnProposalSimple") || strings.Contains(d.Description, "Vote YES") {
 		t.Errorf("Description leaked the Actions block: %q", d.Description)

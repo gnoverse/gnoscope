@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // seedActiveAt puts one address into all three activity tables at one instant.

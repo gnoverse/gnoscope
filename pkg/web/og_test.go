@@ -41,9 +41,9 @@ func TestRealmPathFromURL(t *testing.T) {
 func TestRequestOrigin(t *testing.T) {
 	t.Run("a proxy's forwarded scheme wins", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "/realm/r/gov/dao", nil)
-		r.Host = "mygnoscan.example"
+		r.Host = "gnoscope.example"
 		r.Header.Set("X-Forwarded-Proto", "https")
-		if got := requestOrigin(r); got != "https://mygnoscan.example" {
+		if got := requestOrigin(r); got != "https://gnoscope.example" {
 			t.Errorf("origin = %q", got)
 		}
 	})
@@ -94,7 +94,7 @@ func realmDoc(t *testing.T, opts Options, target string) string {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", target, nil)
-	req.Host = "mygnoscan.example"
+	req.Host = "gnoscope.example"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	h(rec, req)
 	if rec.Code != http.StatusOK {
@@ -109,14 +109,14 @@ func TestRealmDocumentCarriesTheCaptureAsItsCard(t *testing.T) {
 	body := realmDoc(t, Options{Shots: true}, "/realm/r/gov/dao?network=mainnet")
 
 	for _, want := range []string{
-		`property="og:image" content="https://mygnoscan.example/api/shot?`,
+		`property="og:image" content="https://gnoscope.example/api/shot?`,
 		`network=mainnet`,
 		`path=gno.land%2Fr%2Fgov%2Fdao`,
 		`size=og`,
 		`property="og:image:width" content="1200"`,
 		`name="twitter:card" content="summary_large_image"`,
-		`property="og:title" content="gno.land/r/gov/dao on mygnoscan"`,
-		`property="og:url" content="https://mygnoscan.example/realm/r/gov/dao"`,
+		`property="og:title" content="gno.land/r/gov/dao on gnoscope"`,
+		`property="og:url" content="https://gnoscope.example/realm/r/gov/dao"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the realm document is missing %s", want)
@@ -166,7 +166,7 @@ func TestRealmETagsAreDistinct(t *testing.T) {
 	tag := func(target string) string {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", target, nil)
-		req.Host = "mygnoscan.example"
+		req.Host = "gnoscope.example"
 		h(rec, req)
 		return rec.Header().Get("ETag")
 	}
@@ -192,13 +192,13 @@ func TestRealmDocumentRevalidates(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/realm/r/gov/dao", nil)
-	req.Host = "mygnoscan.example"
+	req.Host = "gnoscope.example"
 	h(rec, req)
 	etag := rec.Header().Get("ETag")
 
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest("GET", "/realm/r/gov/dao", nil)
-	req2.Host = "mygnoscan.example"
+	req2.Host = "gnoscope.example"
 	req2.Header.Set("If-None-Match", etag)
 	h(rec2, req2)
 	if rec2.Code != http.StatusNotModified {
@@ -216,7 +216,7 @@ func TestRealmDocumentGzips(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/realm/r/gov/dao", nil)
-	req.Host = "mygnoscan.example"
+	req.Host = "gnoscope.example"
 	req.Header.Set("Accept-Encoding", "gzip")
 	h(rec, req)
 

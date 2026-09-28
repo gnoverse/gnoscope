@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 func seedFiles(t *testing.T, d *DB) {

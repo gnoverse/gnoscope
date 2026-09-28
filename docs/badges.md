@@ -6,7 +6,7 @@ Two shapes, for two readers: a **card** with a graph on it, which is a figure
 inside a document, and a **shield**, the one-line label/message plate a README
 carries in a row at the top.
 
-The point is a graph that survives leaving mygnoscan. A gno realm's `Render()`
+The point is a graph that survives leaving gnoscope. A gno realm's `Render()`
 returns markdown and gnoweb turns that into HTML, so an `![](…)` is the only
 hook a realm has into anything the chain does not store. Point one at a route
 here and a realm page shows its own usage graph, drawn from the index, with the
@@ -128,7 +128,7 @@ JSON](https://shields.io/badges/endpoint-badge), for anyone who would rather
 shields drew the badge:
 
 ```
-https://img.shields.io/endpoint?url=https%3A%2F%2Fmygnoscan.example%2Fapi%2Fshield%2Ftxs%2Fr%2Fmoul%2Fhome%3Fnetwork%3Dmainnet
+https://img.shields.io/endpoint?url=https%3A%2F%2Fgnoscope.example%2Fapi%2Fshield%2Ftxs%2Fr%2Fmoul%2Fhome%3Fnetwork%3Dmainnet
 ```
 
 Worth the extra hop when you want a style this renderer does not draw
@@ -145,9 +145,9 @@ said which path was not found.
 A badge carries no link of its own, so wrap it:
 
 ```markdown
-[![realm](https://mygnoscan.example/_badges/shield/status/r/moul/home?network=mainnet)](https://mygnoscan.example/realm/r/moul/home)
-[![txs](https://mygnoscan.example/_badges/shield/txs/r/moul/home?network=mainnet)](https://mygnoscan.example/realm/r/moul/home)
-[![users](https://mygnoscan.example/_badges/shield/users/r/moul/home?network=mainnet)](https://mygnoscan.example/realm/r/moul/home)
+[![realm](https://gnoscope.example/_badges/shield/status/r/moul/home?network=mainnet)](https://gnoscope.example/realm/r/moul/home)
+[![txs](https://gnoscope.example/_badges/shield/txs/r/moul/home?network=mainnet)](https://gnoscope.example/realm/r/moul/home)
+[![users](https://gnoscope.example/_badges/shield/users/r/moul/home?network=mainnet)](https://gnoscope.example/realm/r/moul/home)
 ```
 
 GitHub does not fetch these from the reader's browser: it proxies them through
@@ -194,7 +194,7 @@ where the surrounding document knows better.
 
 ```go
 func Render(path string) string {
-	return "![usage](https://mygnoscan.example/_badges/realm/r/moul/home?network=mainnet)\n"
+	return "![usage](https://gnoscope.example/_badges/realm/r/moul/home?network=mainnet)\n"
 }
 ```
 

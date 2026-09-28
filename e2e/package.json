@@ -1,5 +1,5 @@
 {
-  "name": "mygnoscan-e2e",
+  "name": "gnoscope-e2e",
   "private": true,
   "type": "module",
   "description": "Browser end-to-end tests. Development only \u2014 nothing here is built into the binary.",

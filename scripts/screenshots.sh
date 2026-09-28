@@ -5,7 +5,7 @@
 # output depends only on the fixture and not on whatever the live chain happened
 # to be doing. Rerun after any UI change that alters these views.
 #
-#   DB=/path/to/mygnoscan.db ./scripts/screenshots.sh
+#   DB=/path/to/gnoscope.db ./scripts/screenshots.sh
 #
 # Requires Chrome (headless). Everything else is the project's own binary.
 #
@@ -18,13 +18,13 @@
 #
 #   chrome --headless --hide-scrollbars --window-size=1400,900 \
 #     --virtual-time-budget=15000 --screenshot=docs/images/<name>.png \
-#     'https://mygnoscan.moul.p2p.team/<path>?network=mainnet'
+#     'https://gnoscope.com/<path>?network=mainnet'
 #
 # home.png is 1400x1600 rather than 900, because the hot realms and hot assets
 # panels are the point of that page and both have to be in frame.
 set -e
 
-DB="${DB:-mygnoscan.db}"
+DB="${DB:-gnoscope.db}"
 OUT="${OUT:-docs/images}"
 PORT="${PORT:-8899}"
 # pearl, not topaz: topaz was retired months ago and its endpoints are NXDOMAIN,
@@ -50,10 +50,10 @@ fi
 mkdir -p "$OUT"
 
 echo "building..."
-CGO_ENABLED=0 go build -o /tmp/mygnoscan-shots .
+CGO_ENABLED=0 go build -o /tmp/gnoscope-shots .
 
 echo "starting server on :$PORT against $DB (sync disabled)"
-/tmp/mygnoscan-shots -listen "127.0.0.1:$PORT" -db "$DB" -config "$CONFIG" -sync=false >/tmp/mygnoscan-shots.log 2>&1 &
+/tmp/gnoscope-shots -listen "127.0.0.1:$PORT" -db "$DB" -config "$CONFIG" -sync=false >/tmp/gnoscope-shots.log 2>&1 &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
 

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/registry"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // Serving the curated registry, merged with what the chain proves.

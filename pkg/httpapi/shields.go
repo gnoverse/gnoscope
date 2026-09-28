@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/badge"
+	"github.com/gnoverse/gnoscope/pkg/badge"
 )
 
 // One-line badges: the shields.io shape, answering questions about a realm.
@@ -60,7 +60,7 @@ func (a *API) HandleBadgeShield(w http.ResponseWriter, r *http.Request) {
 		// appearing where a 20-pixel plate was expected does not read as "this
 		// badge is wrong", it reads as the page being broken.
 		writeBadgeError(w, errMsg, badge.RenderShield(badge.Shield{
-			Label: "mygnoscan", Message: errMsg, Color: "critical",
+			Label: "gnoscope", Message: errMsg, Color: "critical",
 			Style: badge.ParseShieldStyle(r.URL.Query().Get("style")),
 		}))
 		return
@@ -79,7 +79,7 @@ func (a *API) HandleShieldEndpoint(w http.ResponseWriter, r *http.Request) {
 	if errMsg != "" {
 		JSONResponse(w, map[string]any{
 			"schemaVersion": 1,
-			"label":         "mygnoscan",
+			"label":         "gnoscope",
 			"message":       errMsg,
 			"color":         "critical",
 			"isError":       true,

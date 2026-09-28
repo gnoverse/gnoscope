@@ -36,7 +36,7 @@ For more than one network, use a config file — see
 To work against existing data without hitting an indexer at all:
 
 ```bash
-go run . -db ./mygnoscan.db -sync=false
+go run . -db ./gnoscope.db -sync=false
 ```
 
 `-sync=false` is the flag to reach for when iterating on the frontend or on
@@ -102,7 +102,7 @@ misconfigured instance syncs happily from a chain you did not intend.
 The database is ordinary SQLite:
 
 ```bash
-sqlite3 mygnoscan.db 'SELECT network, COUNT(*) FROM packages GROUP BY network;'
+sqlite3 gnoscope.db 'SELECT network, COUNT(*) FROM packages GROUP BY network;'
 ```
 
 ## Layout

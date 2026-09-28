@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 func (a *API) stampBlockTimes(ctx context.Context, network string, client *indexer.Client, txs []indexer.Transaction) {

@@ -3,7 +3,7 @@ package main
 import (
 	_ "embed"
 
-	"github.com/moul/mygnoscan/pkg/glossary"
+	"github.com/gnoverse/gnoscope/pkg/glossary"
 )
 
 // The glossary is embedded here rather than inside pkg/glossary because

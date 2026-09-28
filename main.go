@@ -14,15 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/analyzer"
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/discover"
-	"github.com/moul/mygnoscan/pkg/httpapi"
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/stdlibs"
-	"github.com/moul/mygnoscan/pkg/store"
-	"github.com/moul/mygnoscan/pkg/syncer"
-	"github.com/moul/mygnoscan/pkg/web"
+	"github.com/gnoverse/gnoscope/pkg/analyzer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/httpapi"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/stdlibs"
+	"github.com/gnoverse/gnoscope/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/web"
 )
 
 var gitHash = "dev"       // set via -ldflags at build time
@@ -47,7 +47,7 @@ func run() error {
 		networkFlag   = flag.String("network", "", "single network ID (overrides config)")
 		indexerFlag   = flag.String("indexer", "", "single network indexer URL (overrides config)")
 		rpcFlag       = flag.String("rpc", "", "single network RPC URL")
-		dbPath        = flag.String("db", "mygnoscan.db", "SQLite database path")
+		dbPath        = flag.String("db", "gnoscope.db", "SQLite database path")
 		clearanceFlag = flag.String("clearance", "", "JSON file naming which namespaces are ours, which belong to other teams, and which must not be narrated (Discover verdicts). Empty means recommend nothing that is not chain-wide")
 		syncOnStart   = flag.Bool("sync", true, "sync data from indexer on start")
 		// Block backfill is the one sync phase that can pull hundreds of
@@ -107,7 +107,7 @@ func run() error {
 		// about; guessing it here instead of asking would refuse every real
 		// request behind a reverse proxy that rewrites Host.
 		mcpPublicOrigin = flag.String("mcp-public-origin", "",
-			`the origin this instance is reached by, e.g. "https://mygnoscan.example"; enables strict Host and Origin checks on /mcp`)
+			`the origin this instance is reached by, e.g. "https://gnoscope.example"; enables strict Host and Origin checks on /mcp`)
 	)
 	flag.Parse()
 
@@ -615,7 +615,7 @@ func run() error {
 		srv.Shutdown(context.Background())
 	}()
 
-	log.Printf("mygnoscan listening on %s (networks: %v)", *listenAddr, cfg.IDs())
+	log.Printf("gnoscope listening on %s (networks: %v)", *listenAddr, cfg.IDs())
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return err
 	}

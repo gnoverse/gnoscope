@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The counter has to sit outside the response cache, and this is the test that
@@ -73,7 +73,7 @@ func TestOnlyTheRealmDetailCounts(t *testing.T) {
 // it would vote for whatever it warms.
 func TestRobotsDoNotVote(t *testing.T) {
 	for _, ua := range []string{
-		"mygnoscan-warmer", "Googlebot/2.1", "curl/8.4.0", "Go-http-client/1.1",
+		"gnoscope-warmer", "Googlebot/2.1", "curl/8.4.0", "Go-http-client/1.1",
 		"HeadlessChrome/120", "", "python-requests/2.31",
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/api/realm/r/x/a", nil)

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/registry"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // TestMergeLabelsPrecedence pins the ranking, which is the one judgement call

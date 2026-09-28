@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 func seedContractsAPI(t *testing.T, db *store.DB) {

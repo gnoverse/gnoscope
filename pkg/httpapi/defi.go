@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/gnoaddr"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/gnoaddr"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // What a contract holds, and how it came to hold it.

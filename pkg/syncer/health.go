@@ -11,7 +11,7 @@ import (
 // answers a different question: liveness is about the chain producing blocks,
 // this is about us being able to read it. The two come apart, and when they do
 // the page said everything was fine. gno.land's mainnet indexer once rejected
-// every query mygnoscan sent it for more than a day while the sanity page
+// every query gnoscope sent it for more than a day while the sanity page
 // reported the chain alive and reachable, because a fallback endpoint in the
 // same pool was answering and nothing tracked that the primary had stopped.
 //

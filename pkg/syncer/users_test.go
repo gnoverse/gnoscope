@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 // userTx builds a transaction carrying one r/sys/users event.

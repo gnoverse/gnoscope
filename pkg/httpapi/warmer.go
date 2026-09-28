@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/syncer"
 )
 
 // The cache warmer: keep the answers hot so no reader is ever the first one.
@@ -248,7 +248,7 @@ func (wm *Warmer) warmOne(ctx context.Context, target string) {
 	// work to serve the handful of clients that cannot decode gzip, and those
 	// still get the stale-while-revalidate path.
 	req.Header.Set("Accept-Encoding", "gzip")
-	req.Header.Set("User-Agent", "mygnoscan-warmer")
+	req.Header.Set("User-Agent", "gnoscope-warmer")
 
 	wm.handler.ServeHTTP(&discardWriter{header: http.Header{}}, req)
 }

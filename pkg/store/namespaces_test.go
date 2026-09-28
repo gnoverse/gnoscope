@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // Namespaces lists what could have an owner, which is the input to resolving

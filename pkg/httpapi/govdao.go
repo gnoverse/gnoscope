@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // govDAOCacheTTL bounds how stale a rendered proposal/member list can be.
@@ -300,7 +300,7 @@ var tierStatRe = regexp.MustCompile(`Tier\s+(T\d+)\s+contains\s+(\d+)\s+members?
 
 // parseGovDAOTierStats parses "gno.land/r/gov/dao/memberstore/v0:", pulling
 // the "Tier T1 contains N members with power: P" line per tier. It ignores
-// the two embedded pie-chart data-URI images entirely — mygnoscan draws its
+// the two embedded pie-chart data-URI images entirely — gnoscope draws its
 // own chart from these numbers instead of trying to reuse gov/dao's SVGs.
 func parseGovDAOTierStats(md string) []GovDAOTierStat {
 	var out []GovDAOTierStat
@@ -326,7 +326,7 @@ var abstainPercentRe = regexp.MustCompile(`ABSTAIN PERCENT:\s*([\d.]+)%`)
 // "Executor created in: `pkgpath`" line, a blank-line-separated "### Stats"
 // block with the accepted/rejected marker, eligible tiers and vote
 // percentages, then an "### Actions" block of vote links this deliberately
-// does not surface (mygnoscan is read-only — no wallet to sign with).
+// does not surface (gnoscope is read-only — no wallet to sign with).
 func parseGovDAOProposalDetail(id int, md string) GovDAOProposalDetail {
 	d := GovDAOProposalDetail{ID: id}
 	lines := strings.Split(md, "\n")
@@ -389,7 +389,7 @@ var mdHeadingRe = regexp.MustCompile(`(?m)^#{1,6}\s*`)
 // cleanGovDAOMarkdown strips the markdown decoration a proposal description
 // can carry (links, bold, inline code, a stray sub-heading — a real one
 // found live on mainnet's proposal #1, whose author formatted a "Portfolio"
-// section with its own #### heading) down to plain text. mygnoscan renders
+// section with its own #### heading) down to plain text. gnoscope renders
 // this as text content, never HTML, so there is no injection risk either
 // way — this is purely about not showing a reader raw "**T1**" and
 // "[@moul](/u/moul)" syntax instead of the words it was meant to convey.
@@ -437,7 +437,7 @@ func splitTiers(s string) []string {
 
 // unescapeMarkdown undoes the backslash-escaping gov/dao applies to
 // punctuation in user-supplied titles/descriptions (e.g. "ugnot\." for a
-// literal period), so the text mygnoscan shows matches what the author
+// literal period), so the text gnoscope shows matches what the author
 // typed rather than carrying gov/dao's own markdown escaping.
 func unescapeMarkdown(s string) string {
 	var b strings.Builder
