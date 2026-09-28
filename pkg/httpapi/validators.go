@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // One validator, over time.

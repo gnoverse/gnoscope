@@ -53,7 +53,7 @@ jobs:
           node-version: 24
 
       - name: Build
-        run: go build -o /tmp/mygnoscan .
+        run: go build -o /tmp/gnoscope .
 
       # No sync and no reachable indexer on purpose. Every conformance scenario
       # is about the wire format, not about chain data, so the run must not
@@ -71,7 +71,7 @@ jobs:
       # its own headers.
       - name: Start the server
         run: |
-          /tmp/mygnoscan \
+          /tmp/gnoscope \
             -listen 127.0.0.1:${MCP_PORT} \
             -db /tmp/mcp-conformance.db \
             -network conformance \
@@ -81,7 +81,7 @@ jobs:
             -mcp-rate 0 \
             -mcp-concurrency 0 \
             -mcp-public-origin http://127.0.0.1:${MCP_PORT} \
-            > /tmp/mygnoscan.log 2>&1 &
+            > /tmp/gnoscope.log 2>&1 &
           for i in $(seq 1 60); do
             if curl -sf -o /dev/null "http://127.0.0.1:${MCP_PORT}/api/version"; then
               echo "up after ${i}s"
@@ -90,7 +90,7 @@ jobs:
             sleep 1
           done
           echo "::error::the server did not come up"
-          cat /tmp/mygnoscan.log
+          cat /tmp/gnoscope.log
           exit 1
 
       # Not piped into anything. The suite's exit code is the result, and a
@@ -103,4 +103,4 @@ jobs:
 
       - name: Server log on failure
         if: failure()
-        run: cat /tmp/mygnoscan.log
+        run: cat /tmp/gnoscope.log

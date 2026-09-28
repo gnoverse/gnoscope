@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // importRegex matches any quoted gno.land path. It is the fallback for source

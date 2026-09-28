@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/gnoaddr"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/gnoaddr"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The payloads below are verbatim from rpc.gno.land on 2026-09-28, trimmed of

@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/analyzer"
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/gnoaddr"
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/analyzer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/gnoaddr"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 func stampPackageTimes(ctx context.Context, client *indexer.Client, pkgs []store.PackageInfo) {

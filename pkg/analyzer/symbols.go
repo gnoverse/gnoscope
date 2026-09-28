@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 // Symbol is one const, var, type or top-level func a package declares.

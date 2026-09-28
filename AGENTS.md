@@ -9,6 +9,12 @@ to stay stable. For what the system *is* and how it behaves, see [`docs/`](docs/
 A single Go binary that serves a gno.land block explorer with an embedded
 frontend. No build step for the frontend, no Node.js in the shipped artifact.
 
+**This was `mygnoscan` until 2026-09-28.** Prose that talks about what the tool
+did in the past may still say so, and should: a sentence about April is about
+mygnoscan. Anything describing it *now* says gnoscope. The rename, and the
+redirects that make every old link keep working, are in
+[`docs/rename.md`](docs/rename.md).
+
 ## Layout
 
 ```
@@ -97,7 +103,7 @@ Break these and things go wrong in ways that are hard to see:
   same order, or `TestRailMatchesNavTable` fails. Left to drift it fails
   silently: a rail entry missing from the table navigates fine and simply has no
   section strip.
-- **Never commit the built binary.** `mygnoscan` and `*.db` are gitignored.
+- **Never commit the built binary.** `gnoscope` and `*.db` are gitignored.
 
 ## Conventions
 

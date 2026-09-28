@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/discover"
-	"github.com/moul/mygnoscan/pkg/registry"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The app hub, assembled from three layers.

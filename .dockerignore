@@ -2,5 +2,5 @@
 .ignore
 .claude
 .DS_Store
-mygnoscan
+gnoscope
 *.db

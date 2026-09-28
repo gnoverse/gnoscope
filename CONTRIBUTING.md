@@ -5,8 +5,8 @@
 Go, version per `go.mod`. That is all — no CGO, no system SQLite, no Node.js.
 
 ```bash
-git clone https://github.com/gnoverse/mygnoscan
-cd mygnoscan
+git clone https://github.com/gnoverse/gnoscope
+cd gnoscope
 make run      # http://localhost:8888
 ```
 
@@ -71,7 +71,7 @@ databases work in CI.
 
 Coverage is thin right now, so tests with new code are especially welcome. High-value
 untested areas are listed in
-[#14](https://github.com/gnoverse/mygnoscan/issues/14).
+[#14](https://github.com/gnoverse/gnoscope/issues/14).
 
 ## Pull requests
 

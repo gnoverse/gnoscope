@@ -5,7 +5,7 @@ import (
 	"errors"
 	"log"
 
-	"github.com/moul/mygnoscan/pkg/gnoaddr"
+	"github.com/gnoverse/gnoscope/pkg/gnoaddr"
 )
 
 // The address -> package index, kept in the database rather than rebuilt per

@@ -1,7 +1,7 @@
 # PR builds validate the Dockerfile for both platforms without registry
 # credentials — a compromised action in the build graph can't exfiltrate a
 # token the job never had. Pushes to main (and manual dispatch from any
-# branch) publish ghcr.io/gnoverse/mygnoscan:<branch> + :sha-<short>;
+# branch) publish ghcr.io/gnoverse/gnoscope:<branch> + :sha-<short>;
 # gno-infra pins those tags by digest.
 name: docker
 

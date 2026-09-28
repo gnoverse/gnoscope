@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/gnostate"
+	"github.com/gnoverse/gnoscope/pkg/gnostate"
 )
 
 // The state endpoint: what a realm actually holds, decoded.

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // Keeping the symbol index in step with package_files.

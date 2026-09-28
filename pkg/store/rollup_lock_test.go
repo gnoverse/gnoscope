@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // Reads must proceed while the rollup rebuilds.

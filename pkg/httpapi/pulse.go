@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // /api/pulse — what the chain did inside a window, in one request.

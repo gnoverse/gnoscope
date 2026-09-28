@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // Counting reads, which is the only popularity signal that exists here.
@@ -149,7 +149,7 @@ func isRobot(r *http.Request) bool {
 		// also what an internal MCP call looks like.
 		return true
 	}
-	for _, s := range []string{"mygnoscan-warmer", "bot", "crawl", "spider", "slurp", "headless", "curl", "wget", "python-requests", "go-http-client"} {
+	for _, s := range []string{"gnoscope-warmer", "bot", "crawl", "spider", "slurp", "headless", "curl", "wget", "python-requests", "go-http-client"} {
 		if strings.Contains(ua, s) {
 			return true
 		}

@@ -50,7 +50,7 @@ func TestRenderIsWellFormedXML(t *testing.T) {
 }
 
 // The escaper is the single thing standing between a package path off the chain
-// and script execution on mygnoscan's own origin, since a badge visited
+// and script execution on gnoscope's own origin, since a badge visited
 // directly is a top-level document there.
 func TestRenderEscapesEveryField(t *testing.T) {
 	const payload = `</title></svg><script>alert(1)</script>`

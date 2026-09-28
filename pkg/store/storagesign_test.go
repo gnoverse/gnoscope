@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // TestStorageBytesAndFeeAgree pins the invariant that makes storage_events

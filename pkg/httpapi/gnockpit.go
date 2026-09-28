@@ -42,7 +42,7 @@ type gnockpitStatus struct {
 }
 
 // gnockpitCache holds the last successful fetch. gnockpit describes one
-// chain (mainnet) regardless of which network mygnoscan is currently
+// chain (mainnet) regardless of which network gnoscope is currently
 // showing; an address from any other chain simply will not appear in it,
 // which is a harmless miss rather than a wrong label, so the cache is not
 // scoped per network.

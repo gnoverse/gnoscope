@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // This fixture is the actual vm/qpkgmeta_json response for a real parked

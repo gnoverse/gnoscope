@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/analyzer"
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/analyzer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // newTestAPI builds an API over a real temp database with no indexer clients.

@@ -146,7 +146,7 @@ func (s *MCPServer) SetDispatcher(h http.Handler) { s.dispatch = h }
 func (s *MCPServer) SetAllowedOrigins(origins []string) { s.allowedOrigins = origins }
 
 // SetPublicOrigin names the origin this server is reached by, e.g.
-// "https://mygnoscan.example". See rejectOrigin.
+// "https://gnoscope.example". See rejectOrigin.
 func (s *MCPServer) SetPublicOrigin(origin string) { s.publicOrigin = strings.TrimRight(origin, "/") }
 
 // --- Origin -----------------------------------------------------------------
@@ -307,7 +307,7 @@ func (s *MCPServer) Handle(w http.ResponseWriter, r *http.Request) {
 		// client that opened GET /mcp looking for one. The body is there for
 		// the human who pasted the URL into a browser.
 		w.Header().Set("Allow", "POST")
-		jsonError(w, "mygnoscan's MCP endpoint speaks streamable HTTP over POST only; "+
+		jsonError(w, "gnoscope's MCP endpoint speaks streamable HTTP over POST only; "+
 			"point an MCP client at this URL rather than a browser", http.StatusMethodNotAllowed)
 		return
 	}
@@ -450,8 +450,8 @@ func (s *MCPServer) initialize(params json.RawMessage) map[string]any {
 		"protocolVersion": version,
 		"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 		"serverInfo": map[string]any{
-			"name":    "mygnoscan",
-			"title":   "mygnoscan, a gno.land explorer",
+			"name":    "gnoscope",
+			"title":   "gnoscope, a gno.land explorer",
 			"version": s.version,
 		},
 		"instructions": mcpInstructions,

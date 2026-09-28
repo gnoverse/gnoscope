@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // seedActiveAddrScale fills the rollup and its source tables at roughly the

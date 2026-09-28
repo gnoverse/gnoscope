@@ -24,8 +24,8 @@ go.work.sum
 # OS
 .DS_Store
 Thumbs.db
-mygnoscan
-mygnoscan.db
+gnoscope
+gnoscope.db
 
 # local dev server config (machine-specific paths)
 .claude/launch.json

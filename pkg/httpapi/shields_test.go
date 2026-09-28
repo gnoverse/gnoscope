@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // seedShieldRealm writes one realm, n calls one per day backwards from now

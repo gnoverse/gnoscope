@@ -3,7 +3,7 @@ package httpapi
 import (
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 type deploysResponse struct {
