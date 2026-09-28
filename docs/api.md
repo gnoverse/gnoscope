@@ -1444,7 +1444,21 @@ document, including a gno realm's own `Render()`.
 ```
 /_badges/realm/{path...}?network=&metric=messages|callers&days=&theme=
 /_badges/network?network=&days=&theme=
+/_badges/shield/{kind}/{path...}?network=&days=&label=&color=&labelColor=&style=
 ```
+
+`shield` is the other shape: the 20-pixel label/message plate a README carries
+in a row at the top. `{kind}` is one of `status`, `txs`, `messages`, `users`,
+`version`. The same five answers are also served as shields.io endpoint JSON,
+for anyone who would rather their renderer drew it:
+
+```
+GET /api/shield/{kind}/{path...}   → {"schemaVersion":1,"label":…,"message":…,"color":…}
+```
+
+That one answers `200` with `"isError":true` on a failure rather than a 4xx,
+because shields draws its own generic error for a non-200 and discards the
+message that said which path was not found.
 
 They are registered through the same route table as everything above, so they
 appear in `/api/endpoints`. Windows, caching, the drawn-not-returned error
