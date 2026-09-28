@@ -210,6 +210,13 @@ test('a table the server does not order still starts ascending', async ({ page }
 // Asserting on the order rather than on the timer: a future scheduler that does
 // not debounce at all would pass this, which is correct, because the bug is the
 // reader seeing the wrong order and not the mechanism that got them there.
+//
+// The cap alone left a window rather than closing it, and this test went on
+// flaking on CI for it. A mutation inside a table now takes an immediate path
+// (next frame, no debounce) and the cap is the fallback for everything else;
+// see the MutationObserver in index.html. Verified by raising
+// ENHANCE_MAX_DELAY_MS to 3000, which fails this test every run without the
+// immediate path and passes every run with it.
 test('a chosen sort survives a page that never stops mutating', async ({ page }) => {
   await page.goto('/realms');
   await settle(page);
