@@ -327,12 +327,12 @@ func TestVerdictCountsDescribeTheWindowNotThePage(t *testing.T) {
 	}
 
 	unfiltered := getDiscover(t, api, "/api/discover?network=alpha&limit=3")
-	sum := 0
+	sum := unfiltered.Unranked
 	for _, n := range unfiltered.VerdictCounts {
 		sum += n
 	}
 	if sum != unfiltered.Total {
-		t.Errorf("verdict_counts sum to %d against a total of %d", sum, unfiltered.Total)
+		t.Errorf("verdict_counts + unranked = %d against a total of %d", sum, unfiltered.Total)
 	}
 
 	// The same counts survive a filter, so the chips still say what they would
@@ -345,6 +345,41 @@ func TestVerdictCountsDescribeTheWindowNotThePage(t *testing.T) {
 	for _, e := range filtered.Events {
 		if e.Verdict != discover.VerdictShare {
 			t.Errorf("the share filter returned a %q", e.Verdict)
+		}
+	}
+}
+
+// The envelope has to be checkable, not merely plausible: the three verdicts
+// plus unranked equal the total, at every window and under every filter.
+//
+// The first version derived the last group as "probably holds" and landed 17
+// short of the total, with nothing in the response to say a gap existed.
+func TestTheCountsAlwaysAddUp(t *testing.T) {
+	withGlossaryAPI(t)
+	api, db := newTestAPI(t)
+
+	seedEvent(t, db, "chain.spike", "2026-09-18", "", "", 1, 900)
+	for i := 0; i < 40; i++ {
+		seedEvent(t, db, "package.deployed", fmt.Sprintf("p%02d", i),
+			fmt.Sprintf("g1a%02d", i), fmt.Sprintf("ns%02d", i), float64(i), float64(10+i))
+	}
+
+	for _, url := range []string{
+		"/api/discover?network=alpha",
+		"/api/discover?network=alpha&limit=1",
+		"/api/discover?network=alpha&window=24h",
+		"/api/discover?network=alpha&verdict=share",
+		"/api/discover?network=alpha&verdict=hold",
+		"/api/discover?network=alpha&kind=package.deployed",
+	} {
+		resp := getDiscover(t, api, url)
+		sum := resp.Unranked
+		for _, n := range resp.VerdictCounts {
+			sum += n
+		}
+		if sum != resp.Total {
+			t.Errorf("%s: verdicts %v + unranked %d = %d, total says %d",
+				url, resp.VerdictCounts, resp.Unranked, sum, resp.Total)
 		}
 	}
 }

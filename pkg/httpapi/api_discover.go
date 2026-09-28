@@ -82,8 +82,12 @@ type discoverResponse struct {
 	GlossaryVersion     string            `json:"glossary_version"`
 	ClearanceConfigured bool              `json:"clearance_configured"`
 	Total               int               `json:"total"`
-	NextCursor          string            `json:"next_cursor,omitempty"`
-	Events              []discoverEvent   `json:"events"`
+	// Unranked is how many events in the window the bounded pool did not judge.
+	// verdict_counts plus this equals total, always, so a reader can check the
+	// envelope rather than trust it.
+	Unranked   int             `json:"unranked"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+	Events     []discoverEvent `json:"events"`
 }
 
 // DiscoverCandidatePool is how many stored events one request ranks over.
@@ -203,22 +207,29 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 	for _, e := range scored {
 		verdictCounts[string(e.Verdict)]++
 	}
-	// The pool is bounded and the window is not, so the counts have to account
-	// for what the ranking never looked at. Everything the score-ordered pool
-	// left out is below the medium-interest boundary, and low interest is held
-	// in every column of the matrix, so those are all holds.
+	// The pool is bounded and the window is not, so the counts have to say
+	// something about what the ranking never looked at. Two groups, and only
+	// one of them can be counted honestly.
 	//
-	// Without this the envelope reported "hold: 0" for a window holding 275 of
-	// them. The held rows are a feature rather than waste: the page shows them
-	// collapsed under "ruled out", because a queue that silently drops most of
-	// its input teaches a reader nothing and cannot be argued with.
+	// Below the medium-interest boundary: low interest, and low interest is
+	// held in every column of the matrix, so those are certainly holds. Adding
+	// them matters because held rows are a feature rather than waste, shown
+	// collapsed under "ruled out": a queue that silently drops most of its
+	// input teaches a reader nothing and cannot be argued with. Reporting zero
+	// there said "nothing was ruled out" for a window that ruled out 275.
+	//
+	// At or above the boundary but outside the pool: their verdict depends on
+	// clearance, which is per event, so guessing would be inventing a number.
+	// They are reported as Unranked instead. The three verdicts plus Unranked
+	// sum to Total exactly, which is what makes the envelope checkable rather
+	// than merely plausible.
 	if len(rows) >= DiscoverCandidatePool {
-		unranked, err := a.db.DiscoverCountBelowScore(network, since, p60)
+		certainHolds, err := a.db.DiscoverCountBelowScore(network, since, p60)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		verdictCounts["hold"] += unranked
+		verdictCounts["hold"] += certainHolds
 	}
 
 	// The real count, over the filter and not over the fetched slice. Reporting
@@ -242,6 +253,15 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	counted := 0
+	for _, n := range verdictCounts {
+		counted += n
+	}
+	unranked := total - counted
+	if unranked < 0 {
+		unranked = 0
+	}
+
 	if len(scored) > limit {
 		scored = scored[:limit]
 	} else {
@@ -277,6 +297,7 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 		GlossaryVersion:     version,
 		ClearanceConfigured: cfg.Configured(),
 		Total:               total,
+		Unranked:            unranked,
 		NextCursor:          next,
 		Events:              scored,
 	})
