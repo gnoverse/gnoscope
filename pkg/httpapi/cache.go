@@ -59,7 +59,18 @@ type cacheEntry struct {
 	body            []byte
 	contentType     string
 	contentEncoding string
-	storedAt        time.Time
+	// cacheControl and etag are replayed on a hit.
+	//
+	// Everything else here is served out of process memory to a browser that
+	// is about to ask again, so how the *client* caches it never mattered.
+	// Badges changed that: one is fetched every time somebody reads the
+	// document that embeds it, from origins that never load the SPA, so a hit
+	// that dropped the handler's Cache-Control turned a five-minute browser
+	// cache into a request per page view. Empty for the endpoints that set
+	// neither, which is all of them but /_badges/.
+	cacheControl string
+	etag         string
+	storedAt     time.Time
 	// ttl is this entry's own freshness window, stamped when it was stored.
 	// Carried per entry rather than read from the cache, because how long an
 	// answer stays good is a property of the question (see endpointTTL).
@@ -357,6 +368,13 @@ func cacheable(r *http.Request) bool {
 		// be asked first in the test.
 		return false
 	}
+	// Badges are the one cached thing outside /api/, and the one with the most
+	// to gain: each is fetched once per read of whatever embeds it, by readers
+	// who never come here, and each costs a SQLite aggregate over a realm's
+	// whole message history.
+	if strings.HasPrefix(r.URL.Path, BadgePrefix) {
+		return true
+	}
 	return len(r.URL.Path) >= 5 && r.URL.Path[:5] == "/api/"
 }
 
@@ -437,15 +455,30 @@ func canonicalQuery(raw string) string {
 	return values.Encode()
 }
 
-func serveEntry(w http.ResponseWriter, e cacheEntry, state string) {
+func serveEntry(w http.ResponseWriter, r *http.Request, e cacheEntry, state string) {
 	if e.contentType != "" {
 		w.Header().Set("Content-Type", e.contentType)
 	}
 	if e.contentEncoding != "" {
 		w.Header().Set("Content-Encoding", e.contentEncoding)
 	}
+	if e.cacheControl != "" {
+		w.Header().Set("Cache-Control", e.cacheControl)
+	}
 	w.Header().Add("Vary", "Accept-Encoding")
 	w.Header().Set("X-Cache", state)
+
+	// The conditional answer has to be given here, not in the handler: on a
+	// hit the handler never runs, so a reader holding the exact bytes we are
+	// about to send would be sent them again. Only for entries that stored a
+	// validator, so this cannot affect an endpoint that sets no ETag.
+	if e.etag != "" {
+		w.Header().Set("ETag", e.etag)
+		if match := r.Header.Get("If-None-Match"); match != "" && matchesETag(match, e.etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	w.Write(e.body)
 }
 
@@ -474,11 +507,11 @@ func WithResponseCache(c *responseCache, next http.Handler) http.Handler {
 		key := cacheKey(r)
 		entry, fresh, claimed, wait := c.lookup(key)
 		if fresh {
-			serveEntry(w, entry, "HIT")
+			serveEntry(w, r, entry, "HIT")
 			return
 		}
 		if entry.body != nil {
-			serveEntry(w, entry, "STALE")
+			serveEntry(w, r, entry, "STALE")
 			if claimed {
 				// Cloned here, not in the goroutine: net/http may reuse the
 				// *http.Request once the handler returns, and the refresh
@@ -506,7 +539,7 @@ func WithResponseCache(c *responseCache, next http.Handler) http.Handler {
 			select {
 			case <-wait:
 				if e, ok := c.get(key); ok {
-					serveEntry(w, e, "WAIT")
+					serveEntry(w, r, e, "WAIT")
 					return
 				}
 				// The leader finished without storing anything: it errored,
@@ -544,6 +577,8 @@ func (c *responseCache) store(key, path string, cw *cachingWriter) {
 		body:            append([]byte(nil), cw.buf.Bytes()...),
 		contentType:     cw.Header().Get("Content-Type"),
 		contentEncoding: cw.Header().Get("Content-Encoding"),
+		cacheControl:    cw.Header().Get("Cache-Control"),
+		etag:            cw.Header().Get("ETag"),
 		storedAt:        time.Now(),
 		ttl:             c.cacheTTLFor(path),
 	})

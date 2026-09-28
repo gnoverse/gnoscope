@@ -185,13 +185,22 @@ func TestEndpointsListsEveryRegisteredRoute(t *testing.T) {
 	seen := map[string]bool{}
 	for _, e := range got.Endpoints {
 		seen[e.Path] = true
-		if e.Method == "" || !strings.HasPrefix(e.Path, "/api/") {
+		// Two families, and only two. /api/ is the JSON surface; BadgePrefix
+		// is the image one, recorded here deliberately because it is the part
+		// most likely to be pasted into somebody else's document. Anything
+		// else in this table is a route registered through the recorder that
+		// nobody meant to publish.
+		// Bound to a name and negated there: QF1001 would otherwise demand De
+		// Morgan's law on the inline form and rewrite it into something that
+		// no longer reads as "one of the two published families".
+		published := strings.HasPrefix(e.Path, "/api/") || strings.HasPrefix(e.Path, BadgePrefix)
+		if e.Method == "" || !published {
 			t.Errorf("malformed entry %+v", e)
 		}
 	}
 	// Spot-check the ends of the table and this endpoint itself: a recorder
 	// that dropped the first or last registration would still look plausible.
-	for _, want := range []string{"/api/endpoints", "/api/stats", "/api/code/search"} {
+	for _, want := range []string{"/api/endpoints", "/api/stats", "/api/code/search", BadgePrefix + "network"} {
 		if !seen[want] {
 			t.Errorf("%s is missing from the generated reference", want)
 		}

@@ -1047,6 +1047,17 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/address/{addr}/achievements", a.HandleAddressAchievements)
 	mux.HandleFunc("GET /api/address/{addr}/holdings", a.HandleAddressHoldings)
 	mux.HandleFunc("GET /api/directory/people", a.HandleDirectoryPeople)
+
+	// Badges. Registered through the same recorder as everything above so they
+	// show up in /api/endpoints, even though they are not under /api/: an
+	// endpoint reference that omits the one part of the API meant to be pasted
+	// into somebody else's document has it backwards.
+	//
+	// The SPA's catch-all "GET /" is registered in run(); Go's mux prefers the
+	// more specific pattern, so these win without either side knowing about the
+	// other.
+	mux.HandleFunc("GET "+BadgePrefix+"realm/{path...}", a.HandleBadgeRealm)
+	mux.HandleFunc("GET "+BadgePrefix+"network", a.HandleBadgeNetwork)
 }
 
 // --- RPC / indexer chain agreement -----------------------------------------
