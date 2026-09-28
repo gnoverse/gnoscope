@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/discover"
-	"github.com/moul/mygnoscan/pkg/glossary"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/glossary"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // GET /api/discover: what is new on this chain, ranked, with a recommendation.

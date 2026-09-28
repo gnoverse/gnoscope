@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 func seedSymbols(t *testing.T, db *store.DB) {

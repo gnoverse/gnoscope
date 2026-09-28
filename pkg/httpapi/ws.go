@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 // SSE live feed via polling. The Go backend polls the tx-indexer for new

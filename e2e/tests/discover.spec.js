@@ -208,7 +208,7 @@ test('a package name written as markup renders as text', async ({ page }) => {
 test('all-networks offers a chain to pick instead of an error', async ({ page }) => {
   const seen = watch(page);
   await page.goto('/discover');
-  await page.evaluate(() => localStorage.setItem('mygnoscan-network', 'all'));
+  await page.evaluate(() => localStorage.setItem('gnoscope-network', 'all'));
   await page.goto('/discover');
   await settle(page);
 

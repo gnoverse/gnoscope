@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // Every aggregate must be scoped to the configured networks and must count

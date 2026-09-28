@@ -309,7 +309,7 @@ func typeSupportKey(url, typeName string) string { return url + "\x00" + typeNam
 // back with its real __typename and NO fields, because the fragment that would
 // have selected them was stripped and the UnexpectedMessage fragment no longer
 // matches. Measured on mainnet 2026-09-25, where it silently dropped ten
-// session grants (gnoverse/mygnoscan#353 follow-up).
+// session grants (gnoverse/gnoscope#353 follow-up).
 //
 // Asked rather than inferred from an error, so the first query of a sync pass
 // does not have to fail to find out. A probe that cannot reach the indexer
@@ -393,6 +393,82 @@ func (c *Client) trimFields(ctx context.Context, fields string) string {
 	}
 	if !c.supportsType(ctx, signatureProbeType) {
 		fields = strings.ReplaceAll(fields, signatureFields, "")
+	}
+	return fields
+}
+
+// supportsTypeAt is supportsType for a named endpoint rather than the selected
+// one, so a caller can ask "could THIS endpoint answer" before choosing it.
+func (c *Client) supportsTypeAt(ctx context.Context, url, typeName string) bool {
+	c.mu.Lock()
+	known, seen := c.typeSupport[typeSupportKey(url, typeName)]
+	c.mu.Unlock()
+	if seen {
+		return known
+	}
+	if c.breakerOpen() {
+		return true
+	}
+	var result struct {
+		Type *struct {
+			Name string `json:"name"`
+		} `json:"__type"`
+	}
+	err := c.doQuery(ctx, url, `{ __type(name: "`+typeName+`") { name } }`, nil, &result)
+	supported := err != nil || result.Type != nil
+	c.mu.Lock()
+	if err == nil {
+		if c.typeSupport == nil {
+			c.typeSupport = map[string]bool{}
+		}
+		c.typeSupport[typeSupportKey(url, typeName)] = supported
+	}
+	c.mu.Unlock()
+	return supported
+}
+
+// endpointFor returns an endpoint whose schema defines typeName, preferring the
+// one already selected, and "" when no member of the pool has it.
+//
+// The pool otherwise selects on health and tip alone, which is right for every
+// query whose answer does not depend on the schema. It is wrong for the ones
+// that do: mainnet's two indexers disagree about Signature, so a query needing
+// it lands on an endpoint that cannot answer roughly half the time, and the
+// answer it gets back is a valid empty rather than an error.
+func (c *Client) endpointFor(ctx context.Context, typeName string) string {
+	c.mu.Lock()
+	urls := append([]string(nil), c.urls...)
+	active := c.active
+	c.mu.Unlock()
+	if len(urls) == 0 {
+		return ""
+	}
+	if active < len(urls) && c.supportsTypeAt(ctx, urls[active], typeName) {
+		return urls[active]
+	}
+	for _, url := range urls {
+		if c.supportsTypeAt(ctx, url, typeName) {
+			return url
+		}
+	}
+	return ""
+}
+
+// fieldsFor renders a selection set trimmed for a NAMED endpoint, so the
+// fragments match the schema the query is actually sent to.
+func (c *Client) fieldsFor(ctx context.Context, url, fields string) string {
+	for _, g := range []struct {
+		probe    string
+		fragment string
+	}{
+		{inertProbeType, inertFragments},
+		{sessionProbeType, sessionFragments},
+		{transferProbeType, transferFragments},
+		{signatureProbeType, signatureFields},
+	} {
+		if !c.supportsTypeAt(ctx, url, g.probe) {
+			fields = strings.ReplaceAll(fields, g.fragment, "")
+		}
 	}
 	return fields
 }
@@ -1459,6 +1535,34 @@ func (c *Client) GetTransactionsInRange(ctx context.Context, from, to int) ([]Tr
 	}
 	// gt/lt, not gte/lte: FilterInt defines only the exclusive pair, so the
 	// bounds are widened by one either side to express a half-open range.
+	// Pinned to an endpoint that models signatures when the pool has one.
+	//
+	// This is the sweep's query, and signature.session_addr is the only field
+	// anywhere that links a transaction to the session that signed it. Letting
+	// the pool pick on health alone means about half the batches come back from
+	// the endpoint with no signatures field at all, and that answer is a valid
+	// empty rather than an error, so the sweep records nothing and says nothing.
+	// Measured on mainnet 2026-09-28: one key with sequence 8 had 0 indexed
+	// transactions while another with 71 had 133, both inside the swept range.
+	//
+	// Falls back to the pooled path when no endpoint has it, which keeps every
+	// other caller and every single-indexer chain exactly as it was.
+	if url := c.endpointFor(ctx, signatureProbeType); url != "" {
+		q := fmt.Sprintf(`{
+		getTransactions(
+			where: { block_height: { gt: %d, lt: %d } }
+			order: { heightAndIndex: ASC }
+		) { %s }
+	}`, from-1, to, c.fieldsFor(ctx, url, txFieldsLight))
+		if err := c.doQuery(ctx, url, q, nil, &result); err == nil {
+			return result.GetTransactions, nil
+		} else if errors.Is(err, ErrQueryTooLarge) {
+			// The caller splits on this, so it must survive the pin.
+			return result.GetTransactions, err
+		}
+		result.GetTransactions = nil
+	}
+
 	q := fmt.Sprintf(`{
 		getTransactions(
 			where: { block_height: { gt: %d, lt: %d } }

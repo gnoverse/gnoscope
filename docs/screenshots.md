@@ -30,7 +30,7 @@ they cannot silently drift from the UI.
 ## Regenerating
 
 ```bash
-DB=/path/to/mygnoscan.db ./scripts/screenshots.sh
+DB=/path/to/gnoscope.db ./scripts/screenshots.sh
 ```
 
 Rerun after any change that alters the home, realms, transactions, analytics or
@@ -56,7 +56,7 @@ disabled**, then drives headless Chrome over the pages:
 
 | variable | default | meaning |
 |---|---|---|
-| `DB` | `mygnoscan.db` | database snapshot to render |
+| `DB` | `gnoscope.db` | database snapshot to render |
 | `OUT` | `docs/images` | output directory |
 | `PORT` | `8899` | port for the temporary server |
 | `NETWORK` | `pearl` | network to select in the UI |

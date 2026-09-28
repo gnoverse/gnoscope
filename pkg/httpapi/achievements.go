@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/achievements"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/achievements"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The achievements API: the catalog, who holds each badge, what one address

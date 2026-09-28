@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // Gas attribution asks what a transaction deployed, which is a question about

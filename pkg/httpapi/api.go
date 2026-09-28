@@ -16,13 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/analyzer"
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/discover"
-	"github.com/moul/mygnoscan/pkg/indexer"
-	"github.com/moul/mygnoscan/pkg/registry"
-	"github.com/moul/mygnoscan/pkg/store"
-	"github.com/moul/mygnoscan/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/analyzer"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/syncer"
 )
 
 type API struct {
@@ -62,6 +62,12 @@ type API struct {
 	// tools and tests that run no sync loop, and nil-safe for that reason.
 	syncHealth *syncer.Registry
 
+	// pkgStatus is the last thing the chain said about each package path, so a
+	// status badge survives an RPC outage (see statusMemory in shields.go).
+	// Nil in the tools and tests that build this struct literally, and every
+	// use of it is nil-safe.
+	pkgStatus *statusMemory
+
 	// rpcOK records, per network, whether its RPC has been confirmed to serve
 	// the same chain as its indexer. Written by a background re-check and read
 	// by every request that wants a balance, hence the mutex.
@@ -100,12 +106,13 @@ func NewAPI(db *store.DB, clients map[string]*indexer.Client, networks []config.
 		panic("registry: " + err.Error())
 	}
 	return &API{
-		db:       db,
-		clients:  clients,
-		networks: networks,
-		analyzer: analyzer,
-		health:   newHealthTracker(),
-		registry: reg,
+		db:        db,
+		clients:   clients,
+		networks:  networks,
+		analyzer:  analyzer,
+		health:    newHealthTracker(),
+		registry:  reg,
+		pkgStatus: newStatusMemory(statusMemoryTTL),
 	}
 }
 
@@ -410,7 +417,7 @@ func (a *API) HandleGovDAO(w http.ResponseWriter, r *http.Request) {
 // list plus the memberstore's tiers and members, read straight from gov/dao's
 // own Render() output over RPC (see govdao.go) rather than reimplemented
 // against its storage — the realm is the source of truth for its own rules,
-// including ones mygnoscan does not know about (a tier threshold changing,
+// including ones gnoscope does not know about (a tier threshold changing,
 // say).
 // HandleInertQueue serves the current parked-package queue: every path
 // vm/qinertpaths reports, enriched with each one's own vm/qpkgmeta_json
@@ -945,12 +952,13 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/stats", a.HandleStats)
 	mux.HandleFunc("GET /api/pulse", a.HandlePulse)
 	mux.HandleFunc("GET /api/realms", a.HandleRealms)
-	// These three beat the /api/realm/{path...} wildcard below by Go 1.22 mux
+	// These four beat the /api/realm/{path...} wildcard below by Go 1.22 mux
 	// precedence: the more specific pattern wins, and no gno path starts with
-	// "cousage/", "defi/" or "usage/" because the first segment is always r/
-	// or p/.
+	// "cousage/", "defi/", "deploys/" or "usage/" because the first segment is
+	// always r/ or p/.
 	mux.HandleFunc("GET /api/realm/cousage/{path...}", a.HandleRealmCoUsage)
 	mux.HandleFunc("GET /api/realm/defi/{path...}", a.HandleRealmDefi)
+	mux.HandleFunc("GET /api/realm/deploys/{path...}", a.HandleRealmDeploys)
 	mux.HandleFunc("GET /api/realm/usage/{path...}", a.HandleRealmUsage)
 	mux.HandleFunc("GET /api/realm/{path...}", a.HandleRealm)
 	mux.HandleFunc("GET /api/views", a.HandleViews)
@@ -1066,6 +1074,10 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	// other.
 	mux.HandleFunc("GET "+BadgePrefix+"realm/{path...}", a.HandleBadgeRealm)
 	mux.HandleFunc("GET "+BadgePrefix+"network", a.HandleBadgeNetwork)
+	// The one-line shields, and the shields.io endpoint that carries the same
+	// numbers through somebody else's renderer (see shields.go).
+	mux.HandleFunc("GET "+BadgePrefix+"shield/{kind}/{path...}", a.HandleBadgeShield)
+	mux.HandleFunc("GET /api/shield/{kind}/{path...}", a.HandleShieldEndpoint)
 }
 
 // --- RPC / indexer chain agreement -----------------------------------------

@@ -194,7 +194,7 @@ func (d *DB) RichList(network string, limit, offset int) ([]BalanceRow, error) {
 //
 // The rich list can only rank what has been swept, and the page has to print
 // that boundary rather than implying it ranked everyone. Mintscan can claim to
-// rank a whole chain; mygnoscan cannot, because gno offers no way to enumerate
+// rank a whole chain; gnoscope cannot, because gno offers no way to enumerate
 // the auth module.
 type BalanceCoverage struct {
 	// Swept is how many addresses have a cached balance, Known how many this
@@ -236,12 +236,46 @@ func (d *DB) BalanceCoverage(network string) (BalanceCoverage, error) {
 // at any price, and reporting this one under that name would be a different
 // number wearing it. The page says "addresses seen on chain" for the same
 // reason.
+//
+// It used to be the four message tables alone, which meant **an address that
+// has never sent a transaction did not exist here**, and the rich list is the
+// page where that shows worst: on mainnet its rank 1 was the fourth-largest
+// account and roughly 45% of the supply was absent, because the institutional
+// genesis buckets have never transacted. A genesis allocation moves no coins
+// through the bank and emits no event, so nothing in a message table can ever
+// name one.
+//
+// The sources below are ordered by how they know an address:
+//
+//	messages        it sent something. The original four.
+//	coin_transfers  it was on either end of any bank transfer, including the
+//	                ones a realm makes through its banker, which no BankMsgSend
+//	                records.
+//	package_accounts every realm treasury and storage-deposit account, derived
+//	                rather than observed, so a realm holding money is listed
+//	                from the moment it is deployed.
+//	users           it registered a name.
+//	valopers        it registered a validator.
+//	session_grants  it granted a key, or is one.
+//	balances        it has been swept before. This is the one that makes the
+//	                set sticky: an address seeded from outside the database
+//	                (the chain's unrestricted-address param, the curated
+//	                registry; see SweepBalances) is swept once and then keeps
+//	                itself in the set, with no table to maintain.
 const knownAddressesQuery = `
 	SELECT caller AS address FROM calls WHERE %s
 	UNION SELECT creator FROM package_submissions WHERE %s
 	UNION SELECT caller FROM msg_runs WHERE %s
 	UNION SELECT from_address FROM bank_sends WHERE %s
-	UNION SELECT to_address FROM bank_sends WHERE %s`
+	UNION SELECT to_address FROM bank_sends WHERE %s
+	UNION SELECT from_addr FROM coin_transfers WHERE %s
+	UNION SELECT to_addr FROM coin_transfers WHERE %s
+	UNION SELECT address FROM package_accounts WHERE %s
+	UNION SELECT address FROM users WHERE %s
+	UNION SELECT address FROM valoper_registrations WHERE %s
+	UNION SELECT master FROM session_grants WHERE %s
+	UNION SELECT session_addr FROM session_grants WHERE %s
+	UNION SELECT address FROM balances WHERE %s`
 
 func (d *DB) knownAddressesSQL(network string) string {
 	f := d.networkFilter("network", network)

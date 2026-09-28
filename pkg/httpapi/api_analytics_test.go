@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // seedGas writes n realms, each deployed by its own transaction, so the gas

@@ -1,8 +1,12 @@
 # Badges
 
-`GET /_badges/…` serves small SVG cards that other documents embed as images.
+`GET /_badges/…` serves small SVG images that other documents embed.
 
-The point is a graph that survives leaving mygnoscan. A gno realm's `Render()`
+Two shapes, for two readers: a **card** with a graph on it, which is a figure
+inside a document, and a **shield**, the one-line label/message plate a README
+carries in a row at the top.
+
+The point is a graph that survives leaving gnoscope. A gno realm's `Render()`
 returns markdown and gnoweb turns that into HTML, so an `![](…)` is the only
 hook a realm has into anything the chain does not store. Point one at a route
 here and a realm page shows its own usage graph, drawn from the index, with the
@@ -50,6 +54,109 @@ and a badge has no room for a network picker.
 | `days` | 2 to 365 | 30 |
 | `theme` | `auto`, `light`, `dark` | `auto` |
 
+### `GET /_badges/shield/{kind}/{path...}`
+
+The other shape: one question, one word, in the 20-pixel label/message plate
+shields.io made the convention of every repository's front page. Where a card
+is a figure inside a document, a shield stands in a row at the top of a README
+beside a CI badge somebody else drew, so the geometry, the 11px Verdana stack
+and the one-pixel text shadow are copied from shields deliberately.
+
+```
+/_badges/shield/status/r/moul/home?network=mainnet
+/_badges/shield/txs/r/moul/home?network=mainnet
+/_badges/shield/txs/r/moul/home?network=mainnet&days=30
+/_badges/shield/users/r/moul/home.svg?network=mainnet&style=flat-square
+```
+
+| kind | says | where it comes from |
+|---|---|---|
+| `status` | `live`, `parked`, `absent`, `unknown` | the chain, live (`vm/qpkgmeta_json`) |
+| `txs` | distinct transactions that reached the realm | the index |
+| `messages` | the messages inside them, calls and `MsgRun`s alike | the index |
+| `users` | how many different addresses sent them | the index |
+| `version` | `r3`, the third accepted submission at this path | the index |
+
+| parameter | values | default |
+|---|---|---|
+| `network` | a configured network ID | every configured network the package is in, and the first configured network for `status` |
+| `days` | 1 to 365 | all of history |
+| `label` | any text, replacing the left plate | per kind |
+| `color` | a shields colour name or a hex triplet | per kind |
+| `labelColor` | same | `#555` |
+| `style` | `flat`, `flat-square` | `flat` |
+
+`status` is the only kind that asks the chain rather than the index, because
+`absent` has to be answerable for a path nothing has ever been deployed to: a
+badge in the README of a realm that is not live yet is exactly the case it
+exists for.
+
+**An unreachable RPC never reads `absent`.** "We could not ask" and "your realm
+is not there" are different sentences and only one of them is alarming. What it
+reads instead is the last answer the chain gave about that path, for up to a
+day, and only `unknown` when there is no such answer. That is not a performance
+cache (the response cache already holds the rendered badge for five minutes):
+`rpc.gno.land` answered 403 to every request for minutes on 2026-09-28,
+`health` included, measured from two hosts, and every status badge in every
+README would have gone grey for the duration. The asymmetry is what makes it
+safe to prefer the old answer: a package's status changes when somebody
+deploys, which is rare and deliberate, while the public RPC being unreachable
+is common and says nothing about the package.
+
+`version` is the closest thing a chain can answer. gno stores no version field,
+so this counts the submissions at the path that were accepted: `r3` is the
+third release, whatever the source calls itself. A package the index holds with
+no submission of its own arrived in genesis and says `genesis` rather than a
+number.
+
+`days` defaults to all of history here and to 30 on the cards above, on
+purpose: a graph needs a window to be drawn over, while the number a README
+wants is usually the total.
+
+**A path the index does not hold is explained, not refused.** Writing a badge
+into a README before the realm is deployed is a normal thing to do, and "no
+such package" under it reads as a typo its author would then go hunting for. So
+the counting kinds ask the chain what the path is, and say which case it is:
+`not deployed`, `parked`, or `0` for a realm the chain holds and the index has
+not caught up with. Only when the chain cannot be reached either does the badge
+report a failure, because then nothing here knows anything about the path.
+
+### `GET /api/shield/{kind}/{path...}`
+
+The same five answers as [shields.io endpoint
+JSON](https://shields.io/badges/endpoint-badge), for anyone who would rather
+shields drew the badge:
+
+```
+https://img.shields.io/endpoint?url=https%3A%2F%2Fgnoscope.example%2Fapi%2Fshield%2Ftxs%2Fr%2Fmoul%2Fhome%3Fnetwork%3Dmainnet
+```
+
+Worth the extra hop when you want a style this renderer does not draw
+(`for-the-badge`, `social`, `plastic`), a `logo=`, or one CDN serving every
+badge on the page. The cost is that the badge now depends on two hosts instead
+of one.
+
+It answers `200` with `"isError": true` on a failure rather than a 4xx:
+shields draws its own generic error for a non-200 and throws away the body that
+said which path was not found.
+
+## Putting one in a README
+
+A badge carries no link of its own, so wrap it:
+
+```markdown
+[![realm](https://gnoscope.example/_badges/shield/status/r/moul/home?network=mainnet)](https://gnoscope.example/realm/r/moul/home)
+[![txs](https://gnoscope.example/_badges/shield/txs/r/moul/home?network=mainnet)](https://gnoscope.example/realm/r/moul/home)
+[![users](https://gnoscope.example/_badges/shield/users/r/moul/home?network=mainnet)](https://gnoscope.example/realm/r/moul/home)
+```
+
+GitHub does not fetch these from the reader's browser: it proxies them through
+camo, which fetches once and caches for its own interval. So a number on a
+README updates when camo refreshes it, not when `max-age` expires, and a badge
+that looks stale on GitHub is usually not stale here. `Cache-Control` and the
+`ETag` are still the right headers to send, because every other reader of a
+README (a wiki, a docs site, a terminal client) does honour them.
+
 ## Behaviour worth knowing
 
 **The bucket size is chosen, not asked for.** Up to 3 days is hourly, up to 120
@@ -87,7 +194,7 @@ where the surrounding document knows better.
 
 ```go
 func Render(path string) string {
-	return "![usage](https://mygnoscan.example/_badges/realm/r/moul/home?network=mainnet)\n"
+	return "![usage](https://gnoscope.example/_badges/realm/r/moul/home?network=mainnet)\n"
 }
 ```
 

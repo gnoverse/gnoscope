@@ -7,7 +7,7 @@ One static binary and one SQLite file. No runtime dependencies.
 | flag | default | description |
 |---|---|---|
 | `-listen` | `:8888` | listen address |
-| `-db` | `mygnoscan.db` | SQLite database path |
+| `-db` | `gnoscope.db` | SQLite database path |
 | `-config` | — | JSON config file, for multiple networks |
 | `-network` | — | single network ID |
 | `-indexer` | — | single network tx-indexer GraphQL URL |
@@ -104,11 +104,11 @@ hyphen apart.
 
 Off by default, and deliberately: the frontend is one file compiled into the
 binary and shared by every deployment, so a tag written into it would make
-everyone running mygnoscan report to one account. `-analytics-script <url>`
+everyone running gnoscope report to one account. `-analytics-script <url>`
 adds a single `<script async src="…">` to the `<head>` at startup:
 
 ```
-mygnoscan -analytics-script https://scripts.simpleanalyticscdn.com/latest.js
+gnoscope -analytics-script https://scripts.simpleanalyticscdn.com/latest.js
 ```
 
 The URL must be an absolute `http(s)` URL; anything else is a startup error
@@ -150,7 +150,7 @@ first.
 
 ## Reset-prone networks
 
-Portal-loop and staging style chains restart from a low height. mygnoscan detects
+Portal-loop and staging style chains restart from a low height. gnoscope detects
 this by fingerprinting block 1 (chain ID plus hash) per network: when the
 fingerprint changes, that network's rows are discarded and it re-syncs from the new
 genesis. Chain ID alone is not enough — a reset chain keeps its chain ID.
@@ -164,11 +164,11 @@ Any process supervisor works. A systemd unit needs nothing special:
 
 ```ini
 [Unit]
-Description=mygnoscan
+Description=gnoscope
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/mygnoscan --listen 127.0.0.1:8888 --db /var/lib/mygnoscan/mygnoscan.db --config /etc/mygnoscan/networks.json
+ExecStart=/usr/local/bin/gnoscope --listen 127.0.0.1:8888 --db /var/lib/gnoscope/gnoscope.db --config /etc/gnoscope/networks.json
 Restart=always
 RestartSec=5
 
@@ -186,9 +186,9 @@ A multi-arch image is published to GHCR on every push to `main`:
 
 ```bash
 docker run -p 8888:8888 \
-  -v mygnoscan-data:/data \
-  ghcr.io/gnoverse/mygnoscan:main \
-  --listen :8888 --db /data/mygnoscan.db --config /data/networks.json
+  -v gnoscope-data:/data \
+  ghcr.io/gnoverse/gnoscope:main \
+  --listen :8888 --db /data/gnoscope.db --config /data/networks.json
 ```
 
 Prefer the image over hand-copied binaries. A deployment updated by scp drifts, and
@@ -253,7 +253,7 @@ it on the realm page and in the `/realms` and `/packages` listings.
 ```bash
 # on the same box, two workers, warmed from this explorer's own path list
 gnoshot serve -root /var/lib/gnoshot -source http://127.0.0.1:8888
-mygnoscan -gnoshot http://127.0.0.1:8890
+gnoscope -gnoshot http://127.0.0.1:8890
 ```
 
 Three things worth knowing before turning it on:

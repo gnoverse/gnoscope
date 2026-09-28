@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // oldSchemaNoBlockTime is the schema as it existed after the network column was

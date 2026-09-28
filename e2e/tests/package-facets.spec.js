@@ -210,6 +210,13 @@ test('a table the server does not order still starts ascending', async ({ page }
 // Asserting on the order rather than on the timer: a future scheduler that does
 // not debounce at all would pass this, which is correct, because the bug is the
 // reader seeing the wrong order and not the mechanism that got them there.
+//
+// The cap alone left a window rather than closing it, and this test went on
+// flaking on CI for it. A mutation inside a table now takes an immediate path
+// (next frame, no debounce) and the cap is the fallback for everything else;
+// see the MutationObserver in index.html. Verified by raising
+// ENHANCE_MAX_DELAY_MS to 3000, which fails this test every run without the
+// immediate path and passes every run with it.
 test('a chosen sort survives a page that never stops mutating', async ({ page }) => {
   await page.goto('/realms');
   await settle(page);
@@ -238,11 +245,31 @@ test('a chosen sort survives a page that never stops mutating', async ({ page })
   try {
     await sorted();
     await sorted();
-    const asc = await callsColumn();
-    expect(asc.length).toBeGreaterThan(2);
-    for (let i = 1; i < asc.length; i++) {
-      expect(asc[i], 'the second click still flips while the page mutates').toBeGreaterThanOrEqual(asc[i - 1]);
-    }
+
+    // Polled, not read once.
+    //
+    // Waiting for the response and for networkidle proves the data arrived; it
+    // does not prove the chosen sort has been re-applied. That happens in the
+    // debounced enhance pass, which this test is deliberately starving with a
+    // mutation stream, so on a loaded machine the read can land between the
+    // rows arriving and the sort being restored. That is a race in the test,
+    // not the regression it exists to catch: the bug it guards against leaves
+    // the column descending *forever*, which a poll still fails on.
+    //
+    // Measured 2026-09-28: the assertion read 23, 20, ... on CI three runs in a
+    // row on a branch touching nothing near this page, while the same spec
+    // passed in isolation on that branch and on main.
+    await expect.poll(async () => {
+      const col = await callsColumn();
+      if (col.length <= 2) return 'too few rows';
+      for (let i = 1; i < col.length; i++) {
+        if (col[i] < col[i - 1]) return 'still descending at ' + i + ': ' + col.join(',');
+      }
+      return 'ascending';
+    }, {
+      message: 'the second click still flips while the page mutates',
+      timeout: 10000,
+    }).toBe('ascending');
   } finally {
     // Left running, it would starve every later test in this file the same way.
     await page.evaluate(() => clearInterval(window.__churn));

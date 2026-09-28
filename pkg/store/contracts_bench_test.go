@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// Mainnet's shape on 2026-09-18, from mygnoscan.moul.p2p.team/api/stats:
+// Mainnet's shape on 2026-09-18, read from this instance's own /api/stats
+// back when it answered at mygnoscan.moul.p2p.team, which is the host that
+// existed on that date:
 // 619 realms, 322 pure packages, 192,940 calls, 2,305 unique callers.
 const (
 	benchPackages = 941

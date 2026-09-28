@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 // Account sessions: delegated signing keys, one account per grant.

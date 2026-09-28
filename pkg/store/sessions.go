@@ -344,11 +344,14 @@ func sessionBackfillCursorKey(network string) string {
 //	v4    the sweep started recording signature.session_addr, which earlier
 //	      passes never selected, so blocks it had already walked hold grants
 //	      without the transactions those keys signed.
+//	v5    that field was only selected when the pool happened to pick the one
+//	      indexer of two that models it, so roughly half the swept blocks
+//	      recorded no signer and nothing said so.
 //
 // Bump it whenever the sweep's direction or its decoder changes. A stale cursor
 // is not a cosmetic problem: it is a claim that blocks were examined, and that
 // claim is what stops them ever being examined again.
-const sessionSweepVersion = "v4"
+const sessionSweepVersion = "v5"
 
 func sessionBackfillStopKey(network string) string { return "session_backfill_stop:" + network }
 

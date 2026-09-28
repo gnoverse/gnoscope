@@ -138,7 +138,7 @@ bounded at 3650 days instead.
 **Discover recommends nothing it has not been told it may.** `verdict` is a closed
 enum and **`share` requires `clearance == "ours"`**, with no other path to it at
 any interest level. Who owns what comes from `-clearance=<file>`
-([example](./clearance.example.json)), and the default is empty: mygnoscan ships
+([example](./clearance.example.json)), and the default is empty: gnoscope ships
 no opinion, because a public explorer asserting an affiliation on somebody else's
 behalf is not its job. With no config every attributable event is `unclear` and
 tops out at `maybe`; chain-wide facts are `ours` regardless, because nobody
@@ -400,12 +400,30 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/symbols/status` | what the symbol index covers |
 | `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset` |
 | `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
+| `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
 | `GET /api/deps/{path...}` | dependency graph as `{path: [imports]}`. `dir=dependents` reverses direction, and defaults to one hop; `depth=N` caps the reverse walk, `depth=0` is unbounded |
 | `GET /api/realm/cousage/{path...}` | co-usage: what else the addresses that called this realm also called. `{path, network, window, callers, partners[], truncated}`, each partner `{path, shared, calls, callers}` ordered by `shared` descending. `window` = `all` (default), `90d`, `30d`, `7d`, `24h`, unknown values are a 400. `limit` defaults to 100, capped at 1000. **Resolves a single network** the same way the contracts map does |
 | `GET /api/storage/{path...}` | storage events for a package. **Requires `network`**: the figures are denominated amounts and blending chains would be meaningless |
 | `GET /api/realm/defi/{path...}` | what a package holds: its two accounts' live balances, every native transfer through them, and its GRC20 positions. **Requires `network`**. The `flows[]` table pages with `flows_limit` (default 500, capped at 5000, `0` for a totals-only read) and `flows_offset`, counting back from the newest leg; `flows_total` is the whole history and every balance figure is summed over all of it, never over the page. `counterparties[]` is the same legs collapsed by who was at the other end (`sent`, `received`, `net` from *that account's* side, `legs`), always over every leg and never over the page, ranked by gross and capped at 50 with `counterparties_total` beside it. See below |
 | `GET /api/events/{path...}` | every event tagged with a package's path. Bounded: `limit` defaults to 200, capped at 2000. In all-networks mode it queries every chain and tags each row with its `network`. Unlike `/api/allevents` this is not filtered to `GnoEvent`, so the chain's own `StorageDepositEvent` / `StorageUnlockEvent` for that path are included; the realm page hides those behind a toggle rather than dropping them here |
+
+### The deploy history is the submissions, not the package row
+
+`/api/realm/deploys` reads `package_submissions`, which holds one row per
+message and is never overwritten. `packages` is a current-state projection with
+one row per path, so reading a history out of it returns exactly one entry and
+presents it as the whole story.
+
+This is not a rare edge. Under gno.land's inert code submission policy a parked
+package is invisible to every liveness probe (`vm/qfile`, `vm/qrender`), so a
+deployer who verifies by querying the path concludes the deploy failed and
+resubmits, once per retry, for as long as an approver is stuck. Several rows at
+one path are therefore usually the same code sent again rather than a change.
+
+What changed *between* two submissions is not answerable here: `package_files`
+stores the current body and nothing else, so a diff needs each submission's
+files re-fetched from the chain.
 
 ### The two accounts a package owns
 
@@ -615,7 +633,7 @@ make.
 
 `by_network` answers "is this chain producing blocks". `sync` answers "are we
 managing to read it", and the two come apart: `indexer.gno.land` once rejected
-every query mygnoscan sent it for more than a day while liveness stayed green,
+every query gnoscope sent it for more than a day while liveness stayed green,
 because a fallback endpoint in the same pool was answering. Nothing surfaced
 that the primary had stopped, which is why `indexers` names the endpoint
 actually serving each network alongside the pool it was chosen from.
@@ -1085,7 +1103,7 @@ safe to make about money.
 | `GET /api/validators` | valoper registrations, **served from storage** rather than the indexer. Flat rows with `address`, `moniker`, `func` and `success` — `address` is the validator the call is about, which is not always the caller |
 | `GET /api/validators/monikers` | consensus-address → name, for labelling block proposers. Sourced from [gnockpit](https://gnockpit.gno.land), not this chain's own data — a proposer's consensus key is never published to the valopers realm, which registers the *operator* key instead, so nothing indexed here can answer this. Best-effort and cached 5 minutes: an unreachable gnockpit yields `{}`, not an error |
 | `GET /api/govdao` | governance calls, **served from local storage** as a prefix match on `gno.land/r/gov/dao`. The indexer cannot answer this: its filter is a substring match over an unindexed field, so it scans until the deadline on a chain with no governance activity, and its predicate can match a message carrying no `pkg_path` at all |
-| `GET /api/govdao/overview` | proposal list plus memberstore tiers/members, parsed live from gov/dao's own `Render()` output over RPC (`vm/qrender`) — not reimplemented against its storage, so a rule mygnoscan does not know about (a tier threshold changing, say) still shows correctly. Cached 30s per network; a failed RPC round trip serves the last good result rather than an empty page |
+| `GET /api/govdao/overview` | proposal list plus memberstore tiers/members, parsed live from gov/dao's own `Render()` output over RPC (`vm/qrender`) — not reimplemented against its storage, so a rule gnoscope does not know about (a tier threshold changing, say) still shows correctly. Cached 30s per network; a failed RPC round trip serves the last good result rather than an empty page |
 | `GET /api/govdao/proposals/{id}` | one proposal's full detail: description, executor package, status, vote percentages, per-address votes (all parsed from the realm's own render), plus two independently sourced "how did this happen" trails — `related_calls` (vote/execute MsgCalls naming this proposal ID, found live on the indexer since the local `calls` table does not keep call arguments) and `related_msgruns` (`maketx run` scripts that plausibly created it, found by searching locally synced script source for both `gov/dao` and the proposal's executor package path — a heuristic, not a guarantee, given gov/dao's low proposal volume) |
 | `GET /api/govdao/voters` | the per-member voting record: one row per address with `yes`/`no`/`abstain`/`cast`, `authored`, `last_voted`, plus `member` (in the memberstore now) and `resolved` (the username mapped to an address). gov/dao publishes the roster and the votes as separate renders and never joins them — the roster has addresses and no votes, the votes have usernames and no notion of who could have voted — so "never voted" is only answerable by doing the join. Reads the same cached per-proposal renders `/api/govdao/overview` already fetched, so on a warm cache it costs no RPC at all |
 | `GET /api/inert/queue` | every package currently parked under the "inert" code submission policy, newest submission first. Read live over RPC (`vm/qinertpaths` for the path list, `vm/qpkgmeta_json` per path for creator/height/reason), cached 20s per network — vm/qinertpaths returns bare paths, so each one needs its own metadata round trip, fanned out concurrently |
@@ -1444,7 +1462,21 @@ document, including a gno realm's own `Render()`.
 ```
 /_badges/realm/{path...}?network=&metric=messages|callers&days=&theme=
 /_badges/network?network=&days=&theme=
+/_badges/shield/{kind}/{path...}?network=&days=&label=&color=&labelColor=&style=
 ```
+
+`shield` is the other shape: the 20-pixel label/message plate a README carries
+in a row at the top. `{kind}` is one of `status`, `txs`, `messages`, `users`,
+`version`. The same five answers are also served as shields.io endpoint JSON,
+for anyone who would rather their renderer drew it:
+
+```
+GET /api/shield/{kind}/{path...}   → {"schemaVersion":1,"label":…,"message":…,"color":…}
+```
+
+That one answers `200` with `"isError":true` on a failure rather than a 4xx,
+because shields draws its own generic error for a non-200 and discards the
+message that said which path was not found.
 
 They are registered through the same route table as everything above, so they
 appear in `/api/endpoints`. Windows, caching, the drawn-not-returned error
@@ -1458,7 +1490,7 @@ host application can iframe one piece of content rather than a whole
 page-in-a-page:
 
 ```html
-<iframe src="https://mygnoscan.example/realm/r/demo/boards?tab=deps&embed=1"
+<iframe src="https://gnoscope.example/realm/r/demo/boards?tab=deps&embed=1"
         width="800" height="600" style="border:0"></iframe>
 ```
 

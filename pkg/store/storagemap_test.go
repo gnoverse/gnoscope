@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/config"
 )
 
 // seedStorageMap builds a two-chain fixture that exercises every attribution
@@ -265,5 +265,113 @@ func TestStorageFootprintTotalCoversTruncatedCells(t *testing.T) {
 	}
 	if shown >= total.Bytes {
 		t.Errorf("a truncated list summed to the whole chain (%d of %d)", shown, total.Bytes)
+	}
+}
+
+// The enable branch: a package's own bytes are paid on a transaction the payer
+// appears nowhere in.
+//
+// Under the inert submission policy MsgAddPackage parks the package and takes
+// no deposit, so there is no storage event on the submission at all. The charge
+// arrives later on an approver's MsgEnablePackage and the chain bills the
+// package's creator. None of payerExpr's first four arms can match it: an
+// enable has no message row of any kind.
+//
+// On mainnet this was 482 events carrying 1,348.59 of 5,581.41 GNOT, 24.2% of
+// all storage spend on the chain, sitting in the unattributed bucket.
+func TestStoragePayersAttributeEnableTransactions(t *testing.T) {
+	db := NewTestDB(t)
+	db.SetConfiguredNetworks([]config.NetworkConfig{{ID: "alpha"}})
+
+	const (
+		when     = "2026-01-01T00:00:00Z"
+		creator  = "g1creator"
+		approver = "g1approver"
+		path     = "gno.land/r/ns/parked"
+	)
+
+	// The submission: parked, and carrying no storage event, which is the
+	// whole reason this branch has to exist.
+	if err := db.InsertPackageSubmission("alpha", "SUBMIT", 0, path, "parked",
+		creator, 100, when, true, 1, true); err != nil {
+		t.Fatalf("InsertPackageSubmission: %v", err)
+	}
+	// The enable: the approver's transaction, with no message row of its own.
+	if err := db.InsertStorageEvent("alpha", "ENABLE", 0, path, 101, when,
+		"deposit", 2037, 203700); err != nil {
+		t.Fatalf("InsertStorageEvent: %v", err)
+	}
+
+	payers, err := db.StoragePayers("alpha", 0)
+	if err != nil {
+		t.Fatalf("StoragePayers: %v", err)
+	}
+	got := map[string]StoragePayer{}
+	for _, p := range payers {
+		got[p.Address] = p
+	}
+	if _, unattributed := got[""]; unattributed {
+		t.Errorf("the enable deposit is still unattributed: %+v", payers)
+	}
+	if _, wrong := got[approver]; wrong {
+		t.Errorf("the deposit was booked to the approver, who never pays one: %+v", payers)
+	}
+	p, ok := got[creator]
+	if !ok {
+		t.Fatalf("no row for the creator; got %+v", payers)
+	}
+	if p.Fee != 203700 || p.Bytes != 2037 {
+		t.Errorf("creator got fee=%d bytes=%d, want 203700/2037", p.Fee, p.Bytes)
+	}
+}
+
+// An attribution table must not rewrite its own history.
+//
+// A path can be resubmitted, and a later submission by somebody else must not
+// reattribute an enable that happened before it. The arm is bounded to the
+// submission live at the event's height for exactly this.
+func TestStoragePayersEnableUsesTheSubmissionLiveAtTheTime(t *testing.T) {
+	db := NewTestDB(t)
+	db.SetConfiguredNetworks([]config.NetworkConfig{{ID: "alpha"}})
+
+	const (
+		when  = "2026-01-01T00:00:00Z"
+		first = "g1first"
+		later = "g1later"
+		path  = "gno.land/r/ns/reused"
+	)
+
+	if err := db.InsertPackageSubmission("alpha", "SUB1", 0, path, "reused",
+		first, 100, when, true, 1, true); err != nil {
+		t.Fatalf("InsertPackageSubmission: %v", err)
+	}
+	// The enable for that first submission.
+	if err := db.InsertStorageEvent("alpha", "ENABLE1", 0, path, 101, when,
+		"deposit", 100, 10000); err != nil {
+		t.Fatalf("InsertStorageEvent: %v", err)
+	}
+	// A redeploy at the same path, afterwards, by somebody else.
+	if err := db.InsertPackageSubmission("alpha", "SUB2", 0, path, "reused",
+		later, 200, when, true, 1, true); err != nil {
+		t.Fatalf("InsertPackageSubmission: %v", err)
+	}
+	if err := db.InsertStorageEvent("alpha", "ENABLE2", 0, path, 201, when,
+		"deposit", 50, 5000); err != nil {
+		t.Fatalf("InsertStorageEvent: %v", err)
+	}
+
+	payers, err := db.StoragePayers("alpha", 0)
+	if err != nil {
+		t.Fatalf("StoragePayers: %v", err)
+	}
+	got := map[string]StoragePayer{}
+	for _, p := range payers {
+		got[p.Address] = p
+	}
+	if got[first].Fee != 10000 {
+		t.Errorf("the first submitter got fee=%d, want 10000: a later redeploy reattributed their enable", got[first].Fee)
+	}
+	if got[later].Fee != 5000 {
+		t.Errorf("the later submitter got fee=%d, want 5000", got[later].Fee)
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/syncer"
 )
 
 type sanityPayload struct {

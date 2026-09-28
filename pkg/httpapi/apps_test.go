@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The layering is the design, so these are the tests that matter: which source
@@ -380,7 +380,7 @@ func TestNormalizeAppName(t *testing.T) {
 			t.Errorf("%q and %q do not match, so the hub would draw both", tt.a, tt.b)
 		}
 	}
-	if normalizeAppName("GnoScan") == normalizeAppName("mygnoscan") {
+	if normalizeAppName("GnoScan") == normalizeAppName("gnoscope") {
 		t.Error("two different explorers were merged into one card")
 	}
 }

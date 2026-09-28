@@ -3,7 +3,7 @@ package syncer
 import (
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 // TestRecordStorageEventsKeepsTheChainsSign is the test that was missing.

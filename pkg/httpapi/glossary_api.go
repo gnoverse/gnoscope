@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/moul/mygnoscan/pkg/glossary"
+	"github.com/gnoverse/gnoscope/pkg/glossary"
 )
 
 // glossaryResponse is the whole endpoint.

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // fakeChainNode serves the four endpoints probeNode reads. An empty string for
@@ -109,7 +109,7 @@ func TestHumanDuration(t *testing.T) {
 }
 
 // TestProbeNodeReadsTheNodeNotTheIndexer is the point of the whole file: the
-// wedged chain's own report, which nothing in mygnoscan previously asked for.
+// wedged chain's own report, which nothing in gnoscope previously asked for.
 func TestProbeNodeReadsTheNodeNotTheIndexer(t *testing.T) {
 	srv := wedgedNode().server(t)
 

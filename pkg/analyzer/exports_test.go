@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 // What a realm makes callable, as opposed to what has been called.

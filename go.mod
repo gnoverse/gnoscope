@@ -1,4 +1,4 @@
-module github.com/moul/mygnoscan
+module github.com/gnoverse/gnoscope
 
 go 1.25.0
 

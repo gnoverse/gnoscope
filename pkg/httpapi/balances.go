@@ -2,12 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The balance sweeper, and the two views it makes possible.
@@ -61,6 +63,7 @@ func (a *API) SweepBalances(ctx context.Context) {
 			log.Printf("[%s] balance sweep: %v", n.ID, err)
 			continue
 		}
+		addresses = a.withSeedAddresses(ctx, n.ID, rpcURL, addresses)
 		if len(addresses) == 0 {
 			continue
 		}
@@ -95,6 +98,64 @@ func (a *API) SweepBalances(ctx context.Context) {
 			log.Printf("[%s] balance sweep write: %v", n.ID, err)
 		}
 	}
+}
+
+// withSeedAddresses adds the addresses the database cannot know about.
+//
+// knownAddressesQuery can only name an address some row already mentions, and
+// an account that has never transacted is mentioned nowhere: a genesis
+// allocation moves no coins through the bank and emits no event. On mainnet
+// that hid the largest accounts on the chain from the rich list, which ranked
+// the fourth-largest first.
+//
+// Two outside sources fix it, and neither needs a table:
+//
+//   - **the chain's own unrestricted-address param.** `auth:p:unrestricted_addrs`
+//     is the list exempted from the transfer lock, which on mainnet is 91
+//     addresses and is exactly the institutional set: treasuries, the investor
+//     buckets, the ecosystem fund. Chain-native, so it stays current on its own.
+//   - **the curated registry**, for anything named by hand.
+//
+// Seeding is a one-off per address by construction: once swept, the address has
+// a `balances` row, and knownAddressesQuery reads that table back. So this runs
+// every pass and costs nothing after the first, rather than needing a flag.
+//
+// ⚠️ Prepended, not appended. The batch is bounded, and a seed that always
+// sorted last on a chain with more known addresses than one batch would never
+// be reached.
+func (a *API) withSeedAddresses(ctx context.Context, network, rpcURL string, known []string) []string {
+	seen := make(map[string]bool, len(known))
+	for _, addr := range known {
+		seen[addr] = true
+	}
+
+	var seeds []string
+	add := func(addr string) {
+		if addr == "" || seen[addr] {
+			return
+		}
+		seen[addr] = true
+		seeds = append(seeds, addr)
+	}
+
+	for addr := range a.registry.Addresses {
+		add(addr)
+	}
+	// Best-effort: a node that cannot answer costs this pass its seeds and
+	// nothing else, and the next pass asks again.
+	if raw, _, err := fetchParam(ctx, rpcURL, "auth:p:unrestricted_addrs"); err == nil {
+		var addrs []string
+		if json.Unmarshal([]byte(raw), &addrs) == nil {
+			for _, addr := range addrs {
+				add(addr)
+			}
+		}
+	}
+	if len(seeds) == 0 {
+		return known
+	}
+	sort.Strings(seeds)
+	return append(seeds, known...)
 }
 
 // RunBalanceSweeper sweeps on a timer until the context is cancelled.

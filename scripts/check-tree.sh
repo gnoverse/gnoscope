@@ -8,6 +8,7 @@
 #   1. a per-machine settings file, tracked      -> publishes whatever it holds
 #   2. a credential-shaped assignment            -> publishes a live secret
 #   3. a reference to a repo a reader cannot open -> a citation nobody can follow
+#   4. the pre-rename name, outside where it belongs -> a build break or a lie
 #
 # Rule 3 is the softest and the most useful. A comment that points at an issue
 # in some other tracker is worthless to anyone reading this source, and the
@@ -57,7 +58,7 @@ fi
 #
 # Both forms GitHub understands: the full URL, and the owner/repo#N or slug#N
 # shorthand. A bare #N is same-repo and always fine.
-allowed='gnoverse/mygnoscan
+allowed='gnoverse/gnoscope
 gnolang/gno
 gnolang/hackerspace
 gnolang/tx-indexer
@@ -85,7 +86,40 @@ if [ -n "$short" ]; then
 	fail "cross-repo issue shorthand; write the full URL, or cite the code instead" "$short"
 fi
 
+# --- 4. the name this project had before 2026-09-28 -------------------------
+#
+# Transitional, and worth removing once nothing in flight predates the rename.
+# It is here because the rename landed while other branches were open, and a
+# branch cut before it reintroduces the old name on merge without anything
+# complaining.
+#
+# The module path is the half that actually breaks, and it breaks in a way the
+# obvious check misses: `go build ./...` does not compile test files, so an
+# import in a _test.go sails through it. That happened on 2026-09-28 merging
+# main into the rename branch, in two files at once. `go vet` does catch it;
+# this catches it a step earlier and without a toolchain.
+modpath=$(git grep -In 'github\.com/moul/mygnoscan' \
+	-- . ":(exclude)$self" ":(exclude)docs/rename.md" || true)
+if [ -n "$modpath" ]; then
+	fail "the pre-rename module path is back; it is github.com/gnoverse/gnoscope" "$modpath"
+fi
+
+# The brand, allowed only where the rename itself is the subject: the record of
+# it, the notice announcing it, and the code and tests that carry settings
+# across it. index.html is allowed whole rather than by line because the
+# migration needs the literal old key prefix; the storage half of that file is
+# covered instead by pkg/web's TestEveryPersistedSettingIsMigratedFromTheOldName.
+brand=$(git grep -In 'mygnoscan' \
+	-- . ":(exclude)$self" \
+	":(exclude)docs/rename.md" ":(exclude)README.md" ":(exclude)AGENTS.md" \
+	":(exclude)e2e/tests/rename.spec.js" ":(exclude)pkg/web/web_test.go" \
+	":(exclude)pkg/web/frontend/index.html" \
+	":(exclude)pkg/store/contracts_bench_test.go" || true)
+if [ -n "$brand" ]; then
+	fail "the pre-rename name is outside the files that are about the rename; it is gnoscope" "$brand"
+fi
+
 if [ "$status" -eq 0 ]; then
-	echo "tree clean: no per-machine settings, no credential shapes, no unopenable references"
+	echo "tree clean: no per-machine settings, no credential shapes, no unopenable references, no pre-rename names"
 fi
 exit "$status"

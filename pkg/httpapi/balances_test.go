@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -9,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/config"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/config"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // balanceNode answers bank/balances for a fixed set of addresses, and /status
@@ -186,5 +187,65 @@ func TestHandleAccountPopulation(t *testing.T) {
 
 	if pop.Known < 2 || pop.Daily < 2 {
 		t.Errorf("population = %+v, want both addresses counted", pop)
+	}
+}
+
+// The rich list's hole: an account that has never transacted is named by no row
+// in this database, so the sweeper never fetches its balance and the ranking
+// never sees it.
+//
+// On mainnet that meant the top of the rich list was the fourth-largest account
+// and roughly 45% of the supply was absent, because the institutional genesis
+// buckets have never sent a transaction. Seeding is the only way in: a genesis
+// allocation emits no event for any table to record.
+func TestSweepSeedsAddressesTheDatabaseCannotKnow(t *testing.T) {
+	api, _ := newTestAPI(t)
+
+	// No RPC is configured here, so the chain's unrestricted-address param
+	// cannot be read and only the curated half of the seeding runs. That is
+	// the half worth pinning anyway: the param is the chain's to change.
+	got := api.withSeedAddresses(context.Background(), "alpha", "", []string{"g1known"})
+
+	pos := map[string]int{}
+	for i, a := range got {
+		pos[a] = i
+	}
+	if _, ok := pos["g1known"]; !ok {
+		t.Fatal("the known address was dropped")
+	}
+	// Every curated address has to be swept, or a name in the registry is a
+	// label on a row the rich list does not have.
+	for addr := range api.registry.Addresses {
+		i, ok := pos[addr]
+		if !ok {
+			t.Errorf("curated address %s was not seeded", addr)
+			continue
+		}
+		// Prepended, not appended: the batch is bounded, and a seed sorting
+		// after every known address would never be reached on a real chain.
+		if i > pos["g1known"] {
+			t.Errorf("curated address %s sorted after the known set, so a bounded batch would never reach it", addr)
+		}
+	}
+}
+
+// Seeding runs every pass, so it must not grow the batch without bound or
+// re-add an address the database already knows.
+func TestSweepSeedingIsIdempotent(t *testing.T) {
+	api, _ := newTestAPI(t)
+
+	first := api.withSeedAddresses(context.Background(), "alpha", "", nil)
+	// Once swept, a seed has a balances row and comes back through
+	// knownAddressesQuery, which is what makes this a one-off per address.
+	second := api.withSeedAddresses(context.Background(), "alpha", "", first)
+	if len(second) != len(first) {
+		t.Errorf("seeding an already-seeded batch grew it from %d to %d", len(first), len(second))
+	}
+	seen := map[string]bool{}
+	for _, a := range second {
+		if seen[a] {
+			t.Errorf("address %s appears twice, so its balance is fetched twice", a)
+		}
+		seen[a] = true
 	}
 }

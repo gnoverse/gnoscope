@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/moul/mygnoscan/pkg/stdlibs"
-	"github.com/moul/mygnoscan/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/stdlibs"
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 // The standard library: served from what the stdlib crawler stored, and read

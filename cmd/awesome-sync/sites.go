@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/registry"
 )
 
 // Finding the app behind an entry.
@@ -137,7 +137,7 @@ func reachable(raw string) (string, bool) {
 	}
 	// Some of these serve a different page, or nothing at all, to a client that
 	// does not look like a browser.
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mygnoscan-awesome-sync/1)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; gnoscope-awesome-sync/1)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	resp, err := siteClient.Do(req)
 	if err != nil {

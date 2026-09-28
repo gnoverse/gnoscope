@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/indexer"
 )
 
 func TestExtractSymbolsBasics(t *testing.T) {

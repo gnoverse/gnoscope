@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/registry"
 )
 
 const (
