@@ -95,6 +95,72 @@ func TestNoHowLineQuotesAGasFigure(t *testing.T) {
 	}
 }
 
+// A marker is not earnable, and every consumer has to know which kind it is
+// looking at. moul's page read "21 of 26" against a real ceiling of 25 because
+// session-key sat in the denominator: a badge in a score that nobody reading
+// their own page can ever move.
+func TestMarkersAreNotEarnableAndSayNotToTry(t *testing.T) {
+	markers := 0
+	for _, d := range Catalog {
+		if !d.Marker {
+			continue
+		}
+		markers++
+		// A marker still has to be decidable, or it would draw on nobody's page
+		// including the addresses it describes.
+		if d.SQL == "" {
+			t.Errorf("%s is a marker with no SQL, so nothing can ever show it", d.Slug)
+		}
+		// And it has to say it is not a thing to go and do, because the grid
+		// draws it next to badges that are.
+		if !strings.Contains(strings.ToLower(d.How), "not earned") {
+			t.Errorf("%s is a marker but its how line reads like an instruction: %q", d.Slug, d.How)
+		}
+	}
+	if markers == 0 {
+		t.Error("no markers in the catalog, so this test proves nothing")
+	}
+	if markers >= len(Catalog)/2 {
+		t.Errorf("%d of %d entries are markers; the score would be mostly unearnable", markers, len(Catalog))
+	}
+}
+
+// The two "somebody gave you something" badges have to mean somebody else.
+// Their How lines promise it ("not something you do to yourself") and the
+// queries did not enforce it, so a send to your own address awarded one.
+func TestReceivedBadgesExcludeSelf(t *testing.T) {
+	for _, slug := range []string{"first-gnot-received", "grc20-received"} {
+		d := Lookup(slug)
+		if d == nil {
+			t.Fatalf("%s is not in the catalog", slug)
+		}
+		if !strings.Contains(d.SQL, "from_address <> to_address") &&
+			!strings.Contains(d.SQL, "from_addr <> to_addr") {
+			t.Errorf("%s does not exclude a self-send, so it can be awarded to yourself: %s", slug, d.SQL)
+		}
+	}
+}
+
+// A how line naming a realm has to name one that is there. `validator` pointed
+// at r/gnoland/valopers, which is not deployed on mainnet; the registry is
+// r/gnops/valopers.
+func TestValidatorNamesTheRegistryThatExists(t *testing.T) {
+	d := Lookup("validator")
+	if d == nil {
+		t.Fatal("validator is not in the catalog")
+	}
+	if strings.Contains(d.How, "r/gnoland/valopers") {
+		t.Error("how line names r/gnoland/valopers, which is not deployed on mainnet")
+	}
+	if !strings.Contains(d.How, "r/gnops/valopers") {
+		t.Error("how line does not name the registry that is actually there, r/gnops/valopers")
+	}
+	// The guard that rejects exactly the readers most likely to try.
+	if !strings.Contains(d.How, "ErrFrontrunValidator") {
+		t.Error("how line does not warn that Register rejects a key already in the valset")
+	}
+}
+
 func TestLookupAndIndexed(t *testing.T) {
 	if Lookup("first-realm") == nil {
 		t.Error("Lookup missed a slug that is in the catalog")

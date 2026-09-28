@@ -206,6 +206,42 @@ func TestAchievementsAwardTheRightAddresses(t *testing.T) {
 	}
 }
 
+// A send to your own address is not somebody sending you coin, and the badge's
+// own How line promises as much. The query did not enforce it, so the site was
+// contradicting itself with its own authority.
+func TestSelfSendDoesNotAwardReceived(t *testing.T) {
+	db := NewTestDB(t)
+	const net = "mainnet"
+	db.SetConfiguredNetworks([]config.NetworkConfig{{ID: net}})
+
+	// alice pays herself; bob is paid by alice. Only bob has received anything.
+	if err := db.InsertBankSend(net, "TXSELF", 10, "2026-01-01T00:00:00Z", "g1alice", "g1alice", "1000000ugnot", true); err != nil {
+		t.Fatalf("InsertBankSend: %v", err)
+	}
+	if err := db.InsertBankSend(net, "TXREAL", 11, "2026-01-02T00:00:00Z", "g1alice", "g1bob", "1000000ugnot", true); err != nil {
+		t.Fatalf("InsertBankSend: %v", err)
+	}
+	if err := db.InsertTokenTransfer(net, "TXTOKSELF", 0, TokenTransfer{
+		Token: "gno.land/r/demo/tok.TOK.0", From: "g1alice", To: "g1alice",
+		Value: 5, BlockHeight: 12, BlockTime: "2026-01-03T00:00:00Z"}); err != nil {
+		t.Fatalf("InsertTokenTransfer: %v", err)
+	}
+	if err := db.RefreshAchievements(); err != nil {
+		t.Fatalf("RefreshAchievements: %v", err)
+	}
+
+	if got := holders(t, db, "first-gnot-received"); !equalSet(got, []string{"g1bob"}) {
+		t.Errorf("first-gnot-received holders %v, want only g1bob: alice paid herself", got)
+	}
+	if got := holders(t, db, "grc20-received"); len(got) != 0 {
+		t.Errorf("grc20-received holders %v, want none: the only transfer was alice to herself", got)
+	}
+	// The sending half is unaffected: alice really did send.
+	if got := holders(t, db, "first-gnot-sent"); !equalSet(got, []string{"g1alice"}) {
+		t.Errorf("first-gnot-sent holders %v, want g1alice", got)
+	}
+}
+
 // The first unlock is the fact a badge carries, and "first" is the part a
 // GROUP BY gets wrong quietly: without the MIN it would report whichever row
 // the planner happened to reach last.
