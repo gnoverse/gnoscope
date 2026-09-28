@@ -13176,6 +13176,29 @@ function renderUsageTreemap(mount, host, detail, usage, gen, filtered) {
   }
 }
 
+// funcGasCell renders what one call to a function costs.
+//
+// Two refusals, both deliberate. A function seen only inside multi-message
+// transactions has no attributable cost at all, because a transaction's gas
+// belongs to the transaction and not to one message in it; it renders as a
+// dash rather than as a number borrowed from its neighbours. And a single
+// sample is not a cost: one call tells you what that call happened to pay, so
+// the figure waits until there are at least three.
+function funcGasCell(f) {
+  const n = f.gas_samples || 0;
+  if (!n) {
+    return el('span', { className: 'state-dim', title: 'never called in a transaction that carried only this call' }, '\u2014');
+  }
+  if (n < 3) {
+    return el('span', { className: 'state-dim', title: n + ' sample' + (n === 1 ? '' : 's') + ': too few to quote a cost' }, '\u2014');
+  }
+  const cell = el('span', {
+    title: 'median ' + fmtNum(f.gas_median) + ' gas, p90 ' + fmtNum(f.gas_p90) +
+           ', over ' + fmtNum(n) + ' transactions that carried only this call',
+  }, fmtNum(f.gas_median));
+  return cell;
+}
+
 function renderRealmUsage(host, detail, usage, gen) {
   host.textContent = '';
   const s = usage.summary || {};
@@ -13366,7 +13389,8 @@ function renderRealmUsage(host, detail, usage, gen) {
     const tbl = el('table');
     tbl.appendChild(el('thead', {}, el('tr', {},
       el('th', {}, 'function'), el('th', {}, 'calls'), el('th', {}, 'callers'),
-      el('th', {}, 'ok'), el('th', {}, 'last'))));
+      el('th', {}, 'ok'), el('th', { title: 'median gas, over transactions that carried only this call' }, 'gas'),
+      el('th', {}, 'last'))));
     const body = el('tbody');
     for (const f of fns) {
       const on = _usageFilter.func === f.name;
@@ -13380,6 +13404,7 @@ function renderRealmUsage(host, detail, usage, gen) {
       tr.appendChild(el('td', {}, shareBar(f.calls, s.calls || 0)));
       tr.appendChild(el('td', {}, fmtNum(f.callers)));
       tr.appendChild(el('td', {}, okFailCell(f.ok, f.failed)));
+      tr.appendChild(el('td', {}, funcGasCell(f)));
       tr.appendChild(el('td', {}, blockWithAge(f.last_height, f.last_time, detail.network)));
       body.appendChild(tr);
     }
