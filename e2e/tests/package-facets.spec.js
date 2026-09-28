@@ -189,3 +189,62 @@ test('a table the server does not order still starts ascending', async ({ page }
   await th.click();
   await expect(th).toHaveClass(/sort-asc/);
 });
+
+// The flake that reddened `main` on commits that could not have caused it, as a
+// test that fails on demand instead of once a week.
+//
+// The ascending order does not come from the click. The loader's handler runs
+// first, clears the tbody and paints skeleton rows, so `makeSortable`'s handler
+// sorts placeholders; the real rows arrive later in the server's order, and the
+// reader's direction is re-applied only by `restoreTableState`, which the
+// MutationObserver schedules on a debounce.
+//
+// An uncapped debounce is restarted by every mutation anywhere under body, so a
+// steady stream starves it and the chosen sort never lands. One hidden node
+// appended every 40ms is enough, and it is nothing like a contrived load: a
+// live feed, a ticking relative time or a busy CI runner all produce it. Before
+// the cap this read 23, 20, 9, 7, 6, 2 after the click asking for ascending,
+// which is the descending page unchanged, and that is exactly the CI failure
+// (`Expected: >= 23, Received: 20`).
+//
+// Asserting on the order rather than on the timer: a future scheduler that does
+// not debounce at all would pass this, which is correct, because the bug is the
+// reader seeing the wrong order and not the mechanism that got them there.
+test('a chosen sort survives a page that never stops mutating', async ({ page }) => {
+  await page.goto('/realms');
+  await settle(page);
+
+  await page.evaluate(() => {
+    const churn = document.createElement('div');
+    churn.style.display = 'none';
+    document.body.appendChild(churn);
+    window.__churn = setInterval(() => {
+      churn.appendChild(document.createElement('span'));
+      if (churn.childNodes.length > 3) churn.removeChild(churn.firstChild);
+    }, 40);
+  });
+
+  const header = page.locator('#view-realms th[data-sort="calls"]');
+  const callsColumn = async () =>
+    (await page.locator('#realms-list tr td:nth-child(4)').allTextContents())
+      .map(t => Number(t.replace(/[^0-9]/g, '')) || 0);
+  const sorted = async () => {
+    const landed = page.waitForResponse(r => r.url().includes('/api/realms') && r.ok());
+    await header.click();
+    await landed;
+    await settle(page);
+  };
+
+  try {
+    await sorted();
+    await sorted();
+    const asc = await callsColumn();
+    expect(asc.length).toBeGreaterThan(2);
+    for (let i = 1; i < asc.length; i++) {
+      expect(asc[i], 'the second click still flips while the page mutates').toBeGreaterThanOrEqual(asc[i - 1]);
+    }
+  } finally {
+    // Left running, it would starve every later test in this file the same way.
+    await page.evaluate(() => clearInterval(window.__churn));
+  }
+});

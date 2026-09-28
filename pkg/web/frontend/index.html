@@ -14684,12 +14684,42 @@ function enhanceTables() {
   });
 }
 
-// Run after DOM mutations settle — observe body when available
+// Run after DOM mutations settle, observing body when available.
+//
+// The debounce coalesces a burst, and it is capped, which is not a nicety: a
+// plain restartable timer can be starved forever by a steady mutation stream,
+// and what it starves is not an optimisation. `restoreTableState` is what
+// re-applies a reader's chosen sort and filter after a loader repaints the
+// rows, so while this never fires, a directory shows the server's order under a
+// header that says otherwise.
+//
+// Reproduced exactly, 2026-09-28: a `setInterval` appending one hidden node
+// every 40ms, touching nothing near the table, is enough. `/realms` sorted by
+// calls then read 23, 20, 9, 7, 6, 2 after the click that asks for ascending,
+// which is the descending page unchanged, and it stayed that way for as long as
+// the stream ran. Stopping it and waiting 400ms produced 0, 0, 0, 0, 0, 0. That
+// is the CI failure in gnoverse/mygnoscan's package-facets sort test, which
+// reddened `main` on commits that could not have caused it.
+//
+// The cap is a deadline set when a pass first becomes pending, not a fixed
+// interval: a quiet page still waits the full debounce and coalesces, and only
+// a page that keeps mutating is forced to run.
+const ENHANCE_DEBOUNCE_MS = 100;
+const ENHANCE_MAX_DELAY_MS = 250;
+let _enhanceDeadline = 0;
+function scheduleEnhance() {
+  const now = Date.now();
+  if (!_enhanceTimer) _enhanceDeadline = now + ENHANCE_MAX_DELAY_MS;
+  clearTimeout(_enhanceTimer);
+  _enhanceTimer = setTimeout(() => {
+    _enhanceTimer = null;
+    enhanceTables();
+  }, Math.max(0, Math.min(ENHANCE_DEBOUNCE_MS, _enhanceDeadline - now)));
+}
 if (document.body) {
   new MutationObserver(() => {
     if (_clampQueue.length) setTimeout(processClampQueue, 0);
-    clearTimeout(_enhanceTimer);
-    _enhanceTimer = setTimeout(enhanceTables, 100);
+    scheduleEnhance();
   }).observe(document.body, { childList: true, subtree: true });
 }
 
