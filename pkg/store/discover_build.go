@@ -66,6 +66,10 @@ func (d *DB) RefreshDiscoverEvents(networks []string) ([]DiscoverBuildResult, er
 			d.sourcePackageDeployed,
 			d.sourceDeployerFirst,
 			d.sourceChainSpike,
+			d.sourceValidatorRegistered,
+			d.sourceTransferLarge,
+			d.sourcePackageFirstCall,
+			d.sourcePackageSpike,
 		} {
 			candidates, err := source(network, since)
 			if err != nil {
