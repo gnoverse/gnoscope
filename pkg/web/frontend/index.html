@@ -14936,7 +14936,7 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
     // Deliberately uncounted, like the realm page's defi tab and for the same
     // reason: the number would need the fetch that opening the tab is what
     // pays for, so counting it here would undo the deferral.
-    { id: 'holdings', build: (pane) => loadDefiInto(addressDefiCtx(addr, pane), pane, gen) },
+    { id: 'holdings', build: (pane) => loadDefiInto(addressDefiCtx(addr, pane, whatData?.chain?.vesting), pane, gen) },
     { id: 'deploys', count: pkgs.length, when: pkgs.length > 0, build: (pane) => renderAddressDeploys(pane, pkgs) },
     { id: 'sessions', count: sessionCount, when: sessionCount > 0, build: (pane) => renderSessions(pane, sessionsData) },
     { id: 'achievements', build: (pane) => loadAddressAchievements(addr, pane) },
@@ -16352,10 +16352,15 @@ function realmDefiCtx(path) {
 
 // The address page builds its panes rather than declaring them in markup, so it
 // hands the element over instead of an id to look up.
-function addressDefiCtx(addr, pane) {
+// vesting is passed in rather than re-fetched: the address page has already
+// read auth/accounts for its identity panel, and it is the evidence that lets
+// the reconciliation below call a leftover credit a genesis allocation instead
+// of merely naming it. Absent on the realm page, where it is always false.
+function addressDefiCtx(addr, pane, vesting) {
   return {
     path: '',
     base: 'address/' + addr + '/holdings',
+    vesting: !!vesting,
     into: () => { pane.textContent = ''; return pane; },
   };
 }
@@ -16429,20 +16434,56 @@ function renderRealmDefi(into, d, ctx) {
     note.textContent = 'reconstructed from ' + fmtNum(d.flows_total || 0)
       + ' transfer events, and the total lands exactly on what the chain reports, so this history is complete.';
   } else {
-    // Why the two differ, and the answer is not the same on both pages.
+    // The gap, decomposed rather than disclaimed.
     //
-    // A realm's banker is only ever moved by sendCoins, which emits, so a gap
-    // there means history is missing. A signing account also pays gas and
-    // storage deposits, and both go through SendCoinsUnrestricted, which emits
-    // nothing: the reconstruction is short by exactly that spend, on every
-    // active account, permanently. Offering the realm's explanation here would
-    // send a reader looking for missing transfers that are not missing.
-    note.textContent = 'the reconstruction comes to ' + fmtGnotAmount(d.derived_ugnot || 0)
-      + ', ' + fmtGnotAmount(Math.abs(gap)) + (gap > 0 ? ' short of' : ' over') + ' what the chain reports. '
-      + (d.truncated ? 'The indexer capped the query, so the oldest transfers are missing.'
-        : isRealm
-          ? 'A genesis allocation moves no coins through the bank and emits no event, which is the usual cause.'
-          : 'Gas and storage deposits leave this account without emitting a transfer event, so a spending account always reads short by what it has paid in fees. A genesis allocation is invisible here for the same reason.');
+    // This used to be a sentence explaining that gas and storage deposits leave
+    // no transfer event, which was true and left the reader with a number and
+    // no way to check it. Both of those spends are indexed, so three of the
+    // four terms are exact arithmetic and only the fourth is a residual:
+    //
+    //   live = derived + genesis - gas - storage_deposit
+    //
+    // A realm's banker pays neither of the two middle terms, so its line
+    // collapses back to the old one-sentence form on its own, with no branch.
+    note.appendChild(el('div', {}, 'the reconstruction comes to '
+      + fmtGnotAmount(d.derived_ugnot || 0) + ' over ' + fmtNum(d.flows_total || 0)
+      + ' transfer events, against ' + fmtGnotAmount(live) + ' on chain.'));
+
+    const gas = d.gas_ugnot || 0;
+    const dep = d.storage_deposit_ugnot || 0;
+    const left = d.unexplained_ugnot || 0;
+    if (gas || dep) {
+      const terms = [];
+      if (gas) terms.push(fmtGnotAmount(gas) + ' in gas');
+      if (dep) terms.push(fmtGnotAmount(Math.abs(dep)) + (dep > 0 ? ' locked as storage deposits' : ' refunded from storage deposits'));
+      note.appendChild(el('div', {}, 'this account also paid ' + terms.join(' and ')
+        + ' across ' + fmtNum(d.transactions || 0) + ' transactions. both move through '
+        + 'SendCoinsUnrestricted, which emits nothing, so neither is in the figure above.'));
+    }
+
+    // The residual, and what it is allowed to be called.
+    //
+    // Nothing after genesis can credit an account without emitting a transfer,
+    // so a positive residual is a genesis allocation. Saying so outright still
+    // needs evidence, and the vesting schedule is it: only InitChain can set
+    // one. Without it the residual is named and not explained, which is the
+    // honest half of the same sentence.
+    const resid = el('div', { style: { marginTop: '4px' } });
+    if (Math.abs(left) < 1) {
+      resid.append('derived minus those two lands on the chain\u2019s own figure, so this history is complete.');
+    } else if (left > 0) {
+      resid.append(fmtGnotAmount(left) + ' is unaccounted for. ');
+      resid.append(ctx && ctx.vesting
+        ? 'this account carries a vesting schedule, which only genesis can set, so that is its genesis allocation: written straight into the bank at InitChain, moving no coins and emitting no event.'
+        : 'an account can only be credited without a transfer event at genesis, so this is most likely a genesis allocation. the chain does not expose one, so it is not claimed here.');
+    } else {
+      resid.append(fmtGnotAmount(Math.abs(left)) + ' more has left this account than the three figures above explain'
+        + (d.truncated ? ', and the ledger backfill has not finished on this chain, so the oldest transfers are still missing.' : '. that should not happen, and is worth reporting.'));
+    }
+    note.appendChild(resid);
+    if (d.truncated && left >= 0) {
+      note.appendChild(el('div', {}, 'the ledger backfill has not finished on this chain, so the oldest transfers may still be missing.'));
+    }
   }
   into.appendChild(note);
 
