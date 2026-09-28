@@ -308,13 +308,12 @@ func TestTotalCountsTheWindowNotThePage(t *testing.T) {
 	}
 }
 
-// The counts describe the window, not the page and not the filter.
+// The counts survive a filter, so a chip says what it would find.
 //
-// Two ways this was wrong at once. The hold count came only from the bounded
-// pool, so a window holding 275 held events reported "hold: 0"; and the counts
-// were taken after the verdict filter, so asking for shares reported that
-// nothing else existed. A filter chip has to show what it would find.
-func TestVerdictCountsDescribeTheWindowNotThePage(t *testing.T) {
+// Taken after the filter, asking for shares reported that nothing else existed.
+// The deletion of this block during a later refactor is also what this test
+// caught: with the filter gone, ?verdict=share returned maybes.
+func TestVerdictCountsSurviveTheFilter(t *testing.T) {
 	withGlossaryAPI(t)
 	api, db := newTestAPI(t)
 
@@ -368,9 +367,16 @@ func TestTheCountsAlwaysAddUp(t *testing.T) {
 		"/api/discover?network=alpha",
 		"/api/discover?network=alpha&limit=1",
 		"/api/discover?network=alpha&window=24h",
+		"/api/discover?network=alpha&window=all",
 		"/api/discover?network=alpha&verdict=share",
 		"/api/discover?network=alpha&verdict=hold",
 		"/api/discover?network=alpha&kind=package.deployed",
+		// highlights rewrites the window after it has been resolved, which is
+		// the shape that broke this last time: a count taken against one window
+		// and a total against another.
+		"/api/discover?network=alpha&highlights=5",
+		"/api/discover?network=alpha&highlights=1",
+		"/api/discover?network=alpha&order=time",
 	} {
 		resp := getDiscover(t, api, url)
 		sum := resp.Unranked
