@@ -368,3 +368,32 @@ func TestMaskingDoesNotLaunderAFigure(t *testing.T) {
 		t.Error("a digits-only string fact laundered a number past G1")
 	}
 }
+
+// G5 masks the values the chain supplied before looking for jargon, and the
+// length floor on that mask is what stops it becoming a hole.
+//
+// A one-character fact value would blank that letter out of the whole line, and
+// a headword with the letter in it stops matching: with a fact worth "a",
+// "a validator arrived" masks down to "  v lid tor rrived" and the jargon walks
+// through. The floor is why it does not, and this is the test that makes the
+// floor evidence rather than a precaution.
+func TestG5MaskingCannotBeWidenedByAOneCharacterFact(t *testing.T) {
+	headwords := []string{"validator"}
+
+	// The real case the mask exists for: a quoted title carrying a headword.
+	quoted := Facts{"title": "Add human package approvers"}
+	if v := checkJargon([]string{"package"}, "@aeddi asked for: Add human package approvers.", quoted); len(v) > 0 {
+		t.Errorf("a headword inside a quoted title was reported as the emitter's jargon: %v", v[0].Error())
+	}
+
+	// The hole it must not open.
+	tiny := Facts{"letter": "a"}
+	if v := checkJargon(headwords, "a validator arrived.", tiny); len(v) == 0 {
+		t.Error("a one-character fact masked the line enough to hide real jargon")
+	}
+
+	// And with no facts at all it is the plain check it always was.
+	if v := checkJargon(headwords, "a validator arrived.", nil); len(v) == 0 {
+		t.Error("jargon went unreported with no facts to mask")
+	}
+}
