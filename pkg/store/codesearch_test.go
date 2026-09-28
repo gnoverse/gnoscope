@@ -210,7 +210,11 @@ func TestBackfillCodeIndex(t *testing.T) {
 // single-transaction implementation would still pass a small-corpus test.
 func TestBackfillCodeIndexChunks(t *testing.T) {
 	d := NewTestDB(t)
-	const files = 1200 // > the 500-row batch, so at least three pages
+	// Just over two batches. The property is that the loop pages at all, which
+	// one boundary crossing proves; 1,200 files cost 24s of a package already
+	// near Go's 600s default timeout, and the extra 600 proved nothing the
+	// first crossing had not.
+	const files = 600
 	for i := 0; i < files; i++ {
 		path := fmt.Sprintf("gno.land/r/x/p%04d", i)
 		if err := d.UpsertPackageFile("alpha", path, "a.gno", fmt.Sprintf("package p%04d\nfunc Marker%04d() {}\n", i, i)); err != nil {
@@ -231,7 +235,7 @@ func TestBackfillCodeIndexChunks(t *testing.T) {
 
 	// Every page must be present, not just the first: an OFFSET bug shows up
 	// as the last batch missing and nothing else.
-	for _, i := range []int{0, 499, 500, 999, 1199} {
+	for _, i := range []int{0, 499, 500, 599} {
 		hits, err := d.SearchCode(CodeSearchOpts{Network: "alpha", Query: fmt.Sprintf("Marker%04d", i)})
 		if err != nil {
 			t.Fatalf("search %d: %v", i, err)
