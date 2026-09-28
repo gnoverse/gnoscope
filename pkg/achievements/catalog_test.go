@@ -1,6 +1,7 @@
 package achievements
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,30 @@ func TestCatalogInvariants(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A `how` line must never carry a gas figure.
+//
+// Four of them shipped with one, each invented to look plausible and each wrong:
+// `-gas-wanted 200000` on a send that costs 1,238,665 when it has to create the
+// recipient's account, `2000000` on a call that measures 11,732,203. gno prices a
+// transaction on the work its code does, so the number is not derivable from the
+// shape of the command, and one written here is one a stranger pastes and watches
+// bounce. `-simulate only` is how the chain answers it, and pointing at that is
+// the instruction worth giving.
+func TestNoHowLineQuotesAGasFigure(t *testing.T) {
+	// The flag followed by digits. The bare flag name is allowed and used: three
+	// entries tell a reader to go and find the right value for themselves.
+	quoted := regexp.MustCompile(`-gas-wanted[= ]+[0-9]`)
+	feeQuoted := regexp.MustCompile(`-gas-fee[= ]+[0-9]`)
+	for _, d := range Catalog {
+		if m := quoted.FindString(d.How); m != "" {
+			t.Errorf("%s: how line quotes a gas ceiling (%q). Tell the reader to measure with -simulate only instead", d.Slug, m)
+		}
+		if m := feeQuoted.FindString(d.How); m != "" {
+			t.Errorf("%s: how line quotes a gas fee (%q). The fee is a ratio against the ceiling, so a flat figure is wrong at any other ceiling", d.Slug, m)
+		}
 	}
 }
 
