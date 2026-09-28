@@ -205,6 +205,82 @@ main { padding: 20px 0; }
    the viewport — every table on the site lives directly inside a .section,
    so this one rule covers all of them without touching each table's own
    markup. */
+/* Discover.
+ *
+ * A card, not a table row. The whole point of this page is that a line reading
+ * `package.deployed | gno.land/r/moul/hello` tells a non-developer nothing, so
+ * the sentence is the primary element and the machine-readable identifiers are
+ * demoted to a footer. Sizing follows from that: the headline is the largest
+ * text on the page after the page title, and the ids are 11px monospace.
+ *
+ * The left border carries the verdict. It is the one piece of state a reader
+ * scans for down a column, and a 3px rule reads faster than a pill they have to
+ * fixate on, so the pill is there too but the border is what you see first. */
+.dsc-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.dsc-sub { color: var(--fg2); font-size: 12px; margin-bottom: 16px; max-width: 78ch; line-height: 1.5; }
+.dsc-filters { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; padding: 10px 0 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.dsc-fgroup { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.dsc-flabel { color: var(--fg2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; margin-right: 2px; }
+.dsc-chip { cursor: pointer; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; color: var(--fg2);
+            background: none; border: 1px solid var(--border); font-family: inherit; white-space: nowrap; }
+.dsc-chip:hover { color: var(--fg); border-color: var(--fg2); }
+.dsc-chip.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.dsc-chip .n { opacity: 0.6; margin-left: 4px; }
+
+.dsc-card { position: relative; border: 1px solid var(--border); border-left: 3px solid var(--border);
+            border-radius: 4px; background: var(--bg2); padding: 13px 15px; margin-bottom: 10px; }
+.dsc-card.v-share { border-left-color: var(--green); }
+.dsc-card.v-maybe { border-left-color: var(--amber); }
+.dsc-card.v-hold  { border-left-color: var(--border); opacity: 0.72; }
+.dsc-card.demoted { opacity: 0.66; }
+.dsc-headline { font-size: 15px; line-height: 1.45; color: var(--fg); }
+.dsc-matters { font-size: 13px; line-height: 1.5; color: var(--fg2); margin-top: 5px; max-width: 78ch; }
+.dsc-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px;
+            font-size: 11px; color: var(--fg2); font-family: var(--mono); }
+.dsc-meta a { font-size: 11px; }
+.dsc-meta .sep { opacity: 0.4; }
+
+/* The verdict line. Always present, including on a hold, because "why not" is
+ * the part a reader learns from: a queue that silently drops what it ruled out
+ * teaches nothing and cannot be argued with. */
+.dsc-verdict { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding-top: 9px;
+               border-top: 1px dashed var(--border); font-size: 12px; line-height: 1.45; }
+.dsc-pill { flex: 0 0 auto; padding: 2px 8px; border-radius: 3px; font-size: 10.5px; font-weight: bold;
+            text-transform: uppercase; letter-spacing: 0.5px; }
+.dsc-pill.v-share { background: rgba(81,207,102,0.15); color: var(--green); }
+.dsc-pill.v-maybe { background: rgba(255,217,61,0.15); color: var(--amber); }
+.dsc-pill.v-hold  { background: rgba(136,136,136,0.15); color: var(--fg2); }
+.dsc-reason { color: var(--fg2); }
+.dsc-blocking { color: var(--amber); }
+.dsc-axes { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+.dsc-axis { font-size: 10.5px; color: var(--fg2); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; }
+.dsc-axis b { color: var(--fg); font-weight: 600; }
+
+/* Layer 1 and the fact set, collapsed. The audit trail belongs on the page and
+ * not in a separate tool, but it is not what the page is for, so it is one
+ * click away rather than always on screen. */
+.dsc-why { margin-top: 9px; }
+.dsc-why > summary { cursor: pointer; font-size: 11px; color: var(--fg2); list-style: none; }
+.dsc-why > summary::-webkit-details-marker { display: none; }
+.dsc-why > summary::before { content: '\25B8 '; }
+.dsc-why[open] > summary::before { content: '\25BE '; }
+.dsc-why > summary:hover { color: var(--fg); }
+.dsc-what { font-size: 12px; color: var(--fg2); line-height: 1.5; margin: 8px 0 0; padding-left: 14px; }
+.dsc-facts { margin: 8px 0 0; padding-left: 14px; font-family: var(--mono); font-size: 11px; }
+.dsc-facts div { display: flex; gap: 8px; padding: 1px 0; }
+.dsc-facts .k { color: var(--fg2); min-width: 140px; }
+.dsc-facts .v { color: var(--fg); word-break: break-all; }
+
+.dsc-empty { border: 1px dashed var(--border); border-radius: 4px; padding: 18px; color: var(--fg2);
+             font-size: 13px; line-height: 1.55; max-width: 78ch; }
+.dsc-empty b { color: var(--fg); font-weight: 600; }
+.dsc-envelope { color: var(--fg2); font-size: 11px; font-family: var(--mono); margin-top: 20px;
+                padding-top: 10px; border-top: 1px solid var(--border); }
+.dsc-more { display: block; margin: 16px auto 0; padding: 7px 18px; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: 4px; color: var(--fg2); cursor: pointer;
+            font-family: inherit; font-size: 12px; }
+.dsc-more:hover { color: var(--fg); border-color: var(--fg2); }
+.dsc-ruled > summary { cursor: pointer; color: var(--fg2); font-size: 12px; margin: 22px 0 12px; }
 .section { margin-bottom: 32px; overflow-x: auto; }
 .section-title { font-size: 14px; color: var(--fg2); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 table { width: 100%; border-collapse: collapse; }
@@ -908,6 +984,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 <symbol id="i-gavel" viewBox="0 0 16 16"><path d="M2 14.2h8"/><path d="M6 11.4V6.6"/><path d="M2.6 6.6h6.8"/><path d="M11 1.8 14.4 5.2"/><path d="m9.3 5.2 3.4-3.4"/><path d="M6 6.6 12.7 5.2"/></symbol>
 <symbol id="i-gauge" viewBox="0 0 16 16"><path d="M2 12a6.6 6.6 0 1 1 12 0"/><path d="m8 12 3-4.4"/><circle cx="8" cy="12" r="1"/></symbol>
 <symbol id="i-collapse" viewBox="0 0 16 16"><path d="M9.6 3.4 5 8l4.6 4.6"/><path d="M13.2 2.4v11.2"/></symbol>
+<symbol id="i-compass" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="m10.6 5.4-1.4 3.8-3.8 1.4 1.4-3.8z"/></symbol>
 <!-- Tab icons. Same 16x16 stroke grid as the rail's, referenced from the
      script below through the icon() helper rather than from markup, which is
      why TestFrontendSpriteHasNoOrphansOrDanglingRefs reads those calls too. -->
@@ -940,6 +1017,9 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a onclick="navigate('/analytics')" id="nav-analytics" title="analytics"><span class="rail-label">analytics</span></a>
           <a onclick="navigate('/dashboards')" id="nav-dashboards" title="dashboards"><span class="rail-label">dashboards</span></a>
         </div>
+      </div>
+      <div class="nav-group">
+        <a onclick="navigate('/discover')" id="nav-discover" title="what is new on this chain, in plain words, and whether it is worth sharing"><svg aria-hidden="true"><use href="#i-compass"/></svg><span class="rail-label">discover</span></a>
       </div>
       <div class="nav-group">
         <a onclick="navigate('/contracts')" id="nav-contracts" title="contracts map, realms, packages, apps"><svg aria-hidden="true"><use href="#i-bubbles"/></svg><span class="rail-label">contracts</span></a>
@@ -1186,6 +1266,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-govdao-voters"><main><div id="govdao-voters-content"></div></main></div>
   <div class="view" id="view-govdao-options"><main><div id="govdao-options-content"></div></main></div>
   <div class="view" id="view-storage"><main><div id="storage-content"></div></main></div>
+  <div class="view" id="view-discover"><main><div id="discover-content"></div></main></div>
   <div class="view" id="view-dashboards"><main><div id="dashboards-content"></div></main></div>
   <div class="view" id="view-block-detail"><main><div id="block-detail-content"></div></main></div>
   <div class="view" id="view-events"><main>
@@ -2630,6 +2711,27 @@ function netSuffix(n) {
   return (net && net !== 'all') ? '?network=' + net : '';
 }
 let _networks = [];
+
+// networksList is _networks, waited for rather than sampled.
+//
+// _networks fills from initNetworkSelector's fetch, which races the first
+// route(): a page that opens directly on /storage or /discover runs its loader
+// while the list is still empty. Both offer a "pick a chain" control built by
+// iterating it, so both rendered the sentence and then no buttons at all, on
+// every cold load of those URLs. Reproduced 2026-09-28 on both pages.
+//
+// A second fetch rather than a shared promise because initNetworkSelector
+// starts before this can hook it, and /api/networks is a small static list the
+// browser cache serves anyway. Failure yields an empty list, which is what the
+// caller already had to handle.
+async function networksList() {
+  if (_networks.length) return _networks;
+  try {
+    _networks = (await fetch('/api/networks').then(r => r.json())) || [];
+  } catch (e) { /* the caller renders the no-chains case */ }
+  return _networks;
+}
+
 async function initNetworkSelector() {
   try {
     const nets = await fetch('/api/networks').then(r => r.json());
@@ -3337,6 +3439,7 @@ const NAV = [
     { id: 'analytics', label: 'analytics', path: '/analytics' },
     { id: 'dashboards', label: 'dashboards', path: '/dashboards' },
   ] },
+  { id: 'discover', label: 'discover', path: '/discover' },
   { id: 'contracts', label: 'contracts', path: '/contracts', own: 'map', children: [
     { id: 'realms', label: 'realms', path: '/realms' },
     { id: 'packages', label: 'packages', path: '/packages' },
@@ -3540,6 +3643,7 @@ function route() {
   else if (path === '/gas/users') { view = 'gas-users'; }
   else if (path === '/gas/txs') { view = 'gas-txs'; }
   else if (path === '/storage') { view = 'storage'; }
+  else if (path === '/discover') { view = 'discover'; }
   else if (path === '/analytics') { view = 'analytics'; }
   else if (path === '/dashboards') { view = 'dashboards'; }
   // /params is where this page shipped and what is linked from elsewhere;
@@ -3616,6 +3720,7 @@ function route() {
     case 'gas-users': loadGasUsers(); break;
     case 'gas-txs': loadGasTxs(); break;
     case 'storage': loadStorage(); break;
+    case 'discover': loadDiscover(); break;
     case 'analytics': loadAnalytics(); break;
     case 'dashboards': loadDashboards(); break;
     case 'params': loadParams(); break;
@@ -8304,6 +8409,408 @@ async function loadGlossary() {
   }
 }
 
+// --- Discover: what is new, in plain words -----------------------------------
+//
+// Every other listing on this site answers "what happened" to somebody who
+// already knows what a realm is. This one answers it for somebody who does not,
+// and then answers a second question the rest of the site refuses: is this
+// worth telling anyone about.
+//
+// So the sentence is the row. `package.deployed | gno.land/r/moul/hello` is
+// what the /events table already gives, and it is precisely the shape that
+// fails the reader this page exists for. The identifiers stay, demoted to a
+// monospace footer, because the developer reading over their shoulder still
+// needs them and because a claim you cannot trace is a claim you cannot check.
+//
+// Three things here are deliberate and worth arguing with rather than
+// inheriting:
+//
+//   1. The default view is `share,maybe`, and holds are collapsed under "ruled
+//      out" rather than dropped. The rejects are how a reader calibrates, and
+//      they are the audit trail on the day they disagree with the machine.
+//   2. Ranked by score, not by time. A reverse-chronological feed of a chain
+//      where one deployer is most of the volume is that deployer's changelog.
+//   3. The bottom line prints the envelope (judged + unranked = total). It is
+//      unglamorous and it stays, because four separate bugs shipped here by
+//      publishing a number that looked like an answer, and a reader who can add
+//      up what they are shown can catch the fifth.
+
+const DSC_WINDOWS = ['24h', '7d', '30d'];
+const DSC_WINDOW_DEFAULT = '30d';
+// share+maybe is what a reader wants on arrival; holds are one disclosure away.
+// Stored as a set rather than a string so the chips can toggle independently.
+const DSC_VERDICT_DEFAULT = 'share,maybe';
+const DSC_PAGE = 25;
+
+let _dscGen = 0;
+let _dscCursor = '';
+
+function dscWindow() {
+  const w = urlParam('window');
+  return DSC_WINDOWS.includes(w) ? w : DSC_WINDOW_DEFAULT;
+}
+function dscKinds() {
+  return (urlParam('kind') || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+function dscVerdicts() {
+  const raw = urlParam('verdict');
+  if (raw === 'all') return ['share', 'maybe', 'hold'];
+  const want = (raw === null ? DSC_VERDICT_DEFAULT : raw)
+    .split(',').map(s => s.trim()).filter(v => ['share', 'maybe', 'hold'].includes(v));
+  return want.length ? want : ['share', 'maybe', 'hold'];
+}
+
+// The request the current URL describes. `verdict` is deliberately absent: the
+// page fetches every judged row and splits share/maybe from hold itself, so
+// toggling the "ruled out" disclosure costs no round trip and the counts in the
+// chips describe the window rather than what a filter already removed.
+function dscPath(cursor) {
+  const p = new URLSearchParams();
+  p.set('window', dscWindow());
+  p.set('limit', String(DSC_PAGE));
+  for (const k of dscKinds()) p.append('kind', k);
+  // Narrowing to shares is pushed to the server; the other two presets are not.
+  //
+  // The page normally fetches the ranked page whole and splits it, so the
+  // "ruled out" disclosure costs no round trip. That only works while the
+  // wanted set covers what the ranking puts on page 1. It does not for
+  // `share`: on mainnet the single shareable event sorted below 25 maybes, so
+  // filtering page 1 for it client-side produced an empty page under a chip
+  // whose own count said 1.
+  if (urlParam('verdict') === 'share') p.set('verdict', 'share');
+  if (cursor) p.set('cursor', cursor);
+  return 'discover?' + p.toString();
+}
+
+// The lead block is its own request, and it has to be.
+//
+// The first attempt filtered the page's own rows for `share`, which found
+// nothing: measured on mainnet 2026-09-28 there was exactly one shareable
+// event on the chain and it sorted below all 21 `deployer.first` rows, so it
+// was not on page 1 at all. Filtering a page cannot surface something the page
+// does not contain. This asks the server the question directly, which is the
+// query §11.6 reserves for exactly this, and it is cheap: it hits the same
+// index and returns single digits.
+function dscSharePath() {
+  const p = new URLSearchParams();
+  p.set('window', dscWindow());
+  p.set('verdict', 'share');
+  p.set('limit', '5');
+  for (const k of dscKinds()) p.append('kind', k);
+  return 'discover?' + p.toString();
+}
+
+async function loadDiscover() {
+  const container = clear('discover-content');
+  skeletonBlock(container);
+  const gen = ++_dscGen;
+
+  // "all" is the default selection and the one thing this page cannot answer.
+  // Ranking merges a score computed against one chain's own baselines, so two
+  // chains interleaved produce an order true of neither, and the interest
+  // buckets are percentiles of a single network's trailing scores. The server
+  // refuses it with a 400 for that reason; asking anyway would surface as a
+  // blank page, so the choice is offered here. Same shape as /storage.
+  const network = getNetwork();
+  if (!network || network === 'all') {
+    container.textContent = '';
+    container.appendChild(el('div', { className: 'section-title' }, 'discover'));
+    container.appendChild(el('div', { className: 'section-sub' },
+      'what is new is ranked against one chain\'s own normal: how busy a day usually is there, ' +
+      'how many people have ever deployed there. there is no meaningful order across several. pick one.'));
+    const picker = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', padding: '10px 0' } });
+    container.appendChild(picker);
+    for (const n of await networksList()) {
+      if (gen !== _dscGen) return;
+      picker.appendChild(contractPill(n.id, false, () => {
+        setNetwork(n.id);
+        const sel = document.getElementById('network-select');
+        if (sel) sel.value = n.id;
+        loadDiscover();
+      }));
+    }
+    return;
+  }
+
+  try {
+    // The lead is optional: if that request fails the page is still the page,
+    // so it carries a fallback rather than taking the view down with it.
+    await apiSWR([dscPath(''), { path: dscSharePath(), fallback: { events: [] } }], ([data, lead]) => {
+      if (gen !== _dscGen) return;
+      renderDiscover(container, data, lead.events || []);
+    });
+  } catch (err) {
+    failBlock(container, err, loadDiscover);
+  }
+}
+
+// A filter chip. Writing the URL and re-entering loadDiscover() rather than
+// mutating in place, so the reader's address bar is always the view they are
+// looking at and a copied link reproduces it.
+function dscChip(label, on, count, onpick) {
+  const b = el('button', { className: 'dsc-chip' + (on ? ' on' : ''), onclick: onpick }, label);
+  if (typeof count === 'number') b.appendChild(el('span', { className: 'n' }, String(count)));
+  return b;
+}
+
+function dscFilters(data) {
+  const bar = el('div', { className: 'dsc-filters' });
+  const set = (entries) => { urlSetParams(entries); loadDiscover(); };
+
+  const win = el('div', { className: 'dsc-fgroup' }, el('span', { className: 'dsc-flabel' }, 'window'));
+  for (const w of DSC_WINDOWS) {
+    win.appendChild(dscChip(w, dscWindow() === w, undefined,
+      () => set({ window: w === DSC_WINDOW_DEFAULT ? null : w })));
+  }
+  bar.appendChild(win);
+
+  // Kinds come from `counts`, which the API computes over the unfiltered
+  // window: a chip has to advertise what it would find, not what the current
+  // filter left behind, or narrowing to one kind makes every other chip read 0
+  // and look like a dead end.
+  const kinds = Object.keys(data.counts || {}).sort();
+  if (kinds.length > 1) {
+    const active = dscKinds();
+    const kg = el('div', { className: 'dsc-fgroup' }, el('span', { className: 'dsc-flabel' }, 'kind'));
+    kg.appendChild(dscChip('all', active.length === 0, undefined, () => set({ kind: null })));
+    for (const k of kinds) {
+      kg.appendChild(dscChip(k, active.includes(k), data.counts[k], () => set({ kind: k })));
+    }
+    bar.appendChild(kg);
+  }
+
+  // Three presets rather than three independent toggles, because the useful
+  // combinations are few and each of these does something a reader can see:
+  // narrow to the recommendation, the default working view, or drop the
+  // collapsing entirely and read the whole window in order.
+  const raw = urlParam('verdict');
+  const vg = el('div', { className: 'dsc-fgroup' }, el('span', { className: 'dsc-flabel' }, 'show'));
+  vg.appendChild(dscChip('worth sharing', raw === 'share', (data.verdict_counts || {}).share,
+    () => set({ verdict: 'share' })));
+  vg.appendChild(dscChip('share + maybe', raw === null, undefined, () => set({ verdict: null })));
+  vg.appendChild(dscChip('everything', raw === 'all', undefined, () => set({ verdict: 'all' })));
+  bar.appendChild(vg);
+  return bar;
+}
+
+// One fact, one row. Values arrive typed (number, bool, string) and every one
+// of them is on-chain text, so each goes in via textContent and never a
+// template.
+function dscFacts(facts) {
+  const box = el('div', { className: 'dsc-facts' });
+  for (const k of Object.keys(facts || {}).sort()) {
+    const v = facts[k];
+    if (v === '' || v === null || v === undefined) continue;
+    box.appendChild(el('div', null,
+      el('span', { className: 'k' }, k),
+      el('span', { className: 'v' }, typeof v === 'number' ? fmtNum(v) : String(v))));
+  }
+  return box;
+}
+
+// A package path with its bare-address namespace abbreviated, and only that
+// segment: truncAddr is the site's single rule for shortening an address, and
+// looksLikeAddress its single rule for recognising one, so a namespace that is
+// a real name is left entirely alone.
+function dscShortTarget(target) {
+  const parts = String(target).split('/');
+  return parts.map(p => (looksLikeAddress(p) ? truncAddr(p) : p)).join('/');
+}
+
+function dscCard(e) {
+  const v = ['share', 'maybe', 'hold'].includes(e.verdict) ? e.verdict : 'hold';
+  const card = el('div', { className: 'dsc-card v-' + v + (e.demoted ? ' demoted' : '') });
+
+  card.appendChild(el('div', { className: 'dsc-headline' }, (e.layers && e.layers.means && e.layers.means.text) || e.headline || ''));
+  const matters = e.layers && e.layers.matters && e.layers.matters.text;
+  if (matters) card.appendChild(el('div', { className: 'dsc-matters' }, matters));
+
+  // The footer: the identifiers, in the order a reader needs them. When, what
+  // kind, what it touched, who did it, and the transaction that proves it.
+  const meta = el('div', { className: 'dsc-meta' });
+  const when = el('span', null, timeAgo(e.at));
+  when.title = e.at || '';
+  meta.appendChild(when);
+  const sep = () => el('span', { className: 'sep' }, '·');
+  meta.appendChild(sep());
+  meta.appendChild(el('span', null, e.kind || ''));
+  if (e.target) {
+    meta.appendChild(sep());
+    // A package path is deployer-controlled text going into a route. navigate()
+    // takes it as data, and the /realm/ prefix strip is the same one every
+    // other call site on this page uses.
+    //
+    // Shown abbreviated when the namespace is an unregistered address, because
+    // `gno.land/r/g1s2g47cas6gxamxlkpxu65zu2g4aqma38tx36yv/perun` is 56
+    // characters of which 40 carry no meaning for a reader, and it pushes the
+    // deployer and the transaction off the end of the row. The full path stays
+    // in the tooltip and the link target is unchanged.
+    const a = link(dscShortTarget(e.target), () => navigate('/realm/' + e.target.replace('gno.land/', '')));
+    a.title = e.target;
+    meta.appendChild(a);
+  }
+  if (e.actor) {
+    meta.appendChild(sep());
+    meta.appendChild(addrLink(e.actor));
+  }
+  if (e.evidence_tx) {
+    meta.appendChild(sep());
+    meta.appendChild(txLink(e.evidence_tx, e.height, null, { showBlock: false }));
+  }
+  if (e.demoted) {
+    meta.appendChild(sep());
+    const d = el('span', null, 'demoted');
+    d.title = 'the diversity cap moved this down: the same actor is already higher in this list';
+    meta.appendChild(d);
+  }
+  card.appendChild(meta);
+
+  const verdict = el('div', { className: 'dsc-verdict' },
+    el('span', { className: 'dsc-pill v-' + v }, v));
+  const body = el('div');
+  body.appendChild(el('div', { className: 'dsc-reason' }, e.verdict_reason || ''));
+  const j = e.judgement || {};
+  const axes = el('div', { className: 'dsc-axes' });
+  for (const [name, axis] of [['interest', j.interest], ['clearance', j.clearance]]) {
+    if (!axis || !axis.level) continue;
+    axes.appendChild(el('span', { className: 'dsc-axis' },
+      name + ' ', el('b', null, axis.level), axis.why ? ', ' + axis.why : ''));
+  }
+  if (axes.children.length) body.appendChild(axes);
+  if (j.blocking) body.appendChild(el('div', { className: 'dsc-blocking', style: { marginTop: '6px' } }, j.blocking));
+  verdict.appendChild(body);
+  card.appendChild(verdict);
+
+  const why = el('details', { className: 'dsc-why' }, el('summary', null, 'what the chain actually recorded'));
+  const what = e.layers && e.layers.what && e.layers.what.text;
+  if (what) why.appendChild(el('p', { className: 'dsc-what' }, what));
+  why.appendChild(dscFacts(e.facts));
+  card.appendChild(why);
+  return card;
+}
+
+// The one thing a fresh deployment gets wrong on its own. With no clearance
+// file the system is working exactly as designed and looks broken: every
+// attributable event caps at `maybe`, so the page recommends nothing. Say so,
+// rather than letting the reader conclude the chain is quiet.
+function dscClearanceNote() {
+  const box = el('div', { className: 'dsc-empty' });
+  box.appendChild(el('div', null,
+    el('b', null, 'Nothing is cleared to share, and that is the default.'),
+    ' This explorer ships no opinion about which namespaces belong to whom, so every event' +
+    ' that belongs to somebody caps at "maybe" until an operator supplies a clearance file.' +
+    ' Chain-wide facts, like a jump in new wallets, are nobody\'s in particular and can still' +
+    ' reach "share".'));
+  return box;
+}
+
+function renderDiscover(container, data, leadEvents) {
+  container.textContent = '';
+  _dscCursor = data.next_cursor || '';
+
+  container.appendChild(el('div', { className: 'dsc-head' },
+    el('h2', { style: { margin: '0' } }, 'discover'),
+    el('span', { style: { color: 'var(--fg2)', fontSize: '12px' } },
+      data.built_at ? 'rolled up ' + timeAgo(data.built_at) : '')));
+  container.appendChild(el('div', { className: 'dsc-sub' },
+    'What changed on this chain, said once in plain words and once in the chain\'s own terms, ' +
+    'ranked by how much it is likely to matter rather than by when it happened. ' +
+    'Each row carries a judgement about whether it is worth telling anyone, and the reason behind it.'));
+
+  container.appendChild(dscFilters(data));
+
+  // `everything` is what moves holds out of the collapsed box and into the
+  // feed, in rank order with the rest. Under the other two presets a hold is
+  // still on the page, just folded away: the rejects are how a reader
+  // calibrates, and dropping them silently teaches nothing.
+  const wanted = dscVerdicts();
+  const inlineHolds = wanted.includes('hold');
+  const events = data.events || [];
+  const lead = urlParam('verdict') === 'share' ? [] : (leadEvents || []);
+  const inLead = new Set(lead.map(e => e.id));
+  const shown = events.filter(e => wanted.includes(e.verdict) && !inLead.has(e.id) && (inlineHolds || e.verdict !== 'hold'));
+  const held = inlineHolds ? [] : events.filter(e => e.verdict === 'hold');
+
+  // The lead block, and it exists because the ranking alone buries the answer.
+  // Measured on mainnet 2026-09-28: `deployer.first` carries the highest
+  // editorial base, there were 21 of them in the window, and the single
+  // `share` row on the whole chain sorted below every one of them. A reader
+  // who came to ask "is there anything I should post" had to scroll past
+  // twenty-one rows that are all "maybe" to find the one that is not.
+  //
+  // This is a presentation fix, not a re-ranking: the same rows stay in the
+  // same order below. It is deliberately silent when there is nothing to
+  // share, because a permanently empty "worth sharing" box teaches a reader to
+  // stop looking at it.
+  if (lead.length) {
+    container.appendChild(el('div', { className: 'dsc-flabel', style: { margin: '0 0 8px' } }, 'worth sharing'));
+    const box = el('div');
+    for (const e of lead) box.appendChild(dscCard(e));
+    container.appendChild(box);
+    container.appendChild(el('div', { className: 'dsc-flabel', style: { margin: '22px 0 8px' } }, 'everything else'));
+  }
+
+  const feed = el('div');
+  // Silent when the lead already answered: with `kind=chain.spike` the one
+  // event on the chain is a share, so it is in the block above and the feed is
+  // legitimately empty. Saying "nothing cleared the bar" under a row that
+  // cleared it is worse than saying nothing.
+  if (!shown.length && !lead.length) {
+    feed.appendChild(el('div', { className: 'dsc-empty' },
+      events.length
+        ? 'Nothing here cleared the bar. ' + held.length + ' events were ruled out, below.'
+        : 'No events in this window yet.'));
+  }
+  for (const e of shown) feed.appendChild(dscCard(e));
+  container.appendChild(feed);
+
+  if (!data.clearance_configured && !(data.verdict_counts || {}).share) {
+    container.appendChild(dscClearanceNote());
+  }
+
+  if (held.length) {
+    const ruled = el('details', { className: 'dsc-ruled' },
+      el('summary', null, 'ruled out (' + held.length + ')'));
+    for (const e of held) ruled.appendChild(dscCard(e));
+    container.appendChild(ruled);
+  }
+
+  // Paging is keyset. An OFFSET here would duplicate a row every time an event
+  // arrived between two page fetches, which on a live chain is most of them.
+  if (_dscCursor) {
+    const more = el('button', { className: 'dsc-more' }, 'load more');
+    more.onclick = async () => {
+      const gen = _dscGen;
+      more.disabled = true;
+      more.textContent = 'loading…';
+      try {
+        const page = await api(dscPath(_dscCursor));
+        if (gen !== _dscGen) return;
+        for (const e of (page.events || [])) {
+          if (wanted.includes(e.verdict) && (inlineHolds || e.verdict !== 'hold')) feed.appendChild(dscCard(e));
+        }
+        _dscCursor = page.next_cursor || '';
+        if (_dscCursor) { more.disabled = false; more.textContent = 'load more'; }
+        else more.remove();
+      } catch (err) {
+        more.disabled = false;
+        more.textContent = 'load more (' + err.message + ')';
+      }
+    };
+    container.appendChild(more);
+  }
+
+  // The envelope, printed rather than asserted. judged + unranked = total is
+  // the invariant this endpoint got wrong four times; showing the three numbers
+  // means a reader can check it instead of taking the ranking on faith.
+  const vc = data.verdict_counts || {};
+  const judged = (vc.share || 0) + (vc.maybe || 0) + (vc.hold || 0);
+  container.appendChild(el('div', { className: 'dsc-envelope' },
+    fmtNum(data.total || 0) + ' events in the last ' + (data.window && data.window.label || dscWindow()) +
+    ' · ' + fmtNum(judged) + ' judged (' + (vc.share || 0) + ' share, ' + (vc.maybe || 0) + ' maybe, ' +
+    (vc.hold || 0) + ' hold) · ' + fmtNum(data.unranked || 0) + ' outside the ranked pool'));
+}
+
 // --- Apps: the app hub -------------------------------------------------------
 //
 // What is built on gno.land, as something you look at rather than read.
@@ -9913,7 +10420,11 @@ async function loadStorage() {
       'a disk belongs to one chain: its capacity is that chain\'s own money supply divided by its own ' +
       'price per byte, so there is no meaningful total across several. pick one.'));
     const picker = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', padding: '10px 0' } });
-    for (const n of _networks) {
+    root.appendChild(picker);
+    // networksList rather than _networks: opening /storage directly runs this
+    // before initNetworkSelector's fetch has answered, and the page offered the
+    // choice with nothing to choose from.
+    for (const n of await networksList()) {
       picker.appendChild(contractPill(n.id, false, () => {
         setNetwork(n.id);
         const sel = document.getElementById('network-select');
@@ -9921,7 +10432,6 @@ async function loadStorage() {
         loadStorage();
       }));
     }
-    root.appendChild(picker);
     return;
   }
 
