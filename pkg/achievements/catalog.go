@@ -81,6 +81,15 @@ type Def struct {
 	// who does *not* have the badge would do to earn it. Written as an
 	// instruction, not a description, and naming the real command or realm
 	// wherever one exists.
+	//
+	// ⚠️ Never a gas number. Four of these shipped with one, invented to look
+	// plausible, and every one was wrong: `-gas-wanted 200000` on a send that
+	// costs 1,238,665 when it has to create the account, `2000000` on a call
+	// that measured 11,732,203. gno prices a transaction on what the code
+	// actually does, so the number is not knowable from the shape of the
+	// command; `-simulate only` is how the chain tells you, and saying that is
+	// the instruction worth giving. A figure typed here is a figure a stranger
+	// pastes.
 	How string `json:"how"`
 
 	// SQL yields one row per address that has ever unlocked this, as
@@ -136,7 +145,7 @@ var Catalog = []Def{
 	{
 		Slug: "first-gnot-sent", Name: "Sent GNOT", Emoji: "💸", Group: GroupStart,
 		What: "sent native ugnot to another address with a BankMsgSend",
-		How:  "`gnokey maketx send -to <address> -send 1000000ugnot -gas-fee 1000000ugnot -gas-wanted 200000 <key>`",
+		How:  "`gnokey maketx send -to <address> -send 1000000ugnot -simulate only <key>` first: it prints the gas this actually costs, because a send that has to create the recipient's account costs several times one that does not. Then run it again with that `-gas-wanted` and drop `-simulate only`.",
 		SQL: `SELECT from_address AS address, MIN(block_height) AS block_height, block_time, tx_hash
 			FROM bank_sends
 			WHERE network = @net AND success = 1 AND COALESCE(ugnot_amount, 0) > 0 AND from_address <> ''
@@ -154,14 +163,14 @@ var Catalog = []Def{
 	{
 		Slug: "first-call", Name: "Called a realm", Emoji: "📞", Group: GroupStart,
 		What: "ran an exported function on a realm with MsgCall",
-		How:  "`gnokey maketx call -pkgpath gno.land/r/demo/userbook -func SignUp -gas-fee 1000000ugnot -gas-wanted 2000000 <key>`",
+		How:  "`gnokey maketx call -pkgpath gno.land/r/demo/userbook -func SignUp -simulate only <key>`, read the `suggested gas-wanted` it prints, then run it for real with that number. A call's gas is whatever the realm's code does, so it is measured rather than known.",
 		SQL: `SELECT caller AS address, MIN(block_height) AS block_height, block_time, tx_hash
 			FROM calls WHERE network = @net AND success = 1 GROUP BY caller`,
 	},
 	{
 		Slug: "first-run", Name: "Ran a script", Emoji: "📜", Group: GroupStart,
 		What: "executed gno source directly on chain with MsgRun",
-		How:  "write a `main()` that imports the realms you want, then `gnokey maketx run -gas-fee 1000000ugnot -gas-wanted 5000000 <key> script.gno`. One transaction, several realms, no deploy.",
+		How:  "write a `main()` that imports the realms you want, then `gnokey maketx run <key> script.gno`. One transaction, several realms, no deploy. Size it with `-simulate only` first: a script's gas is every realm it touches.",
 		SQL: `SELECT caller AS address, MIN(block_height) AS block_height, block_time, tx_hash
 			FROM msg_runs WHERE network = @net AND success = 1 GROUP BY caller`,
 	},
@@ -170,7 +179,7 @@ var Catalog = []Def{
 	{
 		Slug: "first-package", Name: "Published a package", Emoji: "📦", Group: GroupBuild,
 		What: "deployed a pure package (a /p/ path: library code, no state)",
-		How:  "`gnokey maketx addpkg -pkgpath gno.land/p/<your-namespace>/<name> -pkgdir . -gas-fee 1000000ugnot -gas-wanted 20000000 <key>`. Register the namespace first.",
+		How:  "`gnokey maketx addpkg -pkgpath gno.land/p/<your-namespace>/<name> -pkgdir . <key>`. Register the namespace first, and measure with `-simulate only`: a deploy is priced on the bytes it stores.",
 		SQL: `SELECT creator AS address, MIN(block_height) AS block_height, block_time, tx_hash
 			FROM package_submissions
 			WHERE network = @net AND success = 1 AND is_realm = 0 AND creator <> ''
