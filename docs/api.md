@@ -836,7 +836,7 @@ answer it must never give.
 | endpoint | description |
 |---|---|
 | `GET /api/txs` | recent transactions. `limit` (default 500, max 2000), `offset`, `type` = `MsgCall`/`MsgAddPackage`/`MsgRun`/`BankMsgSend`, `success` = `true`/`false`. A `type` filter is served **from local storage** and pages properly with a real total; without one the rows come from the indexer and `total` is the fetched window. `from_storage` says which |
-| `GET /api/tx/{hash}` | one transaction: messages, events, errors |
+| `GET /api/tx/{hash...}` | one transaction: messages, events, errors. The hash may be pasted raw or percent-encoded; about a third are base64 carrying a `/`, which is why the pattern is a trailing wildcard |
 | `GET /api/blocks` | recent blocks. `limit` |
 | `GET /api/block/{height}` | one block and its transactions. **Requires `network`**: a height alone does not identify a block across chains |
 | `GET /api/allevents` | recent `GnoEvent`s across all packages, and only those: the chain's storage bookkeeping is filtered out server-side. `limit` defaults to 200, capped at 2000. Rows carry their `network` |
