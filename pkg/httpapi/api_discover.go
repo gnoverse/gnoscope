@@ -207,35 +207,36 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 	for _, e := range scored {
 		verdictCounts[string(e.Verdict)]++
 	}
-	// The pool is bounded and the window is not, so the counts have to say
-	// something about what the ranking never looked at. Two groups, and only
-	// one of them can be counted honestly.
+	// The counts describe what was actually judged, and `unranked` is the rest.
 	//
-	// Below the medium-interest boundary: low interest, and low interest is
-	// held in every column of the matrix, so those are certainly holds. Adding
-	// them matters because held rows are a feature rather than waste, shown
-	// collapsed under "ruled out": a queue that silently drops most of its
-	// input teaches a reader nothing and cannot be argued with. Reporting zero
-	// there said "nothing was ruled out" for a window that ruled out 275.
+	// Three versions of this tried to say something about the unjudged
+	// remainder, and all three were wrong. The page size reported as the total;
+	// then the pool's holds reported as the window's holds, which was 0 against
+	// 275; then "everything below the interest boundary is certainly held",
+	// which double-counted the moment the pool covered most of the window,
+	// producing 323 counted events in a window of 209.
 	//
-	// At or above the boundary but outside the pool: their verdict depends on
-	// clearance, which is per event, so guessing would be inventing a number.
-	// They are reported as Unranked instead. The three verdicts plus Unranked
-	// sum to Total exactly, which is what makes the envelope checkable rather
-	// than merely plausible.
-	if len(rows) >= DiscoverCandidatePool {
-		certainHolds, err := a.db.DiscoverCountBelowScore(network, since, p60)
-		if err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		verdictCounts["hold"] += certainHolds
+	// The last one is the instructive failure, because the reasoning was sound
+	// and the guard was not: rows below the boundary are indeed always held,
+	// but checking that the pool was *full* is not checking that it *excluded*
+	// anything. With 209 events and a 200-row pool, nine were outside it and
+	// the other 123 were counted twice.
+	//
+	// So: no inference. A verdict is counted when an event was judged, and
+	// anything else is Unranked. It is a smaller claim and it is one a reader
+	// can check by adding the numbers up.
+	// The real count, over the filter and not over the fetched slice.
+	total, err := a.db.DiscoverTotal(filter)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	unranked := total - len(scored)
+	if unranked < 0 {
+		unranked = 0
 	}
 
-	// The real count, over the filter and not over the fetched slice. Reporting
-	// the slice was the first shape of this and it published "total: 200" for a
-	// window holding 474.
-	// After the counts, deliberately. A filter chip has to show what it would
+	// After the counts, deliberately: a filter chip has to show what it would
 	// find, not what the filter already applied left behind, which is the same
 	// reason `counts` is over the unfiltered window.
 	if wanted := verdictFilter(q); wanted != nil {
@@ -246,20 +247,6 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		scored = kept
-	}
-
-	total, err := a.db.DiscoverTotal(filter)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	counted := 0
-	for _, n := range verdictCounts {
-		counted += n
-	}
-	unranked := total - counted
-	if unranked < 0 {
-		unranked = 0
 	}
 
 	if len(scored) > limit {
