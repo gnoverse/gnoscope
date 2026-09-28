@@ -15858,10 +15858,48 @@ function scheduleEnhance() {
     enhanceTables();
   }, Math.max(0, Math.min(ENHANCE_DEBOUNCE_MS, _enhanceDeadline - now)));
 }
+// A repaint of a table's own rows is not something to coalesce.
+//
+// The debounce above exists so unrelated churn does not run the enhance pass
+// on every node the page adds, and the cap exists so that churn cannot starve
+// it. Both are about *other* people's mutations. When the mutation IS a table
+// body being rewritten, waiting is the bug: between the loader painting rows in
+// the server's order and `restoreTableState` re-applying the reader's chosen
+// order, the directory shows one thing under a header that promises another.
+// The cap bounds that window at 250ms rather than closing it, and a contended
+// CI runner delays timer callbacks past their nominal deadline, which is how
+// 250ms becomes long enough to see and to fail a test on.
+//
+// So table repaints take the immediate path, on the next frame rather than on
+// a timer, and everything else keeps the debounce it had. Reproduced by raising
+// ENHANCE_MAX_DELAY_MS to 3000 and running the package-facets sort test: the
+// column read 23, 20, 9, 7, 6, 2 after the click asking for ascending, and with
+// this it reads ascending at any cap.
+//
+// `closest` runs only once per mutation batch, not once per node, and stops at
+// the first table it finds.
+function mutationTouchesTable(mutations) {
+  for (const m of mutations) {
+    const t = m.target;
+    if (t && t.nodeType === 1 && t.closest && t.closest('table')) return true;
+  }
+  return false;
+}
+let _enhanceFrame = 0;
+function enhanceNow() {
+  if (_enhanceFrame) return;
+  _enhanceFrame = requestAnimationFrame(() => {
+    _enhanceFrame = 0;
+    clearTimeout(_enhanceTimer);
+    _enhanceTimer = null;
+    enhanceTables();
+  });
+}
 if (document.body) {
-  new MutationObserver(() => {
+  new MutationObserver((mutations) => {
     if (_clampQueue.length) setTimeout(processClampQueue, 0);
-    scheduleEnhance();
+    if (mutationTouchesTable(mutations)) enhanceNow();
+    else scheduleEnhance();
   }).observe(document.body, { childList: true, subtree: true });
 }
 
