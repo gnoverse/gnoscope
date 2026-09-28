@@ -498,8 +498,15 @@ func (in ValidatorRegistered) Emit() (Facts, Layers) {
 		"address": in.Address,
 	}
 	return facts, Layers{
-		What:  Layer{fmt.Sprintf("valoper registered %s for %s at block %d.", in.Moniker, in.Address, in.Height)},
-		Means: Layer{fmt.Sprintf("%s registered as a validator.", in.Moniker)},
+		What: Layer{fmt.Sprintf("valoper registered %s for %s at block %d.", in.Moniker, in.Address, in.Height)},
+		// "validator" is a glossary headword, so it cannot appear here: G5's
+		// whole point is that layer 2 is the one line that must not need a
+		// gloss. The design's template used it and the gate refused it the
+		// first time this ran against real rows. "help run the chain" is what
+		// the glossary's own entry says a validator does, in the glossary's own
+		// register, and layer 3 still draws the registered-versus-validating
+		// distinction the word was carrying.
+		Means: Layer{fmt.Sprintf("%s put itself forward to help run the chain.", in.Moniker)},
 		Matters: Layer{
 			"Registering is not the same as validating: it puts them forward, and the chain decides separately whether they produce blocks."},
 	}
@@ -521,8 +528,11 @@ func (in PackageRejected) Emit() (Facts, Layers) {
 		"package_ref":  in.Ref,
 	}
 	return facts, Layers{
-		What:  Layer{fmt.Sprintf("MsgRejectPackage refused %s at block %d, by %s.", in.Path, in.Height, in.Actor)},
-		Means: Layer{fmt.Sprintf("A package approver turned down %s.", in.Ref)},
+		What: Layer{fmt.Sprintf("MsgRejectPackage refused %s at block %d, by %s.", in.Path, in.Height, in.Actor)},
+		// Same refusal as validator.registered, and the same cause: "package" is
+		// a headword. "code somebody submitted" says what was turned down
+		// without naming the thing, and layer 1 still says MsgAddPackage.
+		Means: Layer{fmt.Sprintf("Somebody with approval rights turned down the code at %s.", in.Ref)},
 		Matters: Layer{
 			"The code stayed parked rather than going live. Submitting a changed version under the same path is allowed."},
 	}
@@ -557,9 +567,14 @@ func (in ProposalOpened) Emit() (Facts, Layers) {
 	// budget is not negotiable: it is the card's headline row. Dropping the
 	// title is the right thing to drop, because layers 1 and 3 both still carry
 	// it, and a truncated title is a title that says something else.
-	means := fmt.Sprintf("%s opened proposal %d, %s.", who, in.ID, in.Title)
+	// "proposal" is a glossary headword, so layer 2 cannot use it: this is the
+	// one line that has to read without a gloss attached. The glossary's own
+	// entry calls it "a formal request to change something about the chain",
+	// and that phrasing is what this borrows, so the plain line and the gloss
+	// agree rather than competing. Layers 1 and 3 still say "proposal" freely.
+	means := fmt.Sprintf("%s asked to change something about the chain: %s.", who, in.Title)
 	if len(means) > MaxMeans {
-		means = fmt.Sprintf("%s opened proposal %d.", who, in.ID)
+		means = fmt.Sprintf("%s asked to change something about the chain.", who)
 	}
 
 	return facts, Layers{
@@ -598,7 +613,11 @@ func (in ProposalClosed) Emit() (Facts, Layers) {
 	if in.Executed {
 		tail = ", and was executed."
 	}
-	means := fmt.Sprintf("Proposal %d %s with %d%% yes%s", in.ID, in.Outcome, in.YesPct, tail)
+	// Same refusal, same borrowing. Naming the subject rather than the number
+	// is also the better line for the reader this page is for: "request 7" is
+	// an identifier they have never seen, and the title is the thing they can
+	// recognise. The id stays in the facts and in layer 1.
+	means := fmt.Sprintf("The request to change the chain %s with %d%% yes%s", in.Outcome, in.YesPct, tail)
 
 	matters := fmt.Sprintf("The vote is settled at %d%% yes. Its subject was %s.", in.YesPct, in.Title)
 	if in.Executed {

@@ -98,7 +98,7 @@ func Ground(facts Facts, l Layers, headwords []string) []Violation {
 		out = append(out, checkSuperlatives(facts, f.name, f.text)...)
 		out = append(out, checkForwardLooking(f.name, f.text)...)
 	}
-	out = append(out, checkJargon(headwords, l.Means.Text)...)
+	out = append(out, checkJargon(headwords, l.Means.Text, facts)...)
 	return out
 }
 
@@ -483,8 +483,40 @@ func checkForwardLooking(field, text string) []Violation {
 // freely, it is the technical statement; layer 3 may use a headword and the
 // renderer attaches its gloss on first use. Layer 2 is the one line a reader
 // skimming a card will read, so it gets no jargon at all.
-func checkJargon(headwords []string, means string) []Violation {
+// A headword inside a value the chain supplied is data, not the emitter
+// choosing jargon, and the two are not the same failure.
+//
+// Mainnet proposal 6 is titled "Add human package approvers alongside the gpao
+// oracle" and proposal 4 is "Proposal to unlock the transfer of ugnot." Both
+// contain headwords, neither was written here, and no amount of rewording a
+// template prevents it: the title is quoted verbatim because a paraphrased
+// proposal title is a different proposal. Refusing those events would mean the
+// feed silently drops the governance rows whose titles happen to use the words
+// the glossary defines, which is most of them.
+//
+// So the emitter's own words are what G5 polices. Every string fact that
+// appears verbatim in the line is masked out first, and the headword check runs
+// on what is left. Same principle as G1's isFactValue, which already rules that
+// a number word equal to a fact value is that value and not a figure.
+//
+// Masking is by exact occurrence of the whole value, never by substring of the
+// headword, so it cannot be widened into "any line mentioning a fact is exempt".
+func maskFactValues(means string, facts Facts) string {
+	for _, v := range facts {
+		s, ok := v.(string)
+		// One character would mask a letter everywhere it appears. A value has
+		// to be a word at least before removing it from the line is meaningful.
+		if !ok || len(s) < 2 {
+			continue
+		}
+		means = strings.ReplaceAll(means, s, " ")
+	}
+	return means
+}
+
+func checkJargon(headwords []string, means string, facts Facts) []Violation {
 	var out []Violation
+	means = maskFactValues(means, facts)
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(means), " ")) + " "
 	for _, hw := range headwords {
 		h := strings.ToLower(hw)

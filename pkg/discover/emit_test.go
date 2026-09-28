@@ -2,9 +2,36 @@ package discover
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/moul/mygnoscan/pkg/glossary"
 )
+
+// realGlossaryOrder is the shipped headword list, and passing it is what makes
+// G5 able to fire at all.
+//
+// Every emitter test here used to ground against `nil`, which means an empty
+// headword list, which means the jargon check had nothing to check against and
+// silently passed on everything. Two emitters were shipping layer-2 sentences
+// with headwords in them the whole time ("validator", "package"), and it was
+// the builder test with the real glossary loaded that found them, months later,
+// the first time a source fed them real rows.
+//
+// A test that cannot fail reads exactly like a test that is satisfied. This
+// function is the difference.
+func realGlossaryOrder(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile("../../docs/glossary.md")
+	if err != nil {
+		t.Fatalf("read docs/glossary.md: %v", err)
+	}
+	prev := glossary.Default
+	glossary.MustLoad(raw)
+	t.Cleanup(func() { glossary.Default = prev })
+	return glossary.Get().Order
+}
 
 // Every emitter must reproduce its golden file exactly.
 //
@@ -151,7 +178,7 @@ func TestEmittersPassTheGroundingGate(t *testing.T) {
 	add("package.enabled (one block, one second)", f, l)
 
 	for _, e := range all {
-		if v := Ground(e.facts, e.layers, nil); len(v) > 0 {
+		if v := Ground(e.facts, e.layers, realGlossaryOrder(t)); len(v) > 0 {
 			for _, one := range v {
 				t.Errorf("%s: %s", e.kind, one.Error())
 			}
@@ -257,7 +284,7 @@ func TestDraftedEmittersPassTheGroundingGate(t *testing.T) {
 	add("package.rejected", f, l)
 
 	for _, e := range all {
-		if v := Ground(e.facts, e.layers, nil); len(v) > 0 {
+		if v := Ground(e.facts, e.layers, realGlossaryOrder(t)); len(v) > 0 {
 			for _, one := range v {
 				t.Errorf("%s: %s", e.kind, one.Error())
 			}
@@ -325,7 +352,7 @@ func TestFinalThreeEmittersPassTheGroundingGate(t *testing.T) {
 	add("transfer.large", f, l)
 
 	for _, e := range all {
-		if v := Ground(e.facts, e.layers, nil); len(v) > 0 {
+		if v := Ground(e.facts, e.layers, realGlossaryOrder(t)); len(v) > 0 {
 			for _, one := range v {
 				t.Errorf("%s: %s", e.kind, one.Error())
 			}
