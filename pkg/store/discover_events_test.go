@@ -403,3 +403,82 @@ func TestARebuildRefreshesTheDerivedHalfAndNotTheIdentity(t *testing.T) {
 		t.Errorf("identity changed: %+v", got[0])
 	}
 }
+
+// A ranked page cannot be built from a time-ordered fetch.
+//
+// The candidate pool is bounded, so its *ordering* decides what can be ranked
+// at all. Taking the newest N and sorting those by score answers "the best of
+// the most recent N", which is a different question. Measured on mainnet
+// 2026-09-28, a 200-row time-ordered pool held 11 of the 21 deployer.first
+// events, so ten of the highest-scoring events on the chain could not reach the
+// page by any route.
+func TestAScoreOrderedPoolSeesWhatATimeOrderedOneCannot(t *testing.T) {
+	db := NewTestDB(t)
+
+	// One high-scoring event, older than a run of low-scoring ones.
+	best := ev("alpha", "deployer.first", "best", 0, "2026-09-01T10:00:00Z", 100)
+	best.ScoreBase = 600
+	seed(t, db, best)
+	for i := 0; i < 5; i++ {
+		e := ev("alpha", "package.deployed", fmt.Sprintf("noise%d", i), 0,
+			fmt.Sprintf("2026-09-2%dT10:00:00Z", i), int64(200+i))
+		e.ScoreBase = 25
+		seed(t, db, e)
+	}
+
+	// Time order with a small pool: the best event is not in it.
+	byTime, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha", Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range byTime {
+		if e.ID == best.ID {
+			t.Fatal("the fixture does not reproduce the bug: widen the gap")
+		}
+	}
+
+	// Score order with the same pool: it is.
+	byScore, _, err := db.DiscoverEvents(DiscoverQuery{Network: "alpha", Limit: 3, ByScore: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range byScore {
+		if e.ID == best.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the highest-scoring event is missing from a score-ordered pool: %v", ids(byScore))
+	}
+	if byScore[0].ScoreBase != 600 {
+		t.Errorf("the pool is not ordered by score: first is %v", byScore[0].ScoreBase)
+	}
+}
+
+func TestDiscoverTotalCountsTheFilterNotThePage(t *testing.T) {
+	db := NewTestDB(t)
+	for i := 0; i < 7; i++ {
+		e := ev("alpha", "package.deployed", fmt.Sprintf("p%d", i), 0,
+			fmt.Sprintf("2026-09-2%dT10:00:00Z", i), int64(100+i))
+		if i < 3 {
+			e.Namespace = "one"
+		}
+		seed(t, db, e)
+	}
+	seed(t, db, ev("beta", "package.deployed", "other", 0, "2026-09-20T10:00:00Z", 100))
+
+	n, err := db.DiscoverTotal(DiscoverQuery{Network: "alpha", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 7 {
+		t.Errorf("total = %d, want 7: the page limit must not reach the count", n)
+	}
+	if n, _ := db.DiscoverTotal(DiscoverQuery{Network: "alpha", Namespace: "one"}); n != 3 {
+		t.Errorf("filtered total = %d, want 3", n)
+	}
+	if _, err := db.DiscoverTotal(DiscoverQuery{}); err == nil {
+		t.Error("counted across every chain")
+	}
+}

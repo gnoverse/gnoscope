@@ -152,8 +152,27 @@ func (in DeployerFirst) Emit() (Facts, Layers) {
 // other shed in this file does it: a truncated name is a different package. The
 // name is not lost, it stays in the facts, in the event's target and in layer
 // 1's path, so a card can show it everywhere except the one line with no room.
+// article picks "a" or "an".
+//
+// Trivial, and it was wrong in production: the template hardcoded "an" because
+// the design's worked example happens to say "an app", and mainnet then
+// published "an library called gems" to the one reader this feature exists for.
+// A non-technical reader does not think "the article logic is wrong", they
+// think the site is sloppy and trust it less.
+func article(word string) string {
+	if word == "" {
+		return "a"
+	}
+	switch word[0] {
+	case 'a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U':
+		return "an"
+	}
+	return "a"
+}
+
 func debutMeans(who, thing, pkg string) string {
-	full := fmt.Sprintf("%s published on the chain for the first time, an %s called %s.", who, thing, pkg)
+	full := fmt.Sprintf("%s published on the chain for the first time, %s %s called %s.",
+		who, article(thing), thing, pkg)
 	if len([]rune(full)) <= MaxMeans {
 		return full
 	}

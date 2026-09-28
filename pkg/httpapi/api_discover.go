@@ -86,6 +86,13 @@ type discoverResponse struct {
 	Events              []discoverEvent   `json:"events"`
 }
 
+// DiscoverCandidatePool is how many stored events one request ranks over.
+//
+// Larger than any page, because the page is chosen from it rather than being
+// it. Bounded because the whole point of the rollup is that a request does not
+// scan the chain.
+const DiscoverCandidatePool = 1000
+
 // DiscoverVocabulary is the event-vocabulary version. A consumer that stored
 // picks against v1 ids can tell when the meaning of a kind changed.
 const DiscoverVocabulary = 1
@@ -122,18 +129,36 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 		windowLabel = "7d"
 	}
 
-	rows, next, err := a.db.DiscoverEvents(store.DiscoverQuery{
+	byScore := q.Get("order") != "time"
+	filter := store.DiscoverQuery{
 		Network:   network,
 		Kinds:     repeated(q, "kind"),
 		Namespace: q.Get("namespace"),
 		Actor:     q.Get("actor"),
 		Since:     since,
-		Cursor:    q.Get("cursor"),
-		// Over-fetch: ranking, the diversity cap and the verdict filter all act
-		// on the whole candidate set, so paging cannot be pushed into SQL
-		// without changing the answer. Bounded by the store's own cap.
-		Limit: store.DiscoverLimitMax,
-	})
+	}
+
+	// The candidate pool. Ranking, the diversity cap and the verdict filter all
+	// act on the whole set, so paging cannot be pushed into SQL without changing
+	// the answer, and the pool has to be ordered by the thing being ranked.
+	//
+	// Ordering it by time and then sorting those by score gives "the best of
+	// the most recent N", which is a different answer and a quietly wrong one:
+	// measured on mainnet 2026-09-28, a 200-row time-ordered pool held 11 of
+	// the 21 deployer.first events, so half of the highest-scoring kind on the
+	// chain could not reach the page.
+	//
+	// The pool is larger than a page because recency can reorder within it: an
+	// event's final score never exceeds its stored base, so anything outside
+	// the top DiscoverCandidatePool by base cannot overtake something inside it
+	// that is also recent. It is a bound, not a proof, and it is generous for
+	// that reason.
+	pool := filter
+	pool.ByScore = byScore
+	pool.Limit = DiscoverCandidatePool
+	pool.Cursor = q.Get("cursor")
+
+	rows, next, err := a.db.DiscoverEvents(pool)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -183,7 +208,14 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 		verdictCounts[string(e.Verdict)]++
 	}
 
-	total := len(scored)
+	// The real count, over the filter and not over the fetched slice. Reporting
+	// the slice was the first shape of this and it published "total: 200" for a
+	// window holding 474.
+	total, err := a.db.DiscoverTotal(filter)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if len(scored) > limit {
 		scored = scored[:limit]
 	} else {

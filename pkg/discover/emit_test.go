@@ -452,3 +452,25 @@ func TestDebutLayerTwoNamesThePackageOnlyWhenItFits(t *testing.T) {
 		})
 	}
 }
+
+// "an library called gems" reached production and the one reader this feature
+// exists for. A non-technical reader does not conclude the article logic is
+// wrong, they conclude the site is sloppy.
+func TestTheArticleAgreesWithTheNoun(t *testing.T) {
+	for _, tt := range []struct{ who, thing, pkg, want string }{
+		{"Somebody", "app", "perun", "an app"},
+		{"Somebody", "library", "gems", "a library"},
+		{"@moul", "library", "avl", "a library"},
+	} {
+		got := debutMeans(tt.who, tt.thing, tt.pkg)
+		if !strings.Contains(got, tt.want) {
+			t.Errorf("%q does not contain %q", got, tt.want)
+		}
+	}
+	// The helper itself, including the degenerate input.
+	for word, want := range map[string]string{"app": "an", "library": "a", "": "a", "Engine": "an"} {
+		if got := article(word); got != want {
+			t.Errorf("article(%q) = %q, want %q", word, got, want)
+		}
+	}
+}
