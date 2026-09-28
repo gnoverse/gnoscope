@@ -55,6 +55,38 @@ func TestNamedParamRequestsWellFormed(t *testing.T) {
 	}
 }
 
+// The delegation table carries the same transcription risk as the value
+// table, minus the key-drift half: these constructors hard-code both the key
+// and the getter, so a rename in r/sys/params silently stops the page
+// decoding them and the `request-not-decoded` warning is all that is left.
+func TestNamedDelegationRequestsWellFormed(t *testing.T) {
+	for fn, spec := range namedDelegationRequests {
+		if !paramKeyRe.MatchString(spec.key) {
+			t.Errorf("%s: key %q is not a well-formed parameter key", fn, spec.key)
+		}
+		switch spec.verb {
+		case DelegationGrant:
+			if spec.toArg <= 0 {
+				t.Errorf("%s: a grant must name the package it authorises", fn)
+			}
+		case DelegationRevoke:
+			if spec.toArg != 0 {
+				t.Errorf("%s: a revocation names nobody, toArg should be 0", fn)
+			}
+		default:
+			t.Errorf("%s: verb %q is neither grant nor revoke", fn, spec.verb)
+		}
+		if spec.getter == "" {
+			t.Errorf("%s: no getter, so the current holder can never be shown", fn)
+		} else if !strings.HasPrefix(spec.getter, "gno.land/r/sys/params.") {
+			t.Errorf("%s: getter %q is not a r/sys/params function", fn, spec.getter)
+		}
+		if delegationGetter(fn) != spec.getter {
+			t.Errorf("%s: delegationGetter disagrees with the table", fn)
+		}
+	}
+}
+
 // keyConstRe finds `name = "value"` in a const block, which is how
 // r/sys/params spells every parameter name and module prefix.
 var keyConstRe = regexp.MustCompile(`(?m)^\s*(\w+)\s*=\s*"([^"]*)"`)

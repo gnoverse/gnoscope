@@ -431,6 +431,112 @@ var namedParamRequests = map[string][]namedParamRequest{
 	"ProposeSetRunSubmitters":               {{key: "vm:p:run_submitters", verb: "set", typ: "Strings", argIndex: 1}},
 }
 
+// ProposalDelegation is a r/sys/params delegation request decoded out of the
+// creating script: who would gain or lose authority over one parameter.
+//
+// A delegation is not a parameter write and deliberately does not reuse
+// ProposalParamChange. There is no value to diff: `params/<key>` still
+// answers with the allowlist itself, unchanged, while what actually moves is
+// who may write it without a vote. Folding the two into one shape would have
+// meant a "current -> result" table whose two columns were identical on
+// every delegation proposal ever, which is worse than no table.
+type ProposalDelegation struct {
+	Key  string `json:"key"`          // "vm:p:run_submitters"
+	Verb string `json:"verb"`         // grant | revoke
+	To   string `json:"to,omitempty"` // the package gaining authority, grant only
+	// Current is the manager on chain right now, read back over ABCI, and
+	// empty when nobody holds the delegation. CurrentKnown separates that
+	// from a failed read, the same split ProposalParamChange makes.
+	Current      string `json:"current,omitempty"`
+	CurrentKnown bool   `json:"current_known"`
+	// Powers is what the delegate may and may not do, in r/sys/params' own
+	// terms rather than this file's paraphrase. Shown as a list because the
+	// limits are the point: "may add" without "may remove only its own" is a
+	// materially wrong summary of the grant.
+	Powers []string `json:"powers,omitempty"`
+	// SubRealm is set when To names a sub-realm identity ("host#subpath"),
+	// which r/sys/params mints via cur.Sub() and matches exactly.
+	SubRealm bool `json:"sub_realm,omitempty"`
+}
+
+const (
+	DelegationGrant  = "grant"
+	DelegationRevoke = "revoke"
+)
+
+// namedDelegationRequest describes one r/sys/params constructor that moves a
+// delegation rather than writing a value.
+//
+// Same transcription caveat as namedParamRequests, and the same failure mode:
+// a constructor this table does not know decodes to nothing and raises
+// `request-not-decoded` rather than being summarised wrongly.
+type namedDelegationRequest struct {
+	key  string
+	verb string
+	// toArg is the argument holding the package path being authorised, or 0
+	// for a revocation, which names nobody.
+	toArg int
+	// getter is the r/sys/params function returning the current holder, used
+	// to fill Current. Empty means the holder cannot be read.
+	getter string
+}
+
+var namedDelegationRequests = map[string]namedDelegationRequest{
+	"ProposeSetRunSubmittersManager": {
+		key: "vm:p:run_submitters", verb: DelegationGrant, toArg: 1,
+		getter: "gno.land/r/sys/params.RunSubmittersManager()",
+	},
+	"ProposeClearRunSubmittersManager": {
+		key: "vm:p:run_submitters", verb: DelegationRevoke,
+		getter: "gno.land/r/sys/params.RunSubmittersManager()",
+	},
+}
+
+// delegationGetter returns the r/sys/params getter for a constructor's
+// current holder, so the fetch path does not need its own copy of the table.
+func delegationGetter(fn string) string { return namedDelegationRequests[fn].getter }
+
+// decodeDelegation turns a delegation constructor into the shape the page
+// shows. Nil for anything else.
+//
+// The Powers wording is lifted from r/sys/params' own proposal descriptions
+// rather than invented here. "May remove only addresses it added itself" and
+// "addresses it already added remain" are the two limits that decide whether
+// a reader should be comfortable, and both are easy to assume the wrong way
+// round from the constructor name alone.
+func decodeDelegation(call ProposalRequestCall) *ProposalDelegation {
+	spec, ok := namedDelegationRequests[call.Func]
+	if !ok {
+		return nil
+	}
+	d := ProposalDelegation{Key: spec.key, Verb: spec.verb}
+	if spec.toArg > 0 {
+		if spec.toArg >= len(call.Args) {
+			// Same guard as decodeParamChanges: the source scan is a regex
+			// over submitted text, so it matches a call with no arguments
+			// written inside a comment.
+			return nil
+		}
+		d.To = unwrapLiteral(call.Args[spec.toArg])
+		d.SubRealm = strings.Contains(d.To, "#")
+	}
+	switch spec.verb {
+	case DelegationGrant:
+		d.Powers = []string{
+			"may add addresses to the " + spec.key + " allowlist",
+			"may remove only the addresses it added itself",
+			"may not change any other parameter",
+			"GovDAO keeps full control and can replace the whole list, or revoke this, at any time",
+		}
+	case DelegationRevoke:
+		d.Powers = []string{
+			"the delegation slot is cleared, and is consulted on every call, so the revocation is immediate on execution",
+			"addresses the delegate already added REMAIN on the allowlist; reset the list explicitly if that is not wanted",
+		}
+	}
+	return &d
+}
+
 // decodeParamChanges returns every parameter this request would write:
 // the generic sys/params factories, which carry their key in their
 // arguments, plus the named constructors that hard-code one. Empty for any
@@ -735,6 +841,7 @@ type ProposalAuditInput struct {
 	Author          string
 	Code            *ProposalCode
 	ParamChanges    []ProposalParamChange
+	Delegations     []ProposalDelegation
 	Addresses       []ProposalAddress
 	Timeline        []ProposalStep
 	// MemberTier maps a member address to its tier; absence means not a member.
@@ -877,13 +984,55 @@ func buildProposalSignals(in ProposalAuditInput) []ProposalSignal {
 			if strings.HasPrefix(c.Func, "NewVote") || c.Func == "NewVoteRequest" {
 				continue // a vote request writes no parameter
 			}
-			if len(decodeParamChanges(c)) == 0 {
+			if len(decodeParamChanges(c)) == 0 && decodeDelegation(c) == nil {
 				undecoded = append(undecoded, "`"+c.Pkg+"."+c.Func+"`")
 			}
 		}
 		if len(undecoded) > 0 {
 			add(SignalWarn, "request-not-decoded", fmt.Sprintf("%d proposal request(s) this page cannot decode", len(undecoded)),
 				strings.Join(undecoded, ", ")+" is not a constructor this explorer knows how to read, so what it would write is not shown below. The arguments are listed as written; read the constructor's source to see what it does with them.")
+		}
+	}
+
+	// Delegation is the most consequential thing a sys/params proposal can
+	// do and the least visible from its title: it does not change a value,
+	// it changes who may change the value without asking anybody again.
+	for _, d := range in.Delegations {
+		switch d.Verb {
+		case DelegationGrant:
+			level := SignalWarn
+			if !isSystemRealm(d.To) {
+				// Same reasoning as executor-not-system-realm: code GovDAO
+				// does not maintain, holding authority GovDAO granted.
+				level = SignalAlert
+			}
+			detail := "If this executes, `" + d.To + "` may write `" + d.Key +
+				"` without a further vote. " + strings.Join(d.Powers, "; ") + "."
+			if d.CurrentKnown && d.Current != "" {
+				detail += " It replaces the current manager, `" + d.Current +
+					"`, and discards the record of which addresses that manager granted, so those entries become ones nobody may remove except by a full GovDAO rewrite of the list."
+			} else if d.CurrentKnown {
+				detail += " Nobody holds this delegation today, so this is a new grant rather than a transfer."
+			}
+			add(level, "delegation-grant", "Hands `"+d.Key+"` to a realm other than GovDAO", detail)
+
+			if d.SubRealm {
+				add(SignalInfo, "delegation-subrealm", "The delegate is a sub-realm identity, not a whole realm",
+					"`"+d.To+"` names one tenant of a multi-tenant host, minted by `cur.Sub()`. r/sys/params matches the delegate path exactly, so the host itself and its other tenants are not authorised by this. Naming the bare host instead would have been the broader grant.")
+			}
+		case DelegationRevoke:
+			detail := strings.Join(d.Powers, "; ") + "."
+			if d.CurrentKnown && d.Current == "" {
+				add(SignalWarn, "delegation-revoke-noop", "Nothing holds `"+d.Key+"` today",
+					"This proposal revokes a delegation, but the chain reports no current manager for the key. Either it was already revoked since the proposal was created, or it executed already. "+detail)
+			} else {
+				who := "the current manager"
+				if d.Current != "" {
+					who = "`" + d.Current + "`"
+				}
+				add(SignalInfo, "delegation-revoke", "Revokes "+who+"'s authority over `"+d.Key+"`",
+					detail)
+			}
 		}
 	}
 

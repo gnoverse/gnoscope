@@ -641,3 +641,257 @@ func TestParseProposalRequestsYieldsEmptyArgs(t *testing.T) {
 	}
 	decodeParamChanges(calls[0]) // must not panic
 }
+
+const delegateGrantSource = `package main
+
+import (
+	"gno.land/r/gov/dao"
+	"gno.land/r/sys/params"
+)
+
+func main(cur realm) {
+	r := params.ProposeSetRunSubmittersManager(cross(cur), "gno.land/r/nt/commondao/v0#dao/42")
+	pid := dao.MustCreateProposal(cross(cur), r)
+	dao.MustVoteOnProposalSimple(cross(cur), int64(pid), "YES")
+}
+`
+
+const delegateRevokeSource = `package main
+
+import (
+	"gno.land/r/gov/dao"
+	"gno.land/r/sys/params"
+)
+
+func main(cur realm) {
+	r := params.ProposeClearRunSubmittersManager(cross(cur))
+	dao.MustCreateProposal(cross(cur), r)
+}
+`
+
+// A delegation moves no value, so it must not be decoded as a parameter
+// write. Both constructors used to fall through to nothing at all, which is
+// what the `request-not-decoded` warning existed to admit.
+func TestDecodeDelegation(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want *ProposalDelegation
+	}{
+		{
+			name: "grant to a sub-realm identity",
+			src:  delegateGrantSource,
+			want: &ProposalDelegation{
+				Key: "vm:p:run_submitters", Verb: DelegationGrant,
+				To: "gno.land/r/nt/commondao/v0#dao/42", SubRealm: true,
+			},
+		},
+		{
+			name: "grant to a whole realm is not a sub-realm",
+			src:  `params.ProposeSetRunSubmittersManager(cross(cur), "gno.land/r/sys/validators")`,
+			want: &ProposalDelegation{
+				Key: "vm:p:run_submitters", Verb: DelegationGrant,
+				To: "gno.land/r/sys/validators",
+			},
+		},
+		{
+			name: "revoke names nobody",
+			src:  delegateRevokeSource,
+			want: &ProposalDelegation{Key: "vm:p:run_submitters", Verb: DelegationRevoke},
+		},
+		{
+			// Same guard as decodeParamChanges: the source scan is a regex
+			// over submitted text and matches a call written in a comment.
+			name: "a grant with no argument decodes to nothing rather than panicking",
+			src:  `// params.ProposeSetRunSubmittersManager()`,
+			want: nil,
+		},
+		{
+			name: "an ordinary param constructor is not a delegation",
+			src:  `params.ProposeSetRunSubmitters(cross(cur), []string{"g1abc"})`,
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *ProposalDelegation
+			for _, c := range parseProposalRequests(tt.src) {
+				if d := decodeDelegation(c); d != nil {
+					got = d
+					break
+				}
+			}
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("decodeDelegation() = %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("decodeDelegation() = nil, want a delegation")
+			}
+			if got.Key != tt.want.Key || got.Verb != tt.want.Verb || got.To != tt.want.To || got.SubRealm != tt.want.SubRealm {
+				t.Errorf("decodeDelegation() = {Key:%q Verb:%q To:%q SubRealm:%v}, want {Key:%q Verb:%q To:%q SubRealm:%v}",
+					got.Key, got.Verb, got.To, got.SubRealm, tt.want.Key, tt.want.Verb, tt.want.To, tt.want.SubRealm)
+			}
+			// The limits are the substance of the card; an empty list would
+			// render a grant as though it were unbounded.
+			if len(got.Powers) == 0 {
+				t.Error("Powers is empty; the card would state a grant without its limits")
+			}
+		})
+	}
+}
+
+// The delegation constructors must not reach decodeParamChanges: a "current
+// -> result" table over params/vm:p:run_submitters would show the allowlist
+// identical on both sides, which reads as "this proposal does nothing".
+func TestDelegationIsNotAParamChange(t *testing.T) {
+	for _, src := range []string{delegateGrantSource, delegateRevokeSource} {
+		for _, c := range parseProposalRequests(src) {
+			if got := decodeParamChanges(c); len(got) != 0 {
+				t.Errorf("decodeParamChanges(%s) = %+v, want none", c.Func, got)
+			}
+		}
+	}
+}
+
+// Before this, both constructors raised `request-not-decoded`. That warning
+// is the staleness guard, so it has to stop firing exactly when the page
+// learns to read them, and keep firing for everything it still cannot.
+func TestDelegationSilencesTheUndecodedWarning(t *testing.T) {
+	members := map[string]string{"g1author": "T1"}
+	base := func(src string) ProposalAuditInput {
+		return ProposalAuditInput{
+			ID: 9, CreationFound: true, AuthorAddress: "g1author", MemberTier: members,
+			Code: &ProposalCode{Kind: "run", Success: true, Source: src, Requests: parseProposalRequests(src)},
+		}
+	}
+	for _, src := range []string{delegateGrantSource, delegateRevokeSource} {
+		if _, fired := signalCodes(buildProposalSignals(base(src)))["request-not-decoded"]; fired {
+			t.Errorf("request-not-decoded still fires for a constructor the page now decodes")
+		}
+	}
+	unknown := `other.NewSomethingRequest(cross(cur), "x")`
+	if _, fired := signalCodes(buildProposalSignals(base(unknown)))["request-not-decoded"]; !fired {
+		t.Error("request-not-decoded stopped firing for a genuinely unknown constructor")
+	}
+}
+
+func TestDelegationSignals(t *testing.T) {
+	members := map[string]string{"g1author": "T1"}
+	tests := []struct {
+		name   string
+		in     ProposalAuditInput
+		want   map[string]string
+		absent []string
+	}{
+		{
+			// Authority over a chain parameter, held by code GovDAO does not
+			// maintain. Same reasoning as executor-not-system-realm.
+			name: "granting to a non-system realm is an alert",
+			in: ProposalAuditInput{
+				ID: 9, CreationFound: true, AuthorAddress: "g1author", MemberTier: members,
+				Delegations: []ProposalDelegation{{
+					Key: "vm:p:run_submitters", Verb: DelegationGrant,
+					To: "gno.land/r/nt/commondao/v0#dao/42", SubRealm: true, CurrentKnown: true,
+				}},
+			},
+			want: map[string]string{"delegation-grant": SignalAlert, "delegation-subrealm": SignalInfo},
+		},
+		{
+			name: "granting to a sys realm is a warning, not an alert",
+			in: ProposalAuditInput{
+				ID: 9, CreationFound: true, AuthorAddress: "g1author", MemberTier: members,
+				Delegations: []ProposalDelegation{{
+					Key: "vm:p:run_submitters", Verb: DelegationGrant,
+					To: "gno.land/r/sys/validators", CurrentKnown: true,
+				}},
+			},
+			want:   map[string]string{"delegation-grant": SignalWarn},
+			absent: []string{"delegation-subrealm"},
+		},
+		{
+			name: "revoking an existing delegation",
+			in: ProposalAuditInput{
+				ID: 9, CreationFound: true, AuthorAddress: "g1author", MemberTier: members,
+				Delegations: []ProposalDelegation{{
+					Key: "vm:p:run_submitters", Verb: DelegationRevoke,
+					Current: "gno.land/r/nt/commondao/v0", CurrentKnown: true,
+				}},
+			},
+			want:   map[string]string{"delegation-revoke": SignalInfo},
+			absent: []string{"delegation-revoke-noop"},
+		},
+		{
+			// Nothing to revoke means it already happened, or happened to
+			// somebody else first. Either way the ballot is stale.
+			name: "revoking when nothing is delegated",
+			in: ProposalAuditInput{
+				ID: 9, CreationFound: true, AuthorAddress: "g1author", MemberTier: members,
+				Delegations: []ProposalDelegation{{
+					Key: "vm:p:run_submitters", Verb: DelegationRevoke, Current: "", CurrentKnown: true,
+				}},
+			},
+			want:   map[string]string{"delegation-revoke-noop": SignalWarn},
+			absent: []string{"delegation-revoke"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := signalCodes(buildProposalSignals(tt.in))
+			for code, level := range tt.want {
+				if got[code] != level {
+					t.Errorf("signal %q = %q, want %q (got %v)", code, got[code], level, got)
+				}
+			}
+			for _, code := range tt.absent {
+				if _, ok := got[code]; ok {
+					t.Errorf("signal %q fired but should not have", code)
+				}
+			}
+		})
+	}
+}
+
+// A replacement discards the previous manager's grant record, which means
+// addresses it added become ones nobody may remove short of a full rewrite.
+// That consequence is invisible from the constructor name.
+func TestDelegationGrantNamesTheManagerItReplaces(t *testing.T) {
+	sigs := buildProposalSignals(ProposalAuditInput{
+		ID: 9, CreationFound: true, AuthorAddress: "g1author",
+		MemberTier: map[string]string{"g1author": "T1"},
+		Delegations: []ProposalDelegation{{
+			Key: "vm:p:run_submitters", Verb: DelegationGrant,
+			To: "gno.land/r/sys/validators", Current: "gno.land/r/nt/old", CurrentKnown: true,
+		}},
+	})
+	var detail string
+	for _, s := range sigs {
+		if s.Code == "delegation-grant" {
+			detail = s.Detail
+		}
+	}
+	for _, want := range []string{"gno.land/r/nt/old", "discards the record"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("delegation-grant detail missing %q; got: %s", want, detail)
+		}
+	}
+}
+
+// The unset holder is the case a wrong parse turns into a wrong claim: the
+// page says "nobody holds this today, so this is a new grant" on the
+// strength of it.
+func TestDelegationHolderFromRepr(t *testing.T) {
+	tests := []struct{ repr, want string }{
+		{"( string)", ""},
+		{`("gno.land/r/nt/commondao/v0" string)`, "gno.land/r/nt/commondao/v0"},
+		{`("gno.land/r/nt/commondao/v0#dao/42" string)`, "gno.land/r/nt/commondao/v0#dao/42"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := delegationHolderFromRepr(tt.repr); got != tt.want {
+			t.Errorf("delegationHolderFromRepr(%q) = %q, want %q", tt.repr, got, tt.want)
+		}
+	}
+}

@@ -202,6 +202,7 @@ type GovDAOProposalDetail struct {
 	// and who voted, and nothing about what it would do or who wrote it.
 	Code         *ProposalCode         `json:"code,omitempty"`
 	ParamChanges []ProposalParamChange `json:"param_changes,omitempty"`
+	Delegations  []ProposalDelegation  `json:"delegations,omitempty"`
 	Addresses    []ProposalAddress     `json:"addresses,omitempty"`
 	Timeline     []ProposalStep        `json:"timeline,omitempty"`
 	Signals      []ProposalSignal      `json:"signals,omitempty"`
