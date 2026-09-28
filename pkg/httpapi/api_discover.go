@@ -199,6 +199,34 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 	applyDamping(scored)
 	applyDiversityCap(scored, highlights)
 
+	verdictCounts := map[string]int{"share": 0, "maybe": 0, "hold": 0}
+	for _, e := range scored {
+		verdictCounts[string(e.Verdict)]++
+	}
+	// The pool is bounded and the window is not, so the counts have to account
+	// for what the ranking never looked at. Everything the score-ordered pool
+	// left out is below the medium-interest boundary, and low interest is held
+	// in every column of the matrix, so those are all holds.
+	//
+	// Without this the envelope reported "hold: 0" for a window holding 275 of
+	// them. The held rows are a feature rather than waste: the page shows them
+	// collapsed under "ruled out", because a queue that silently drops most of
+	// its input teaches a reader nothing and cannot be argued with.
+	if len(rows) >= DiscoverCandidatePool {
+		unranked, err := a.db.DiscoverCountBelowScore(network, since, p60)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		verdictCounts["hold"] += unranked
+	}
+
+	// The real count, over the filter and not over the fetched slice. Reporting
+	// the slice was the first shape of this and it published "total: 200" for a
+	// window holding 474.
+	// After the counts, deliberately. A filter chip has to show what it would
+	// find, not what the filter already applied left behind, which is the same
+	// reason `counts` is over the unfiltered window.
 	if wanted := verdictFilter(q); wanted != nil {
 		kept := scored[:0]
 		for _, e := range scored {
@@ -209,14 +237,6 @@ func (a *API) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 		scored = kept
 	}
 
-	verdictCounts := map[string]int{"share": 0, "maybe": 0, "hold": 0}
-	for _, e := range scored {
-		verdictCounts[string(e.Verdict)]++
-	}
-
-	// The real count, over the filter and not over the fetched slice. Reporting
-	// the slice was the first shape of this and it published "total: 200" for a
-	// window holding 474.
 	total, err := a.db.DiscoverTotal(filter)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)

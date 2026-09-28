@@ -307,3 +307,44 @@ func TestTotalCountsTheWindowNotThePage(t *testing.T) {
 		t.Errorf("filtered total = %d, want 1", filtered.Total)
 	}
 }
+
+// The counts describe the window, not the page and not the filter.
+//
+// Two ways this was wrong at once. The hold count came only from the bounded
+// pool, so a window holding 275 held events reported "hold: 0"; and the counts
+// were taken after the verdict filter, so asking for shares reported that
+// nothing else existed. A filter chip has to show what it would find.
+func TestVerdictCountsDescribeTheWindowNotThePage(t *testing.T) {
+	withGlossaryAPI(t)
+	api, db := newTestAPI(t)
+
+	// A chain-wide event, which is the only thing that can reach share with no
+	// clearance configured, plus a run of ordinary ones.
+	seedEvent(t, db, "chain.spike", "2026-09-18", "", "", 1, 900)
+	for i := 0; i < 20; i++ {
+		seedEvent(t, db, "package.deployed", fmt.Sprintf("p%02d", i),
+			fmt.Sprintf("g1a%02d", i), fmt.Sprintf("ns%02d", i), 1, float64(10+i))
+	}
+
+	unfiltered := getDiscover(t, api, "/api/discover?network=alpha&limit=3")
+	sum := 0
+	for _, n := range unfiltered.VerdictCounts {
+		sum += n
+	}
+	if sum != unfiltered.Total {
+		t.Errorf("verdict_counts sum to %d against a total of %d", sum, unfiltered.Total)
+	}
+
+	// The same counts survive a filter, so the chips still say what they would
+	// find rather than what is left.
+	filtered := getDiscover(t, api, "/api/discover?network=alpha&verdict=share&limit=3")
+	if filtered.VerdictCounts["maybe"] != unfiltered.VerdictCounts["maybe"] {
+		t.Errorf("filtering to share changed the maybe count from %d to %d",
+			unfiltered.VerdictCounts["maybe"], filtered.VerdictCounts["maybe"])
+	}
+	for _, e := range filtered.Events {
+		if e.Verdict != discover.VerdictShare {
+			t.Errorf("the share filter returned a %q", e.Verdict)
+		}
+	}
+}
