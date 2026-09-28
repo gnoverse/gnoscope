@@ -196,7 +196,7 @@ test('the forge tab says what it is, and degrades without breaking the page', as
 // this package.
 test('the forge read follows the network the realm was resolved on', async ({ page }) => {
   const w = watch(page);
-  await page.addInitScript(() => localStorage.setItem('mygnoscan-network', 'all'));
+  await page.addInitScript(() => localStorage.setItem('gnoscope-network', 'all'));
   const asked = [];
   page.on('request', (req) => {
     const u = new URL(req.url());
