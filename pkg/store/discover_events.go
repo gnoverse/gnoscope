@@ -492,3 +492,35 @@ func (d *DB) DiscoverTotal(q DiscoverQuery) (int, error) {
 		strings.Join(where, " AND "), args...).Scan(&n)
 	return n, err
 }
+
+// DiscoverCountBelowScore counts events in a window whose stored score is under
+// a threshold.
+//
+// Exists so the envelope can report a hold count over the whole window rather
+// than over the bounded pool the page ranks. Everything below the medium
+// interest boundary is low interest, and low interest is held in every column
+// of the verdict matrix, so this is exactly the number of held events the
+// ranking never had to look at.
+//
+// Reporting the pool's counts instead published "hold: 0" for a window holding
+// 275 of them, and the held rows are a feature: the page shows them collapsed
+// under "ruled out (N)", because a queue that silently drops most of its input
+// teaches a reader nothing and cannot be argued with.
+func (d *DB) DiscoverCountBelowScore(network, since string, score float64) (int, error) {
+	if network == "" {
+		return 0, fmt.Errorf("discover is per chain: a network is required")
+	}
+	args := []any{network, score}
+	q := `SELECT COUNT(*) FROM discover_events WHERE network = ? AND score_base < ?`
+	if since != "" {
+		q += ` AND at >= ?`
+		args = append(args, since)
+	}
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var n int
+	err := d.db.QueryRow(q, args...).Scan(&n)
+	return n, err
+}
