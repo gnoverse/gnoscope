@@ -268,6 +268,45 @@ func fetchChainParam(ctx context.Context, rpcURL, key string) ([]string, bool) {
 	return []string{raw}, true
 }
 
+// fetchDelegationHolder reads who currently holds a delegated parameter.
+//
+// r/sys/params exposes this as a plain getter (RunSubmittersManager), so it
+// is a vm/qeval like resolveGnoAddressCached rather than the params/<key>
+// ABCI read the value changes use: the holder is realm state, not a chain
+// parameter, and params/vm:p:run_submitters answers with the allowlist
+// itself, which is a different question entirely.
+//
+// The unset case is Gno's debug repr for an empty string, "( string)", which
+// carries no quoted token at all. So "no quoted token" and "empty holder"
+// are the same answer here, and both mean nobody holds the delegation. The
+// bool distinguishes a read that happened from one that failed, which is
+// what decides whether the page may say "this is a new grant" out loud.
+func fetchDelegationHolder(ctx context.Context, rpcURL, getter string) (string, bool) {
+	if rpcURL == "" || getter == "" {
+		return "", false
+	}
+	out, err := fetchABCIQuery(ctx, rpcURL, "vm/qeval", getter)
+	if err != nil {
+		return "", false
+	}
+	return delegationHolderFromRepr(out), true
+}
+
+// delegationHolderFromRepr pulls the holder out of qeval's debug repr.
+//
+// Split out of the fetch so the one subtle case is testable without a chain:
+// an unset holder comes back as "( string)" with no quoted token at all,
+// verified against mainnet on 2026-09-28, where nothing is delegated. Read
+// wrongly that is indistinguishable from a failed query, and the difference
+// decides whether the page is allowed to tell a reader "this is a new grant
+// rather than a transfer".
+func delegationHolderFromRepr(repr string) string {
+	if m := gnoQuotedRe.FindStringSubmatch(repr); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // addressNameCacheTTL matches usernameCacheTTL: the same registry, the same
 // reason (a binding changes only on an explicit re-registration).
 const addressNameCacheTTL = usernameCacheTTL
@@ -403,6 +442,14 @@ func (a *API) AuditGovDAOProposal(ctx context.Context, network, rpcURL string, d
 		// two keys, and showing one of them would be worse than showing
 		// neither.
 		for _, call := range detail.Code.Requests {
+			if d := decodeDelegation(call); d != nil {
+				// The holder is a realm function, not a parameter, so this
+				// is a qeval rather than the params/<key> read the value
+				// changes use.
+				d.Current, d.CurrentKnown = fetchDelegationHolder(ctx, rpcURL, delegationGetter(call.Func))
+				detail.Delegations = append(detail.Delegations, *d)
+				continue
+			}
 			for _, pc := range decodeParamChanges(call) {
 				current, known := fetchChainParam(ctx, rpcURL, pc.Key)
 				pc.Current, pc.CurrentKnown = current, known
@@ -442,6 +489,7 @@ func (a *API) AuditGovDAOProposal(ctx context.Context, network, rpcURL string, d
 		Author:                   detail.Author,
 		Code:                     detail.Code,
 		ParamChanges:             detail.ParamChanges,
+		Delegations:              detail.Delegations,
 		Addresses:                detail.Addresses,
 		Timeline:                 detail.Timeline,
 		MemberTier:               memberTier,

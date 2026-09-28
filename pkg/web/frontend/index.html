@@ -11042,18 +11042,86 @@ function paramDiffValueEl(v) {
 // parameter the creating transaction would write.
 //
 // This is the section that exists because the chain cannot show it: gov/dao
+// renderDelegationCard draws one r/sys/params delegation: who gains or loses
+// the right to write a parameter without a vote.
+//
+// No current-to-result table, because a delegation moves no value: the
+// allowlist reads the same before and after. What changes is who may change
+// it, so the card states the holder transition in words and then lists the
+// limits verbatim. The limits are the substance here — "may add" without
+// "may remove only its own" is a materially wrong summary of the grant, and
+// the difference is the whole reason someone reads this page before voting.
+function renderDelegationCard(container, d) {
+  const grant = d.verb === 'grant';
+  const card = el('div', { className: 'card', style: { marginBottom: '10px' } });
+  const head = el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px' } },
+    el('span', { style: { fontFamily: 'var(--mono)', fontWeight: '600' } }, d.key),
+    badge(grant ? 'run' : 'ok', grant ? 'delegate' : 'revoke'));
+  if (d.sub_realm) {
+    const b = badge('session', 'sub-realm');
+    b.title = 'names one tenant of a multi-tenant host; r/sys/params matches the path exactly, so the host itself is not authorised';
+    head.appendChild(b);
+  }
+  card.appendChild(head);
+
+  // The holder transition, as from -> to rather than as prose.
+  const flow = el('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px', fontSize: '13px' } });
+  const holderEl = (path) => {
+    if (!path) return el('span', { className: 'pd-same' }, 'GovDAO only');
+    return safePkgPath(path.split('#')[0]) ? realmPathEl(path.split('#')[0]) : el('span', { style: { fontFamily: 'var(--mono)' } }, path);
+  };
+  // The after-state is always the gaining side and always reads as the
+  // addition, on both verbs. Striking "GovDAO only" on a revocation, which
+  // an earlier cut did, says the opposite of what a revocation means:
+  // GovDAO-only is what the key returns TO, not what it loses.
+  if (!d.current_known) {
+    flow.appendChild(el('span', { className: 'pd-same' }, 'current holder could not be read'));
+  } else {
+    flow.appendChild(el('span', { style: { color: 'var(--fg2)' } }, 'now:'));
+    const from = el('span', { className: !grant && d.current ? 'pd-del' : '' });
+    from.appendChild(holderEl(d.current));
+    flow.appendChild(from);
+  }
+  flow.appendChild(el('span', { style: { color: 'var(--fg2)' } }, '\u2192'));
+  flow.appendChild(el('span', { style: { color: 'var(--fg2)' } }, 'if this executes:'));
+  const to = el('span', { className: 'pd-add' });
+  to.appendChild(grant ? holderEl(d.to) : el('span', {}, 'GovDAO only'));
+  flow.appendChild(to);
+  // A sub-realm path carries its tenant after the '#', which realmPathEl
+  // cannot link and must not silently drop.
+  if (grant && d.sub_realm) {
+    flow.appendChild(el('span', { style: { fontFamily: 'var(--mono)', color: 'var(--fg2)', fontSize: '12px' } }, '#' + d.to.split('#').slice(1).join('#')));
+  }
+  card.appendChild(flow);
+
+  if ((d.powers || []).length) {
+    const ul = el('ul', { style: { margin: '0', paddingLeft: '18px', fontSize: '12px', color: 'var(--fg2)', lineHeight: '1.6' } });
+    for (const p of d.powers) ul.appendChild(el('li', {}, p));
+    card.appendChild(ul);
+  }
+  container.appendChild(card);
+}
+
 // renders a generic sys/params proposal without the value it carries, so
 // the ballot as published says which key changes and never what to. The
 // values here are decoded from the creating transaction and the "current"
 // column is read live over ABCI, which is stated on the page rather than
 // assumed, because a reader who trusts the wrong one of those two is
 // exactly who this page is for.
-function renderParamChanges(container, changes) {
+function renderParamChanges(container, changes, delegations) {
   const list = changes || [];
-  if (!list.length) return;
+  const dels = delegations || [];
+  if (!list.length && !dels.length) return;
   container.appendChild(el('div', { className: 'section-title', style: { marginTop: '20px' } }, 'what it changes'));
   container.appendChild(el('div', { className: 'section-sub' },
-    'System parameters this proposal would write, decoded from the creating transaction. The current column is read live from the chain, so the result is what would happen if it executed now.'));
+    dels.length && !list.length
+      ? 'Who may write a system parameter without a further vote. Decoded from the creating transaction; the current holder is read live from the chain.'
+      : 'System parameters this proposal would write, decoded from the creating transaction. The current column is read live from the chain, so the result is what would happen if it executed now.'));
+
+  // Delegations first when both are present: a value change is reversible by
+  // the next proposal, and handing the key to somebody else is the thing a
+  // reader most needs to not scroll past.
+  for (const d of dels) renderDelegationCard(container, d);
 
   for (const pc of list) {
     const card = el('div', { className: 'card', style: { marginBottom: '10px' } });
@@ -11352,7 +11420,7 @@ async function loadGovDAODetail(id) {
         }, p.description));
       }
 
-      renderParamChanges(container, p.param_changes);
+      renderParamChanges(container, p.param_changes, p.delegations);
       renderTimeline(container, p.timeline);
       renderProposalCode(container, p.code);
       renderAddressAudit(container, p.addresses);
