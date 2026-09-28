@@ -511,6 +511,30 @@ func TestEveryPersistedSettingIsMigratedFromTheOldName(t *testing.T) {
 		t.Fatal("no migration loop found: the rename carried the settings and something removed it")
 	}
 
+	// It has to move a key from somewhere else.
+	//
+	// The list being complete is not enough, and that gap is not theoretical:
+	// on 2026-09-28 a second pass of the rename script rewrote the loop's own
+	// source prefix, turning `mygnoscan-* -> gnoscope-*` into
+	// `gnoscope-* -> gnoscope-*`. Every check above still passed. The migration
+	// read the key it was about to write, found it, wrote it back, and every
+	// reader upgrading from the old name lost their chain and their rail
+	// exactly as if there were no migration at all.
+	//
+	// So: assert the two prefixes differ. A migration that reads what it writes
+	// is not a migration, it is a very quiet no-op.
+	m := regexp.MustCompile(`const from = '([a-z-]+)' \+ key, to = '([a-z-]+)' \+ key`).FindStringSubmatch(html)
+	if m == nil {
+		t.Fatal("the migration no longer maps one key prefix to another; if the shape changed, re-pin it here")
+	}
+	if m[1] == m[2] {
+		t.Errorf("the migration reads and writes the same prefix %q: it is a no-op, and every "+
+			"reader upgrading from the old name loses the setting silently", m[1])
+	}
+	if m[2] != "gnoscope-" {
+		t.Errorf("the migration writes %q, but the app reads gnoscope-* keys", m[2])
+	}
+
 	// Keys that postdate the rename, so there is no old name to carry over.
 	// Explicit rather than inferred: an exemption should be a decision someone
 	// wrote down, not a key that happened not to match a pattern.
