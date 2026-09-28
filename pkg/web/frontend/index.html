@@ -217,7 +217,7 @@ main { padding: 20px 0; }
  * scans for down a column, and a 3px rule reads faster than a pill they have to
  * fixate on, so the pill is there too but the border is what you see first. */
 .dsc-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
-.dsc-sub { color: var(--fg2); font-size: 12px; margin-bottom: 16px; max-width: 78ch; line-height: 1.5; }
+.dsc-sub { color: var(--fg2); font-size: 12px; margin-bottom: 10px; max-width: 78ch; line-height: 1.5; }
 .dsc-filters { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; padding: 10px 0 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
 .dsc-fgroup { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .dsc-flabel { color: var(--fg2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; margin-right: 2px; }
@@ -233,6 +233,40 @@ main { padding: 20px 0; }
 .dsc-card.v-maybe { border-left-color: var(--amber); }
 .dsc-card.v-hold  { border-left-color: var(--border); opacity: 0.72; }
 .dsc-card.demoted { opacity: 0.66; }
+
+/* The feed row: the same event as a card, at a third of the height.
+ *
+ * The card is right for the two or three rows that answer the question and
+ * wrong for the fifty underneath: seven lines each put four events on a screen,
+ * and a feed you cannot scan is a feed nobody reads to the bottom. So the lead
+ * block keeps the card and the feed gets this, which is two lines plus whatever
+ * the reader opens.
+ *
+ * A <details> rather than a click handler, so the whole thing keeps working
+ * from a keyboard and the browser owns the open state. */
+.dsc-row { border-bottom: 1px solid var(--border); }
+.dsc-row > summary { display: grid; grid-template-columns: 52px 60px 1fr; gap: 10px; align-items: baseline;
+                     padding: 7px 4px; cursor: pointer; list-style: none; }
+.dsc-row > summary::-webkit-details-marker { display: none; }
+.dsc-row > summary:hover { background: var(--bg2); }
+.dsc-row[open] > summary { background: var(--bg2); }
+.dsc-row-age { font-family: var(--mono); font-size: 11px; color: var(--fg2); text-align: right; }
+.dsc-row-main { min-width: 0; }
+.dsc-row-line { font-size: 13.5px; line-height: 1.4; color: var(--fg); }
+/* One line, clipped rather than wrapped: a row that grows to two lines when a
+ * package has a long name reintroduces exactly the raggedness this replaced. */
+.dsc-row-meta { font-family: var(--mono); font-size: 10.5px; color: var(--fg2); margin-top: 2px;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dsc-row-meta .sep { opacity: 0.4; margin: 0 5px; }
+.dsc-row.v-hold .dsc-row-line { color: var(--fg2); }
+.dsc-row-body { padding: 2px 4px 14px 126px; }
+.dsc-row-body .dsc-matters { margin-top: 0; }
+.dsc-row-body .dsc-verdict { border-top: none; padding-top: 0; margin-top: 9px; }
+@media (max-width: 720px) {
+  .dsc-row > summary { grid-template-columns: 44px 1fr; }
+  .dsc-row > summary .dsc-pill { grid-column: 1; }
+  .dsc-row-body { padding-left: 4px; }
+}
 .dsc-headline { font-size: 15px; line-height: 1.45; color: var(--fg); }
 .dsc-matters { font-size: 13px; line-height: 1.5; color: var(--fg2); margin-top: 5px; max-width: 78ch; }
 .dsc-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px;
@@ -8441,7 +8475,10 @@ const DSC_WINDOW_DEFAULT = '30d';
 // share+maybe is what a reader wants on arrival; holds are one disclosure away.
 // Stored as a set rather than a string so the chips can toggle independently.
 const DSC_VERDICT_DEFAULT = 'share,maybe';
-const DSC_PAGE = 25;
+// 50, not 25: a two-line row is about a third the height of the card this
+// replaced, so the same screenful now holds more than twice as many events and
+// a 25-row page ends before the scroll does.
+const DSC_PAGE = 50;
 
 let _dscGen = 0;
 let _dscCursor = '';
@@ -8618,56 +8655,49 @@ function dscShortTarget(target) {
   return parts.map(p => (looksLikeAddress(p) ? truncAddr(p) : p)).join('/');
 }
 
-function dscCard(e) {
-  const v = ['share', 'maybe', 'hold'].includes(e.verdict) ? e.verdict : 'hold';
-  const card = el('div', { className: 'dsc-card v-' + v + (e.demoted ? ' demoted' : '') });
+function dscVerdictOf(e) {
+  return ['share', 'maybe', 'hold'].includes(e.verdict) ? e.verdict : 'hold';
+}
 
-  card.appendChild(el('div', { className: 'dsc-headline' }, (e.layers && e.layers.means && e.layers.means.text) || e.headline || ''));
-  const matters = e.layers && e.layers.matters && e.layers.matters.text;
-  if (matters) card.appendChild(el('div', { className: 'dsc-matters' }, matters));
+// The identifiers, in the order a reader needs them: when, what kind, what it
+// touched, who did it, and the transaction that proves it.
+function dscMeta(e, className) {
+  const meta = el('div', { className: className });
+  const sep = () => el('span', { className: 'sep' }, '\u00b7');
+  let first = true;
+  const add = (node) => { if (!first) meta.appendChild(sep()); first = false; meta.appendChild(node); };
 
-  // The footer: the identifiers, in the order a reader needs them. When, what
-  // kind, what it touched, who did it, and the transaction that proves it.
-  const meta = el('div', { className: 'dsc-meta' });
-  const when = el('span', null, timeAgo(e.at));
-  when.title = e.at || '';
-  meta.appendChild(when);
-  const sep = () => el('span', { className: 'sep' }, '·');
-  meta.appendChild(sep());
-  meta.appendChild(el('span', null, e.kind || ''));
+  add(el('span', null, e.kind || ''));
   if (e.target) {
-    meta.appendChild(sep());
     // A package path is deployer-controlled text going into a route. navigate()
     // takes it as data, and the /realm/ prefix strip is the same one every
     // other call site on this page uses.
     //
     // Shown abbreviated when the namespace is an unregistered address, because
     // `gno.land/r/g1s2g47cas6gxamxlkpxu65zu2g4aqma38tx36yv/perun` is 56
-    // characters of which 40 carry no meaning for a reader, and it pushes the
-    // deployer and the transaction off the end of the row. The full path stays
+    // characters of which 40 carry no meaning for a reader. The full path stays
     // in the tooltip and the link target is unchanged.
     const a = link(dscShortTarget(e.target), () => navigate('/realm/' + e.target.replace('gno.land/', '')));
     a.title = e.target;
-    meta.appendChild(a);
+    add(a);
   }
-  if (e.actor) {
-    meta.appendChild(sep());
-    meta.appendChild(addrLink(e.actor));
-  }
-  if (e.evidence_tx) {
-    meta.appendChild(sep());
-    meta.appendChild(txLink(e.evidence_tx, e.height, null, { showBlock: false }));
-  }
+  if (e.actor) add(addrLink(e.actor));
+  if (e.evidence_tx) add(txLink(e.evidence_tx, e.height, null, { showBlock: false }));
   if (e.demoted) {
-    meta.appendChild(sep());
     const d = el('span', null, 'demoted');
     d.title = 'the diversity cap moved this down: the same actor is already higher in this list';
-    meta.appendChild(d);
+    add(d);
   }
-  card.appendChild(meta);
+  return meta;
+}
 
-  const verdict = el('div', { className: 'dsc-verdict' },
-    el('span', { className: 'dsc-pill v-' + v }, v));
+// The verdict, its reason, and the two axes behind it. `withPill` is false where
+// the pill is already in the row's own header and repeating it would say the
+// same word twice within one line of itself.
+function dscVerdictBlock(e, withPill) {
+  const v = dscVerdictOf(e);
+  const box = el('div', { className: 'dsc-verdict' });
+  if (withPill) box.appendChild(el('span', { className: 'dsc-pill v-' + v }, v));
   const body = el('div');
   body.appendChild(el('div', { className: 'dsc-reason' }, e.verdict_reason || ''));
   const j = e.judgement || {};
@@ -8679,15 +8709,70 @@ function dscCard(e) {
   }
   if (axes.children.length) body.appendChild(axes);
   if (j.blocking) body.appendChild(el('div', { className: 'dsc-blocking', style: { marginTop: '6px' } }, j.blocking));
-  verdict.appendChild(body);
-  card.appendChild(verdict);
+  box.appendChild(body);
+  return box;
+}
 
+// Layer 1 and the fact set: the audit trail, one click away rather than always
+// on screen.
+function dscWhy(e) {
   const why = el('details', { className: 'dsc-why' }, el('summary', null, 'what the chain actually recorded'));
   const what = e.layers && e.layers.what && e.layers.what.text;
   if (what) why.appendChild(el('p', { className: 'dsc-what' }, what));
   why.appendChild(dscFacts(e.facts));
-  card.appendChild(why);
+  return why;
+}
+
+function dscHeadline(e) {
+  return (e.layers && e.layers.means && e.layers.means.text) || e.headline || '';
+}
+
+// The full card. Used for the lead block only, where there are two or three
+// rows and every one of them is the answer to the reader's question.
+function dscCard(e) {
+  const v = dscVerdictOf(e);
+  const card = el('div', { className: 'dsc-card v-' + v + (e.demoted ? ' demoted' : '') });
+  card.appendChild(el('div', { className: 'dsc-headline' }, dscHeadline(e)));
+  const matters = e.layers && e.layers.matters && e.layers.matters.text;
+  if (matters) card.appendChild(el('div', { className: 'dsc-matters' }, matters));
+  const meta = dscMeta(e, 'dsc-meta');
+  const when = el('span', null, timeAgo(e.at));
+  when.title = e.at || '';
+  meta.insertBefore(el('span', { className: 'sep' }, '\u00b7'), meta.firstChild);
+  meta.insertBefore(when, meta.firstChild);
+  card.appendChild(meta);
+  card.appendChild(dscVerdictBlock(e, true));
+  card.appendChild(dscWhy(e));
   return card;
+}
+
+// The feed row: two lines, and everything else behind the disclosure.
+//
+// The card above puts seven lines on screen per event, which is right for the
+// handful that answer the question and wrong for the fifty underneath: at that
+// height four events fill a screen, and a feed nobody scrolls to the bottom of
+// is a feed that may as well be three rows long. The age, the verdict and the
+// sentence are what a reader scans; the reason, the axes and the fact set are
+// what they open one row to read.
+function dscRow(e) {
+  const v = dscVerdictOf(e);
+  const row = el('details', { className: 'dsc-row v-' + v + (e.demoted ? ' demoted' : '') });
+
+  const age = el('span', { className: 'dsc-row-age' }, shortAge(e.at));
+  age.title = e.at || '';
+  const main = el('div', { className: 'dsc-row-main' },
+    el('div', { className: 'dsc-row-line' }, dscHeadline(e)));
+  main.appendChild(dscMeta(e, 'dsc-row-meta'));
+
+  row.appendChild(el('summary', null, age, el('span', { className: 'dsc-pill v-' + v }, v), main));
+
+  const body = el('div', { className: 'dsc-row-body' });
+  const matters = e.layers && e.layers.matters && e.layers.matters.text;
+  if (matters) body.appendChild(el('div', { className: 'dsc-matters' }, matters));
+  body.appendChild(dscVerdictBlock(e, false));
+  body.appendChild(dscWhy(e));
+  row.appendChild(body);
+  return row;
 }
 
 // The one thing a fresh deployment gets wrong on its own. With no clearance
@@ -8713,10 +8798,12 @@ function renderDiscover(container, data, leadEvents) {
     el('h2', { style: { margin: '0' } }, 'discover'),
     el('span', { style: { color: 'var(--fg2)', fontSize: '12px' } },
       data.built_at ? 'rolled up ' + timeAgo(data.built_at) : '')));
+  // One line. Four lines of preamble above a feed is four lines of feed the
+  // reader does not get, and the page explains itself better by being read than
+  // by being described.
   container.appendChild(el('div', { className: 'dsc-sub' },
-    'What changed on this chain, said once in plain words and once in the chain\'s own terms, ' +
-    'ranked by how much it is likely to matter rather than by when it happened. ' +
-    'Each row carries a judgement about whether it is worth telling anyone, and the reason behind it.'));
+    'What changed on this chain, in plain words, ranked by how much it is likely to matter. ' +
+    'Open a row for the reasoning and the record behind it.'));
 
   container.appendChild(dscFilters(data));
 
@@ -8762,7 +8849,7 @@ function renderDiscover(container, data, leadEvents) {
         ? 'Nothing here cleared the bar. ' + held.length + ' events were ruled out, below.'
         : 'No events in this window yet.'));
   }
-  for (const e of shown) feed.appendChild(dscCard(e));
+  for (const e of shown) feed.appendChild(dscRow(e));
   container.appendChild(feed);
 
   if (!data.clearance_configured && !(data.verdict_counts || {}).share) {
@@ -8772,7 +8859,7 @@ function renderDiscover(container, data, leadEvents) {
   if (held.length) {
     const ruled = el('details', { className: 'dsc-ruled' },
       el('summary', null, 'ruled out (' + held.length + ')'));
-    for (const e of held) ruled.appendChild(dscCard(e));
+    for (const e of held) ruled.appendChild(dscRow(e));
     container.appendChild(ruled);
   }
 
@@ -8788,7 +8875,7 @@ function renderDiscover(container, data, leadEvents) {
         const page = await api(dscPath(_dscCursor));
         if (gen !== _dscGen) return;
         for (const e of (page.events || [])) {
-          if (wanted.includes(e.verdict) && (inlineHolds || e.verdict !== 'hold')) feed.appendChild(dscCard(e));
+          if (wanted.includes(e.verdict) && (inlineHolds || e.verdict !== 'hold')) feed.appendChild(dscRow(e));
         }
         _dscCursor = page.next_cursor || '';
         if (_dscCursor) { more.disabled = false; more.textContent = 'load more'; }
