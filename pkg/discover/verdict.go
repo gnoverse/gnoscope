@@ -140,6 +140,16 @@ type ClearanceConfig struct {
 	Deny []string `json:"deny"`
 }
 
+// Configured reports whether the operator has supplied any opinion at all.
+//
+// Surfaced in the response so a reader can tell "nothing here is ours" from
+// "nobody has said what is ours", which are very different reasons to see no
+// recommendations.
+func (cfg ClearanceConfig) Configured() bool {
+	return len(cfg.Accounts) > 0 || len(cfg.OtherTeams) > 0 ||
+		len(cfg.Treasury) > 0 || len(cfg.Deny) > 0
+}
+
 // chainLevelKinds belong to nobody in particular, so they are ours with no
 // configuration at all. Nobody privately owns how many wallets joined this week,
 // what the chain's own governance decided, or who validates it.

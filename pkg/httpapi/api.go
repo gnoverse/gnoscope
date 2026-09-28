@@ -18,6 +18,7 @@ import (
 
 	"github.com/moul/mygnoscan/pkg/analyzer"
 	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/moul/mygnoscan/pkg/discover"
 	"github.com/moul/mygnoscan/pkg/indexer"
 	"github.com/moul/mygnoscan/pkg/registry"
 	"github.com/moul/mygnoscan/pkg/store"
@@ -72,7 +73,22 @@ type API struct {
 	// shotUpstream is the gnoshot base URL, or "" when no capture service is
 	// configured. See shot.go.
 	shotUpstream string
+
+	// clearance is the operator's opinion about who owns what, for Discover's
+	// verdict. Empty by default and deliberately so: a public explorer
+	// asserting an affiliation on somebody else's behalf is not its job, and
+	// with no config the best verdict any attributable event reaches is
+	// "maybe". See SetClearance.
+	clearance discover.ClearanceConfig
 }
+
+// SetClearance installs the operator's clearance lists.
+//
+// A setter rather than a constructor argument, matching SetSyncHealth: the API
+// is built before flags that read a file are resolved, and every test and tool
+// that constructs one supplies nothing, which is exactly the empty default the
+// design wants.
+func (a *API) SetClearance(cfg discover.ClearanceConfig) { a.clearance = cfg }
 
 func NewAPI(db *store.DB, clients map[string]*indexer.Client, networks []config.NetworkConfig, analyzer *analyzer.Analyzer) *API {
 	reg, err := registry.Load()
@@ -1009,6 +1025,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/apps", a.HandleAppsHub)
 	mux.HandleFunc("GET /api/registry/awesome", a.HandleAwesome)
 	mux.HandleFunc("GET /api/glossary", a.HandleGlossary)
+	mux.HandleFunc("GET /api/discover", a.HandleDiscover)
 	mux.HandleFunc("GET /api/accounts/rich", a.HandleRichList)
 	mux.HandleFunc("GET /api/accounts/population", a.HandleAccountPopulation)
 	mux.HandleFunc("GET /api/assets", a.HandleAssets)
