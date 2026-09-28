@@ -19,7 +19,15 @@ func (d *DB) UpsertPackage(network, path, name, creator, txHash string, blockHei
 		INSERT OR REPLACE INTO packages (network, path, name, creator, tx_hash, block_height, block_time, is_realm, num_files)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, network, path, name, creator, txHash, blockHeight, blockTime, isRealm, numFiles)
-	return err
+	if err != nil {
+		return err
+	}
+	// The two accounts this path owns, indexed here so that "which package is
+	// g1…" is a lookup rather than a derivation over every path. Written on the
+	// same call as the package so the two cannot drift; RefreshPackageAccounts
+	// is the backfill for a database that predates this and the repair for a
+	// row lost between the two statements.
+	return d.upsertPackageAccounts(network, path)
 }
 
 // InsertPackageSubmission records one MsgAddPackage as its own permanent

@@ -8,7 +8,7 @@ the tooltips in the product are the same bytes.
 to this table. Two places inventing their own phrasing for "parked package" is how a reader
 ends up being told two different things about one state.
 
-Version: 2026-09-23
+Version: 2026-09-28
 
 ## Rules
 
@@ -39,14 +39,17 @@ Enforced by `pkg/glossary`, so breaking one fails CI rather than shipping.
 | MsgAddPackage | The instruction that puts new code on the chain. "Somebody published code" is the whole of it. |
 | namespace | The name in front of the slash, like `moul` in `r/moul/hello`. It is claimed on the chain and only its owner can publish under it. A long `g1...` string there means nobody has claimed a name yet. |
 | package | Reusable code that other programs on the chain can borrow. It remembers nothing of its own; it is a toolbox, not a machine. |
+| package account | The **address** a **realm** keeps its money in. Nobody holds a key for it: it is worked out from the realm's name, so the realm itself is the only thing that can spend from it. |
 | parked | Published but waiting. The code is on the chain and nobody can use it until an approver switches it on. The plain-language rendering of **inert**, and the one the product should use. |
 | proposal | A formal request to change something about the chain. A group with that power votes, and if it passes somebody runs it and the change takes effect. |
 | realm | A program that lives on the chain and remembers things between uses. Everyone who uses it uses the same copy, so what one person did is still there for the next. |
 | render | The page a realm draws for itself. Some realms draw one and some do not, and one that does not is not broken. |
+| session key | A second **address** somebody has allowed to act for their account, within limits they set. It signs, but the chain records the account it acts for, so its own page shows nothing it did. |
 | storage deposit | Money locked up to pay for the space that code and data take on the chain. Unlike gas it comes back if the space is freed. |
 | transaction | One instruction sent to the chain by one person, which either worked or did not. |
 | unique callers | How many different accounts used something, as opposed to how many times it was used. One account using it a thousand times is still one. |
 | validator | One of the machines that agree on what happened and in what order. Mainnet has a small set of them and a different operator runs each one. |
+| vesting | Money handed out when the chain started that unlocks a little at a time. The balance is real and most of it cannot be moved yet. |
 
 ## Two deliberate absences
 

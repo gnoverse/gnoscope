@@ -13668,6 +13668,226 @@ async function loadTxDetail(hash) {
   } catch (err) { container.textContent = ''; container.appendChild(el('p', { style: { color: 'var(--red)', padding: '20px' } }, 'Error: ' + err.message)); }
 }
 
+// --- "What is this address?", above everything else on the page ------------
+//
+// A gno address is forty characters and carries no type. A person's wallet, a
+// realm's treasury, a realm's storage deposit, a delegated signing key and an
+// account nobody has ever touched all look identical, so this page used to open
+// on a transaction table and leave the first question a reader has unanswered.
+// For a realm account it opened on an *empty* table, which reads as "nothing
+// here" when the truth was "15.4M GNS, and this is gnoswap's pool".
+//
+// Every row below is a fact the server proved, and each one links somewhere a
+// reader can go to check it or learn more. A fact that could not be established
+// is absent rather than hedged: an explorer that guesses an identity is worse
+// than one that stays quiet, because a reader acts on what it says.
+//
+// The one case that stays deliberately open is "was this in genesis". A vesting
+// schedule proves yes, because nothing after genesis can set one. Its absence
+// proves nothing, and the panel says so rather than printing "not in genesis".
+
+// IDENTITY_KINDS is the verdict, as a badge and a sentence. Keyed by the
+// endpoint's `kind`, so the two cannot drift into different vocabularies.
+const IDENTITY_KINDS = {
+  package: {
+    badge: 'realm', text: 'realm account',
+    line: 'this is where a realm keeps the coins it is handed. nobody holds a key for it: the address is worked out from the realm’s path, so only the realm itself can spend from it.',
+  },
+  package_deposit: {
+    badge: 'pkg', text: 'storage deposit',
+    line: 'this holds the ugnot locked against a realm’s bytes, refunded to whoever frees them. it is a different account from the realm’s treasury, with a different balance.',
+  },
+  session_key: {
+    badge: 'session', text: 'session key',
+    line: 'this address does not act for itself. it signs on behalf of another account, and every message it sends is recorded under that account, not this one.',
+  },
+  signer: {
+    badge: 'ok', text: 'signer',
+    line: 'somebody holds the key to this address: the chain has verified a signature from it.',
+  },
+  unsigned: {
+    badge: 'send', text: 'never signed',
+    line: 'the chain knows this account and has never seen it sign anything. it is a realm this explorer has not indexed, a key nobody has used yet, or somewhere money was sent by mistake.',
+  },
+  unknown: {
+    badge: 'session', text: 'no account',
+    line: 'the chain has no account here at all: nothing has ever been sent to this address, so it exists only as a string somebody wrote down.',
+  },
+  // Not a verdict the server returns. It is the same `unknown` with the chain
+  // half missing, which means the question was never actually asked.
+  unreadable: {
+    badge: 'session', text: 'not established',
+    line: 'the chain could not be read for this address, so what it is has not been established. everything below comes from the index alone.',
+  },
+};
+
+// fmtUnixDay is a unix timestamp as a bare date. Not fmtExpiry, which appends
+// "(expired)" to anything in the past: correct for a grant's deadline, wrong
+// for a vesting schedule's start, which is always in the past and fine.
+function fmtUnixDay(unix) {
+  return new Date(unix * 1000).toISOString().slice(0, 10);
+}
+
+// renderAddressIdentity draws the panel. Silent when the endpoint could not be
+// reached, because an empty card that says nothing is worse than no card.
+// deploys comes from the caller rather than the payload: /api/address already
+// counts them for the same page, and asking this endpoint for the number too
+// would run the package search twice on every load.
+function renderAddressIdentity(container, ident, addr, network, deploys) {
+  if (!ident || !ident.kind) return;
+  const kind = (ident.kind === 'unknown' && !ident.chain)
+    // The unknown verdict has two causes and only one of them is a fact about
+    // the address. Saying "the chain has no account here" when the chain is
+    // exactly what could not be read would be the panel's worst failure: a
+    // confident answer produced by an outage.
+    ? IDENTITY_KINDS.unreadable
+    : (IDENTITY_KINDS[ident.kind] || IDENTITY_KINDS.unknown);
+  const box = el('div', { className: 'card', style: { margin: '12px 0' } });
+
+  const head = el('div', { style: { marginBottom: '6px' } });
+  head.appendChild(badge(kind.badge, kind.text));
+  head.append(' ' + kind.line);
+  box.appendChild(head);
+
+  const rows = el('div', { style: { fontSize: '13px', marginTop: '8px' } });
+  let any = false;
+  const row = (k, ...parts) => {
+    const d = el('div', { className: 'pd-row' });
+    d.appendChild(el('span', { style: { color: 'var(--fg2)' } }, k + ': '));
+    for (const p of parts) { if (typeof p === 'string') d.append(p); else if (p) d.appendChild(p); }
+    rows.appendChild(d);
+    any = true;
+    return d;
+  };
+  // Every fact that has a page behind it gets one. "learn more" without a
+  // destination is the failure this panel exists to fix.
+  const glossaryLink = (text) => link(text || 'what this means', () => navigate('/glossary'));
+  // A link into one of this page's own tabs. It clicks the strip rather than
+  // rewriting the URL and reloading: the pane is already built, and a reload
+  // would throw away the two fetches that painted it.
+  const tabLink = (text, tab) => link(text, () => {
+    const t = document.querySelector('#address-detail-content .tabs .tab[data-tab="' + tab + '"]');
+    if (t) t.click(); else navigate('/address/' + addr + netSuffix(network) + '?tab=' + tab);
+  });
+
+  // --- what it is -----------------------------------------------------------
+  if (ident.package) {
+    const r = row(ident.package.deposit ? 'deposit for' : 'belongs to',
+      realmPathEl(ident.package.path, network));
+    r.append(' ');
+    r.appendChild(link('open the realm →', () => navigate('/realm' + ident.package.path.replace('gno.land', '') + netSuffix(network))));
+    row('how we know', 'the address is the first 20 bytes of sha256("pkgPath:' + ident.package.path +
+      (ident.package.deposit ? '.storageDeposit' : '') +
+      '"), bech32-encoded. the chain stores only the hash, so this is derived rather than looked up.');
+  }
+  if (ident.session_of) {
+    const r = row('signs for', addrLinkFull(ident.session_of, network));
+    if (ident.session_grants > 1) r.append(' (' + fmtNum(ident.session_grants) + ' grants to this key over time)');
+    r.append(' ');
+    r.appendChild(glossaryLink('session key →'));
+  }
+
+  // --- has anyone ever signed with it --------------------------------------
+  //
+  // The single most useful fact on the page and the one nothing else can give:
+  // tm2 records an account's public key the first time it verifies a signature
+  // and never otherwise, so a null key on a funded account is proof.
+  if (ident.chain) {
+    if (ident.chain.has_signed) {
+      const r = row('signing', 'has signed ' + fmtNum(ident.chain.sequence) +
+        (ident.chain.sequence === 1 ? ' transaction' : ' transactions') +
+        '; the chain holds a ' + (ident.chain.pub_key_type || '').replace('/tm.PubKey', '') + ' public key for it');
+      if (ident.transactions) {
+        r.append(' · ');
+        r.appendChild(link('see them →', () => { urlSetParam('tab', 'transactions'); location.reload(); }));
+      }
+    } else if (ident.chain.exists) {
+      row('signing', 'never: the chain holds no public key here, and it records one the first time it verifies a signature');
+    }
+    // fmtBalanceStr for the single-denom case, so this reads in GNOT like every
+    // other balance on the site; fmtCoins for a multi-denom string, which
+    // fmtBalanceStr would pass through unchanged.
+    if (ident.chain.coins) {
+      row('balance', /^\d+ugnot$/.test(ident.chain.coins) ? fmtBalanceStr(ident.chain.coins) : fmtCoins(ident.chain.coins));
+    } else {
+      // The most common shape on this chain, and the one that used to make a
+      // realm's page look broken: gnoswap's pool holds 15.4M GNS and has no
+      // bank account at all, because a GRC20 balance is realm state and never
+      // a coin. Pointing at the tab that does hold the answer is the whole
+      // point of saying it.
+      const r = row('balance', ident.chain.exists
+        ? 'no ugnot in the bank'
+        : 'no bank account at all, so it has never held ugnot');
+      r.append('. a GRC20 balance is realm state, counted separately · ');
+      r.appendChild(tabLink('the holdings tab →', 'holdings'));
+    }
+    if (ident.chain.account_number) {
+      row('account no.', fmtNum(ident.chain.account_number),
+        ' · assigned when the account was created, in order');
+    }
+  } else if (ident.chain_error) {
+    row('chain', 'could not be read: ' + ident.chain_error + '. what is below comes from the index only.');
+  }
+
+  // --- genesis, and what its absence does not mean --------------------------
+  if (ident.chain && ident.chain.vesting) {
+    const v = ident.chain.vesting;
+    const r = row('genesis', 'funded when the chain started: ' +
+      (/^\d+ugnot$/.test(v.original) ? fmtBalanceStr(v.original) : fmtCoins(v.original)) +
+      ' vesting from ' + fmtUnixDay(v.start_time) + ' to ' + fmtUnixDay(v.end_time));
+    r.append(' ');
+    r.appendChild(glossaryLink('vesting →'));
+  } else if (ident.chain && ident.chain.exists) {
+    // Said, rather than left to a reader to infer from a missing row. Genesis
+    // entries without a vesting clause are ordinary accounts afterwards, and
+    // the only exact source is the genesis file, which the public RPC will not
+    // serve: /genesis is over 250MB and the node truncates it at 30 seconds.
+    row('genesis', 'no vesting schedule, which does not settle it: an allocation made without one leaves no trace on the account');
+  }
+
+  // --- who, by name ---------------------------------------------------------
+  if (ident.user) {
+    const r = row('registered name', el('span', { style: { color: 'var(--accent)' } }, '@' + ident.user.name));
+    if (ident.user.alias) r.append(' (an alias; not the current name)');
+    r.append(' on r/sys/users at ');
+    r.appendChild(blockWithAge(ident.user.block_height, ident.user.block_time, network));
+    r.append(' · ');
+    r.appendChild(el('a', { href: 'https://gno.land/u/' + ident.user.name, target: '_blank', rel: 'noopener' }, 'gnoweb ↗'));
+  }
+  // The header above prints this same label, from the same map. Repeating it
+  // here would spend a row saying nothing new; it earns one only when the
+  // header did not show it.
+  const headerLabel = (addrInfo(addr) || {}).label;
+  if (ident.label && ident.label !== headerLabel && (!ident.package || ident.label !== ident.package.path)) {
+    const r = row('known as', el('span', { style: { color: 'var(--accent)' } }, ident.label));
+    if (ident.label_kind) r.append(' (' + ident.label_kind + ')');
+    if (ident.label_why) r.title = ident.label_why;
+  }
+  if (ident.validator) {
+    const r = row('validator', ident.validator + ' ');
+    r.appendChild(link('the validator set →', () => navigate('/validators' + netSuffix(network))));
+    r.append(' · self-declared on r/gnops/valopers, so anyone may claim any name');
+  }
+
+  // --- what it has done -----------------------------------------------------
+  if (ident.delegates) {
+    const r = row('delegates', fmtNum(ident.delegates) + (ident.delegates === 1 ? ' key signs' : ' keys sign') + ' for this account ');
+    r.appendChild(link('the sessions tab →', () => { urlSetParam('tab', 'sessions'); location.reload(); }));
+  }
+  if (deploys) {
+    const r = row('deployed', fmtNum(deploys) + (deploys === 1 ? ' package' : ' packages') + ' ');
+    r.appendChild(link('the deploys tab →', () => { urlSetParam('tab', 'deploys'); location.reload(); }));
+  }
+  if (ident.first_seen) {
+    const r = row('first call', '');
+    r.appendChild(blockWithAge(ident.first_seen.height, ident.first_seen.at, network));
+    r.append(' · the first transaction it ever signed');
+  }
+
+  if (any) box.appendChild(rows);
+  container.appendChild(box);
+}
+
 // renderSessionIdentity says whose key this address is, when it is one.
 //
 // This is the page that used to be blank. A session signs for its master and
@@ -13912,9 +14132,13 @@ async function loadAddressDetail(addr, urlTab) {
     // Whose key this is, if it is one. Optional for the same reason: an
     // instance whose index has not swept this far must not take the page down.
     const identityPath = { path: 'address/' + addr + '/session', fallback: { is_session: false, grants: [] } };
-    await apiSWR(['address/' + addr, 'blocks?limit=50', sessionsPath, identityPath],
-      ([data, blocksData, sessionsData, identityData]) => {
-        renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, urlTab);
+    // What this address *is*, which is the question the page opens on. Optional
+    // like the two above: it makes a live RPC call, and a node that is down must
+    // cost this page its identity panel and not its transactions.
+    const whatPath = { path: 'address/' + addr + '/identity', fallback: null };
+    await apiSWR(['address/' + addr, 'blocks?limit=50', sessionsPath, identityPath, whatPath],
+      ([data, blocksData, sessionsData, identityData, whatData]) => {
+        renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, whatData, urlTab);
       });
   } catch (err) {
     container.textContent = '';
@@ -13922,7 +14146,7 @@ async function loadAddressDetail(addr, urlTab) {
   }
 }
 
-function renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, urlTab) {
+function renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, whatData, urlTab) {
   ++_detailGen;
   const gen = _detailGen;
   destroyDetailCharts();
@@ -13970,9 +14194,12 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
   container.appendChild(addrRow);
   _watchTarget = { kind: 'addresses', id: addr, height: lastHeight };
 
-  // Before the stats. "this address has no transactions" and "this address is a
-  // key that signs under another account" look identical otherwise, and only
-  // one of them means the page is empty for a reason.
+  // Before the stats, and before everything else: "this address has no
+  // transactions" and "this address is a realm holding 15.4M GNS" look
+  // identical otherwise, and the empty table below is the wrong first answer to
+  // both. The panel is the summary; the session card under it is the detail,
+  // and it only draws for the one kind that has any.
+  renderAddressIdentity(container, whatData, addr, txs[0]?.network || urlParam('network'), pkgs.length);
   renderSessionIdentity(container, identityData, addr);
 
   const sessionCount = (sessionsData?.supported && (sessionsData.sessions || []).length) || 0;

@@ -45,6 +45,16 @@ type DB struct {
 	// startup. Rows survive a network being retired from the config, so without
 	// this the database — not the config — decides which networks exist.
 	configured []string
+
+	// pkgAccountsMu and pkgAccountsBuilt guard the one-shot build of the
+	// address -> package index, for a database whose packages arrived by some
+	// route other than UpsertPackage: a restored backup, a hand-seeded test
+	// fixture, or a binary upgraded onto an existing file. Without it such a
+	// database answers "not a package" for every realm account until the next
+	// rollup tick, which is five minutes of the explorer confidently printing a
+	// bare hash for something it can name. See ensurePackageAccounts.
+	pkgAccountsMu    sync.Mutex
+	pkgAccountsBuilt map[string]bool
 }
 
 // SetConfiguredNetworks scopes unfiltered reads to the networks currently in the
@@ -1191,6 +1201,40 @@ func initSchema(db *sql.DB) error {
 		-- The slug is stored rather than an id. A slug is the badge's identity
 		-- everywhere else too (the URL, the API, the catalog), and an integer
 		-- key would add a second identity that has to agree with the first.
+		-- package_accounts: the reverse of pkg/gnoaddr.Derive, materialised.
+		--
+		-- Every deployed package owns two accounts and the chain stores neither,
+		-- because both are pure functions of the path: the first twenty bytes of
+		-- SHA-256("pkgPath:" + path), and the same again with ".storageDeposit"
+		-- appended. A hash is one-way, so "which package owns g1dexaf6a…" has no
+		-- lookup anywhere on chain or in any indexer. The only way back is to
+		-- derive every known path forward and keep the answers, which is this
+		-- table.
+		--
+		-- Without it an explorer prints a wall of hashes and a reader cannot tell
+		-- a realm's treasury from a person: g1dexaf6aqkkyr9yfy9d5up69lsn7ra80af34g5v
+		-- holds 15.4M GNS and is gno.land/r/gnoswap/pool.
+		--
+		-- Written by UpsertPackage, so it is in step with packages by
+		-- construction, and rebuilt by RefreshPackageAccounts for databases that
+		-- predate it or that lost a write between the two statements.
+		--
+		-- ⚠️ deposit is not decoration. r/x/y and r/x/y's storage deposit are two
+		-- different accounts with two different balances, and attributing a
+		-- deposit refund to a realm's treasury is the error this column exists to
+		-- prevent.
+		CREATE TABLE IF NOT EXISTS package_accounts (
+			network TEXT NOT NULL,
+			address TEXT NOT NULL,
+			path    TEXT NOT NULL,
+			deposit BOOLEAN NOT NULL DEFAULT 0,
+			PRIMARY KEY (network, address)
+		) WITHOUT ROWID;
+
+		-- "Which accounts does this path own" reads the other way, and the primary
+		-- key leads with the address.
+		CREATE INDEX IF NOT EXISTS idx_package_accounts_path ON package_accounts(network, path);
+
 		CREATE TABLE IF NOT EXISTS achievements (
 			network      TEXT NOT NULL,
 			address      TEXT NOT NULL,

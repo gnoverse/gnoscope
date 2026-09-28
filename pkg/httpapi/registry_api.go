@@ -85,11 +85,53 @@ func appendChecked(why, checked string) string {
 }
 
 func (a *API) HandleLabels(w http.ResponseWriter, r *http.Request) {
-	network := a.networkParam(r)
-	derived, err := a.db.DerivedAddressLabels(network)
+	labels, err := a.labelsFor(a.networkParam(r))
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
+	}
+	JSONResponse(w, labels)
+}
+
+// labelsFor is the merged label map, extracted from the handler so that
+// anything resolving a single address reads the same answer the page does. Two
+// code paths producing two names for one address is how an explorer ends up
+// disagreeing with itself between a table row and the page that row links to.
+func (a *API) labelsFor(network string) (map[string]store.AddressLabel, error) {
+	derived, err := a.db.DerivedAddressLabels(network)
+	if err != nil {
+		return nil, err
+	}
+	// Package accounts first, so a name from any other source overrides them.
+	//
+	// They are the largest block of labels by far -- two per deployed package,
+	// against a hundred-odd from every other source combined -- and they are
+	// also the least specific: "gno.land/r/gnoswap/pool" is what an address
+	// *is*, while a curated or registered name is what somebody decided to call
+	// it. Where both exist the second is the better headline, and the first is
+	// still one click away on the address page.
+	//
+	// Without this, every realm treasury on the rich list, in the flows table
+	// and on any transfer row reads as a bare hash, which is the hole
+	// package_accounts exists to close.
+	//
+	// It is the largest thing this endpoint returns and the endpoint gates
+	// first paint, so the cost was measured rather than assumed: on mainnet's
+	// 542 packages it takes /api/labels from 4.4KB to 45KB gzipped, against an
+	// index.html that is 315KB gzipped on the same load (2026-09-28). A sixth
+	// of what the page already ships, for naming every realm account on the
+	// site. The addresses themselves are most of it and do not compress, so
+	// trimming the prose buys almost nothing; if this ever has to shrink, the
+	// move is to drop the storage-deposit half, which halves the entry count
+	// and leaves those accounts unlabelled rather than mislabelled.
+	pkgLabels, err := a.db.PackageAccountLabels(network)
+	if err != nil {
+		return nil, err
+	}
+	for addr, l := range pkgLabels {
+		if _, taken := derived[addr]; !taken {
+			derived[addr] = l
+		}
 	}
 	// The registry overwrites the deploy-dominance guess for the same address,
 	// and both are "derived" so precedence could not settle it. It is not a
@@ -100,13 +142,12 @@ func (a *API) HandleLabels(w http.ResponseWriter, r *http.Request) {
 	// deploys suggest (see pkg/httpapi/namespaces.go).
 	registered, err := a.db.RegisteredAddressLabels(network)
 	if err != nil {
-		jsonError(w, err.Error(), 500)
-		return
+		return nil, err
 	}
 	for addr, l := range registered {
 		derived[addr] = l
 	}
-	JSONResponse(w, mergeLabels(derived, a.registry.Addresses))
+	return mergeLabels(derived, a.registry.Addresses), nil
 }
 
 type appsResponse struct {

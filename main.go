@@ -253,6 +253,15 @@ func run() error {
 			if err := db.RefreshFirstSeen(); err != nil {
 				log.Printf("first_seen: %v", err)
 			}
+			// The address -> package index. UpsertPackage keeps it in step on a
+			// live syncer, so this is the backfill: it is what fills the table
+			// on a database built before it existed. Two hashes per path over a
+			// few hundred paths, so it rides along rather than earning a ticker.
+			if n, err := db.RefreshPackageAccounts(); err != nil {
+				log.Printf("package_accounts: %v", err)
+			} else {
+				log.Printf("package_accounts: %d paths indexed", n)
+			}
 			// Third separate call, same reasoning, plus one of its own: this
 			// one runs generated prose through the grounding gate, and a build
 			// that rejects events is an emitter bug rather than a data problem.
