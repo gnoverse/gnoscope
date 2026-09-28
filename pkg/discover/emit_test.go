@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moul/mygnoscan/pkg/glossary"
+	"github.com/gnoverse/gnoscope/pkg/glossary"
 )
 
 // realGlossaryOrder is the shipped headword list, and passing it is what makes
