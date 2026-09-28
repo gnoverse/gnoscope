@@ -945,12 +945,13 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/stats", a.HandleStats)
 	mux.HandleFunc("GET /api/pulse", a.HandlePulse)
 	mux.HandleFunc("GET /api/realms", a.HandleRealms)
-	// These three beat the /api/realm/{path...} wildcard below by Go 1.22 mux
+	// These four beat the /api/realm/{path...} wildcard below by Go 1.22 mux
 	// precedence: the more specific pattern wins, and no gno path starts with
-	// "cousage/", "defi/" or "usage/" because the first segment is always r/
-	// or p/.
+	// "cousage/", "defi/", "deploys/" or "usage/" because the first segment is
+	// always r/ or p/.
 	mux.HandleFunc("GET /api/realm/cousage/{path...}", a.HandleRealmCoUsage)
 	mux.HandleFunc("GET /api/realm/defi/{path...}", a.HandleRealmDefi)
+	mux.HandleFunc("GET /api/realm/deploys/{path...}", a.HandleRealmDeploys)
 	mux.HandleFunc("GET /api/realm/usage/{path...}", a.HandleRealmUsage)
 	mux.HandleFunc("GET /api/realm/{path...}", a.HandleRealm)
 	mux.HandleFunc("GET /api/views", a.HandleViews)
