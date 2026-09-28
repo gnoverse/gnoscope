@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/moul/mygnoscan/pkg/gnoaddr"
 	"github.com/moul/mygnoscan/pkg/store"
 )
 
@@ -103,7 +102,8 @@ type pulseWindowOption struct {
 // FromPath and ToPath are the answer to "is this a person or a realm", which is
 // the first thing anyone asks of a transfer list and which no column of the
 // database holds: a package's account is a hash of its path, so the only way
-// back is to derive every known path forward (see pkg/gnoaddr.Reverse). Absent
+// back is to derive every known path forward, which the syncer does once per
+// deploy into package_accounts (pkg/store/packageaccounts.go). Absent
 // means "not a package this explorer knows", which on a synced chain reads as a
 // human — the frontend says it that way round rather than claiming certainty.
 type pulseFlow struct {
@@ -150,24 +150,25 @@ func (a *API) HandlePulse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Built once per request over every path this chain knows: a few hundred
-	// paths, two hashes each. Not cached beyond the response cache in front of
-	// this handler, because a map that outlives a deploy would stop resolving
-	// exactly the realms a reader came to look at.
-	paths, err := a.db.PackagePaths(network)
+	// Read from package_accounts, which the syncer writes as it stores each
+	// package. This used to rebuild the mapping per request by deriving every
+	// known path forward: correct, and now redundant. The table is written on
+	// the same call that records the package, so it is exactly as live as the
+	// derivation was, and it stays resolvable for the realm deployed a minute
+	// ago, which was the reason the derivation was not cached.
+	rev, err := a.db.PackageAccounts(network)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
 	}
-	rev := gnoaddr.NewReverse(paths)
 
 	flows := make([]pulseFlow, 0, len(pulse.HotFlows))
 	for _, f := range pulse.HotFlows {
 		pf := pulseFlow{HotFlow: f}
-		if o, ok := rev.Lookup(f.From); ok {
+		if o, ok := rev[f.From]; ok {
 			pf.FromPath, pf.FromDeposit = o.Path, o.Deposit
 		}
-		if o, ok := rev.Lookup(f.To); ok {
+		if o, ok := rev[f.To]; ok {
 			pf.ToPath, pf.ToDeposit = o.Path, o.Deposit
 		}
 		flows = append(flows, pf)

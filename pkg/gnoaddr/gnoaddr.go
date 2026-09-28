@@ -38,6 +38,14 @@ const addressSize = 20
 // that holds nothing and belongs to nobody, which is worse than refusing.
 var runPath = regexp.MustCompile(`^[a-z0-9.\-]+/e/(g1[a-z0-9]+)/run$`)
 
+// IsRunPath reports whether a path is gno.land/e/<g1…>/run.
+//
+// Callers that build an address -> path index need this, and cannot get it from
+// Derive: Derive resolves a run path to the *caller's* own address, which is a
+// person. Indexing that would put a realm's name on a human's account, which is
+// the one answer worse than no answer because it is confidently wrong.
+func IsRunPath(pkgPath string) bool { return runPath.MatchString(pkgPath) }
+
 // Derive returns the account a package's coins live in, or "" for a path with
 // no account: an empty path, or a std library path with no domain.
 func Derive(pkgPath string) string {

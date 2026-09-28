@@ -72,7 +72,13 @@ snapshot. No gno dependency: the `@type` discriminators are enough.
 
 **`pkg/gnoaddr`** — derives the two accounts every package path owns (the realm
 banker and its storage deposit). Both are pure functions of the path, so nothing
-on chain stores them and no indexer can look them up.
+on chain stores them and no indexer can look them up. The other direction, given
+an address name its package, has no lookup either and cannot have one: it is
+built by deriving every known path forward into `package_accounts`, which
+`UpsertPackage` writes on the same call that records the package
+(`pkg/store/packageaccounts.go`). That table is what lets the rich list, the
+flows table and the address page all say "this is gnoswap's pool" instead of
+printing a hash.
 
 **`pkg/achievements`** — the catalog of deeds an address can have done on chain:
 a slug, what it means, how a reader earns it, and the one query that decides who

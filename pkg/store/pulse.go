@@ -777,7 +777,7 @@ func (d *DB) pulseHotLibs(nf, since string, limit int) ([]HotLib, error) {
 // PackagePaths lists every package path known on a network.
 //
 // Its one caller derives each path's two accounts to resolve a transfer's ends
-// (pkg/gnoaddr.Reverse). Reading paths rather than exposing the derivation here
+// (package_accounts). Reading paths rather than exposing the derivation here
 // keeps the store free of the address format: this file knows about rows, and
 // what a path hashes to is not one.
 func (d *DB) PackagePaths(network string) ([]string, error) {
