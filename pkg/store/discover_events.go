@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -355,4 +356,70 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// DiscoverScorePercentiles returns the 90th and 60th percentile of score_base
+// over a window, which are the interest-bucket boundaries.
+//
+// Over score_base and not over the final score, deliberately. The final score
+// includes recency, which changes every second, so buckets drawn from it would
+// make an event's interest level drift purely with the clock: something "high"
+// at breakfast is "medium" by lunch, and the canonical "tell me what to share"
+// query stops being reproducible. score_base never changes once written, so
+// these boundaries move only when the chain's mix of events actually moves.
+//
+// Relative rather than absolute for the reason the design gives: a threshold
+// set today quietly marks everything high the month the chain doubles.
+func (d *DB) DiscoverScorePercentiles(network, since string) (p90, p60 float64, err error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	args := []any{network}
+	q := `SELECT score_base FROM discover_events WHERE network = ? AND score_base > 0`
+	if since != "" {
+		q += ` AND at >= ?`
+		args = append(args, since)
+	}
+	q += ` ORDER BY score_base`
+
+	rows, err := d.db.Query(q, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+
+	var scores []float64
+	for rows.Next() {
+		var s float64
+		if err := rows.Scan(&s); err != nil {
+			return 0, 0, err
+		}
+		scores = append(scores, s)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+	// No distribution yet means no basis for calling anything high. Returning
+	// +Inf makes every event low, which is the honest answer on an empty table
+	// and fails closed: an empty feed recommends nothing rather than
+	// recommending everything.
+	if len(scores) == 0 {
+		return math.Inf(1), math.Inf(1), nil
+	}
+	return percentileOf(scores, 0.90), percentileOf(scores, 0.60), nil
+}
+
+// percentileOf takes the nearest-rank percentile of an ascending slice.
+func percentileOf(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	i := int(math.Ceil(p*float64(len(sorted)))) - 1
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(sorted) {
+		i = len(sorted) - 1
+	}
+	return sorted[i]
 }

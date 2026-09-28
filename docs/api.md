@@ -133,6 +133,18 @@ bounded at 3650 days instead.
 | `GET /api/shot/site` | a screenshot of one listed off-chain app. `url` must appear verbatim in the vendored snapshot; anything else is a 400 |
 | `GET /api/views` | **the one number here the chain did not provide**: how many times each realm was opened on this explorer, per `window` (24h/7d/30d/90d, default 30d). Carries `kind: "inferred"` and a `why` saying so in the payload, because it is this server's own measurement and not a chain fact: gno.land records no reads, and this sees nothing served by gnoweb, Gnoscan or a wallet. Robots and this server's own cache warmer are excluded; nothing about a reader is stored, only a count per realm per day |
 | `GET /api/glossary` | plain-language definitions for the words this explorer uses: `{version, count, order, terms: {term: {gloss, also}}}`. `order` is the document's own ordering; `also` lists the other headwords a gloss leans on, so a renderer can gloss them on first use and a feed can inline them as parentheticals. Parsed from [`docs/glossary.md`](./glossary.md), which is the single source and wins over any other wording in the product. No `network`: the words mean the same thing on every chain |
+| `GET /api/discover` | what is new on this chain, ranked, each row with a plain-language `headline`, an `explanation`, a `verdict` (`share`/`maybe`/`hold`) and the `judgement` behind it. **Requires `network`**: merging two chains into one ranked list produces a page true of neither. `window` = `24h`/`7d`/`30d` (default) /`all`, or an explicit `from`; `kind`, `namespace`, `actor`, `verdict` filter; `highlights=N` is the shorthand for a short window, N rows and a tight diversity cap. `limit` default 50, max 200. Paging is keyset via `cursor`, never `OFFSET`. Served from a rollup rebuilt every few minutes: `built_at` against `generated_at` is the page's real staleness |
+
+**Discover recommends nothing it has not been told it may.** `verdict` is a closed
+enum and **`share` requires `clearance == "ours"`**, with no other path to it at
+any interest level. Who owns what comes from `-clearance=<file>`
+([example](./clearance.example.json)), and the default is empty: mygnoscan ships
+no opinion, because a public explorer asserting an affiliation on somebody else's
+behalf is not its job. With no config every attributable event is `unclear` and
+tops out at `maybe`; chain-wide facts are `ours` regardless, because nobody
+privately owns how many wallets joined this week. `clearance_configured` in the
+response distinguishes "nothing here is ours" from "nobody has said what is
+ours".
 
 **Address labels are global, not per network.** An address is the same key on
 every chain, so a name earned on one applies everywhere.

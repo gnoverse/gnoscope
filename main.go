@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/moul/mygnoscan/pkg/analyzer"
 	"github.com/moul/mygnoscan/pkg/config"
+	"github.com/moul/mygnoscan/pkg/discover"
 	"github.com/moul/mygnoscan/pkg/httpapi"
 	"github.com/moul/mygnoscan/pkg/indexer"
 	"github.com/moul/mygnoscan/pkg/store"
@@ -39,13 +41,14 @@ func main() {
 
 func run() error {
 	var (
-		listenAddr  = flag.String("listen", ":8888", "listen address")
-		configPath  = flag.String("config", "", "config file path (JSON)")
-		networkFlag = flag.String("network", "", "single network ID (overrides config)")
-		indexerFlag = flag.String("indexer", "", "single network indexer URL (overrides config)")
-		rpcFlag     = flag.String("rpc", "", "single network RPC URL")
-		dbPath      = flag.String("db", "mygnoscan.db", "SQLite database path")
-		syncOnStart = flag.Bool("sync", true, "sync data from indexer on start")
+		listenAddr    = flag.String("listen", ":8888", "listen address")
+		configPath    = flag.String("config", "", "config file path (JSON)")
+		networkFlag   = flag.String("network", "", "single network ID (overrides config)")
+		indexerFlag   = flag.String("indexer", "", "single network indexer URL (overrides config)")
+		rpcFlag       = flag.String("rpc", "", "single network RPC URL")
+		dbPath        = flag.String("db", "mygnoscan.db", "SQLite database path")
+		clearanceFlag = flag.String("clearance", "", "JSON file naming which namespaces are ours, which belong to other teams, and which must not be narrated (Discover verdicts). Empty means recommend nothing that is not chain-wide")
+		syncOnStart   = flag.Bool("sync", true, "sync data from indexer on start")
 		// Block backfill is the one sync phase that can pull hundreds of
 		// megabytes per network (~130 bytes/block, ~430MB at mainnet's 3.3M
 		// blocks), so it is the one phase an operator must be able to bound.
@@ -351,6 +354,22 @@ func run() error {
 
 	// Set up API routes
 	api := httpapi.NewAPI(db, clients, cfg.Networks, analyzer)
+	if *clearanceFlag != "" {
+		raw, err := os.ReadFile(*clearanceFlag)
+		if err != nil {
+			// Fatal: an operator who passed -clearance and got a typo would
+			// otherwise run with the empty default, which recommends nothing,
+			// and conclude the feature is broken rather than the path is wrong.
+			log.Fatalf("clearance %s: %v", *clearanceFlag, err)
+		}
+		var clearance discover.ClearanceConfig
+		if err := json.Unmarshal(raw, &clearance); err != nil {
+			log.Fatalf("clearance %s: %v", *clearanceFlag, err)
+		}
+		api.SetClearance(clearance)
+		log.Printf("clearance: %d ours, %d other teams, %d treasury, %d denied",
+			len(clearance.Accounts), len(clearance.OtherTeams), len(clearance.Treasury), len(clearance.Deny))
+	}
 	api.SetSyncHealth(syncHealth)
 	api.SetShotUpstream(*gnoshotURL)
 	if api.ShotsEnabled() {
