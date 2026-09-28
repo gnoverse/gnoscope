@@ -910,3 +910,36 @@ test('a window with nothing in it says so rather than drawing an empty box', asy
   await page.getByRole('button', { name: 'active in 24h', exact: true }).click();
   await expect(page.locator('#contract-map')).toContainText('no contracts to show');
 });
+
+// The flow particles must stop when you leave the page, and "leave" here does
+// not mean what the animation assumed it meant.
+//
+// route() switches pages by dropping an `active` class off `#view-<name>`, so
+// the contracts view is hidden and never removed. A d3.timer guarding on
+// `holder.node().isConnected` therefore never sees a reason to stop, and up to
+// ninety particles go on calling getPointAtLength once per animation frame
+// while the reader is three pages away, until they reload.
+//
+// Navigation here has to be a click, not page.goto: a full load would stop the
+// timer by destroying the document, which is exactly the case that was never
+// broken.
+test('the flow particles stop when you navigate off the contracts page', async ({ page }) => {
+  const seen = watch(page);
+  // Imports, because the fixture's hub has sixty dependants and particles are
+  // only drawn on edges that exist.
+  await page.goto('/contracts?view=orbit&edges=imports&flow=1');
+  await page.waitForSelector('#contract-map svg circle[data-path]', { timeout: 20_000 });
+
+  const running = () => page.evaluate(() => Boolean(_contracts.timer));
+  await expect.poll(running, { timeout: 10_000, message: 'no particle timer started' })
+    .toBe(true);
+
+  await page.locator('#nav-txs').click();
+  await page.waitForURL(/\/txs/, { timeout: 10_000 });
+
+  // The guard fires on the next animation frame, not on the click.
+  await expect.poll(running, { timeout: 5_000, message: 'particle timer still running off-page' })
+    .toBe(false);
+
+  expect(seen.jsErrors).toEqual([]);
+});

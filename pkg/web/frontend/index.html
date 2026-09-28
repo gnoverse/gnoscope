@@ -21772,10 +21772,27 @@ function animateContractFlow(layer, pathNodes, linkData, maxWeight, directed) {
   const sel = holder.selectAll('circle').data(particles).join('circle')
     .attr('r', 1.8).attr('fill', 'var(--accent)').attr('fill-opacity', 0.85);
 
+  // Resolved once, outside the tick: `closest` walks the tree and this runs
+  // sixty times a second.
+  const pageEl = holder.node().closest('.view');
+
   _contracts.timer = d3.timer(elapsed => {
-    // Navigating away tears the SVG out without going through a repaint, and
-    // getPointAtLength on a detached path is a console error per frame.
-    if (!holder.node().isConnected) { _contracts.timer.stop(); _contracts.timer = null; return; }
+    // Two ways to stop, because there are two ways to leave.
+    //
+    // `isConnected` alone was wrong, and wrong in the direction that costs
+    // something: route() switches pages by dropping an `active` class off
+    // `#view-<name>` and never removes the node, so the holder stays connected
+    // forever and ninety particles went on querying getPointAtLength once a
+    // frame while the reader was three pages away. Only a reload stopped it.
+    //
+    // The class is the real signal for "not on screen". `isConnected` stays as
+    // the second half because a node can also be detached outright, and a
+    // detached path's getPointAtLength is a console error per frame.
+    if (!pageEl || !pageEl.isConnected || !pageEl.classList.contains('active')) {
+      _contracts.timer.stop();
+      _contracts.timer = null;
+      return;
+    }
     sel.attr('transform', p => {
       let u = ((elapsed / p.dur) + p.offset) % 1;
       if (p.back) u = 1 - u;
