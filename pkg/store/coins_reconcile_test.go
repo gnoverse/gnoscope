@@ -186,3 +186,102 @@ func TestUnemittedSpendKeepsRefundsNegative(t *testing.T) {
 		t.Errorf("storage deposit = %d, want -600 (a refund is a credit)", got.StorageDepositUgnot)
 	}
 }
+
+// A package's storage deposit is charged to its creator on the *approver's*
+// enable transaction, so attributing storage purely by the transaction's caller
+// books it to the wrong account.
+//
+// Measured on mainnet before this was handled: one deployer's balance was short
+// by 119.14 GNOT, of which 118.91 was exactly this.
+func TestUnemittedSpendClaimsEnableDeposits(t *testing.T) {
+	db := NewTestDB(t)
+	const (
+		when     = "2026-01-01T00:00:00Z"
+		approver = "g1approver000000000000000000000000000"
+		pkgPath  = "gno.land/r/payer/app"
+	)
+
+	// The submission: parked, and under the inert policy it takes no deposit,
+	// which is why there is no storage event on this transaction.
+	if err := db.UpsertTransaction("alpha", "SUBMIT", 100, when, 0, 0, 2000, true); err != nil {
+		t.Fatalf("UpsertTransaction: %v", err)
+	}
+	if err := db.InsertPackageSubmission("alpha", "SUBMIT", 0, pkgPath, "app",
+		payer, 100, when, true, 1, true); err != nil {
+		t.Fatalf("InsertPackageSubmission: %v", err)
+	}
+
+	// The enable: signed by the approver, carrying the deposit, and with no
+	// message row of its own. That shape is what identifies it.
+	if err := db.UpsertTransaction("alpha", "ENABLE", 101, when, 0, 0, 500, true); err != nil {
+		t.Fatalf("UpsertTransaction: %v", err)
+	}
+	if err := db.InsertStorageEvent("alpha", "ENABLE", 0, pkgPath, 101, when,
+		"deposit", 2037, 203700); err != nil {
+		t.Fatalf("InsertStorageEvent: %v", err)
+	}
+
+	got, err := db.UnemittedSpendFor("alpha", payer)
+	if err != nil {
+		t.Fatalf("UnemittedSpendFor: %v", err)
+	}
+	if got.StorageDepositUgnot != 203700 {
+		t.Errorf("storage deposit = %d, want 203700 (the enable deposit is the creator's)", got.StorageDepositUgnot)
+	}
+	// The approver signed it and pays only its gas, never the deposit.
+	approverSpend, err := db.UnemittedSpendFor("alpha", approver)
+	if err != nil {
+		t.Fatalf("UnemittedSpendFor(approver): %v", err)
+	}
+	if approverSpend.StorageDepositUgnot != 0 {
+		t.Errorf("the approver was charged %d for somebody else's package", approverSpend.StorageDepositUgnot)
+	}
+	// And the creator is not charged for the enable's gas, which is the
+	// approver's. Only the submission's 2000 is theirs.
+	if got.GasUgnot != 2000 {
+		t.Errorf("gas = %d, want 2000 (the enable's gas belongs to the approver)", got.GasUgnot)
+	}
+}
+
+// A call that grows a realm is paid by the caller, not by the realm's creator.
+// The enable rule must not reach beyond enable-shaped transactions, or every
+// visitor's storage cost lands on the deployer.
+func TestUnemittedSpendDoesNotClaimCallersDeposits(t *testing.T) {
+	db := NewTestDB(t)
+	const (
+		when    = "2026-01-01T00:00:00Z"
+		visitor = "g1visitor00000000000000000000000000000"
+		pkgPath = "gno.land/r/payer/app"
+	)
+
+	if err := db.InsertPackageSubmission("alpha", "SUBMIT", 0, pkgPath, "app",
+		payer, 100, when, true, 1, true); err != nil {
+		t.Fatalf("InsertPackageSubmission: %v", err)
+	}
+	// Somebody else calls it and grows its storage: their cost, their tx.
+	if err := db.UpsertTransaction("alpha", "VISIT", 102, when, 0, 0, 300, true); err != nil {
+		t.Fatalf("UpsertTransaction: %v", err)
+	}
+	if err := db.InsertCall("alpha", "VISIT", 102, 0, when, visitor, pkgPath, "Grow", true); err != nil {
+		t.Fatalf("InsertCall: %v", err)
+	}
+	if err := db.InsertStorageEvent("alpha", "VISIT", 0, pkgPath, 102, when,
+		"deposit", 100, 10000); err != nil {
+		t.Fatalf("InsertStorageEvent: %v", err)
+	}
+
+	creator, err := db.UnemittedSpendFor("alpha", payer)
+	if err != nil {
+		t.Fatalf("UnemittedSpendFor: %v", err)
+	}
+	if creator.StorageDepositUgnot != 0 {
+		t.Errorf("the creator was charged %d for a visitor's call", creator.StorageDepositUgnot)
+	}
+	visitorSpend, err := db.UnemittedSpendFor("alpha", visitor)
+	if err != nil {
+		t.Fatalf("UnemittedSpendFor(visitor): %v", err)
+	}
+	if visitorSpend.StorageDepositUgnot != 10000 {
+		t.Errorf("visitor storage = %d, want 10000", visitorSpend.StorageDepositUgnot)
+	}
+}

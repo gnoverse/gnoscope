@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -241,6 +242,94 @@ func TestTxLookupFindsTheRightChain(t *testing.T) {
 			t.Errorf("status = %d, want 404", rec.Code)
 		}
 	})
+}
+
+// Roughly a third of gno transaction hashes are base64 carrying a slash, and
+// both spellings of one have to reach the handler.
+//
+// Unescaped, `lBZ.../YQc...` is two path segments. The route used to be
+// `{hash}`, which matches one, so the request fell through to the `GET /`
+// catch-all and was answered by the single-page app: 200, text/html, a web
+// page. Not a 404, which is what makes it expensive: a caller cannot tell it
+// apart from an answer, and the frontend never noticed because it calls
+// encodeURIComponent. Anyone pasting a hash out of /api/txs, which prints the
+// raw base64, did.
+//
+// Both spellings of the *same* hash are asserted on purpose. A test using a
+// slash-free hash passes against either route pattern and is why this survived
+// as long as it did.
+func TestTxLookupAcceptsAHashContainingASlash(t *testing.T) {
+	api, alpha, _ := newIndexerAPI(t)
+
+	// Shaped like the real thing: base64 of 32 bytes, with a slash in the
+	// middle and the padding at the end.
+	const hash = "lBZ4dpDhkB0q6KE2ID9UZirAIWDTVnt/YQc4oFSH1+0="
+	alpha.Add(indexer.Transaction{
+		Hash:        hash,
+		Index:       0,
+		Success:     true,
+		BlockHeight: 300_005,
+		GasWanted:   983235,
+		GasUsed:     936458,
+	})
+
+	tests := []struct {
+		name   string
+		target string
+	}{
+		{
+			// What a person pastes out of /api/txs.
+			name:   "unescaped, the way a hash is printed",
+			target: "/api/tx/" + hash,
+		},
+		{
+			// What the frontend sends, and what used to be the only form that
+			// worked.
+			name:   "percent-encoded, the way a browser sends it",
+			target: "/api/tx/" + url.PathEscape(hash),
+		},
+	}
+
+	// The catch-all is registered, as it is in production. serve() mounts API
+	// routes only, so on the old pattern this case failed as a 404 and the
+	// test would have "passed" against a mux that does not exist: the reason
+	// the defect was expensive is that the real answer was 200 with HTML, and
+	// a test that cannot produce that is not testing the defect.
+	withSPA := func(t *testing.T, target string) (*httptest.ResponseRecorder, []byte) {
+		t.Helper()
+		mux := http.NewServeMux()
+		api.RegisterRoutes(mux)
+		mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte("<!DOCTYPE html>"))
+		})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+		return rec, rec.Body.Bytes()
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec, body := withSPA(t, tt.target)
+			// Checked before the status, because the status is 200 either way
+			// and the content type is the only thing that tells an answer from
+			// a web page.
+			if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "text/html") {
+				t.Fatalf("answered %s with %d: the request fell through to the SPA", ct, rec.Code)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, body)
+			}
+			var tx map[string]any
+			mustJSON(t, body, &tx)
+			if got := str(tx["hash"]); got != hash {
+				t.Errorf("hash = %q, want %q", got, hash)
+			}
+			if got := tx["block_height"]; got != float64(300_005) {
+				t.Errorf("block_height = %v, want 300005", got)
+			}
+		})
+	}
 }
 
 // Looking up transactions must not take the other chains offline.
