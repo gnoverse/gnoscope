@@ -153,15 +153,19 @@ test('a held event stays on the page, folded away, with its reason', async ({ pa
   const ruled = page.locator('#discover-content .dsc-ruled');
   await expect(ruled).toContainText('ruled out (1)');
   // Folded: present in the DOM, not visible until asked for.
-  const held = ruled.locator('.dsc-card');
+  const held = ruled.locator('.dsc-row');
   await expect(held).toHaveCount(1);
   await expect(held).not.toBeVisible();
 
-  // `> summary` and not `summary`: each card carries its own disclosure for the
-  // raw fact set, so the descendant form matches three elements here.
+  // `> summary` and not `summary`: each row carries its own disclosures, so the
+  // descendant form matches several elements here.
   await ruled.locator('> summary').click();
   await expect(held).toBeVisible();
-  await expect(held).toContainText('Nothing about this stands out');
+  // The headline is on the row's face; the reason is behind the row's own
+  // disclosure, which is the density trade this layout makes.
+  await expect(held).toContainText('Somebody put a new app on the chain, called thing.');
+  await held.locator('> summary').click();
+  await expect(held.locator('.dsc-reason')).toContainText('Nothing about this stands out');
 });
 
 // Four separate bugs shipped on this endpoint by publishing a number that
@@ -188,8 +192,8 @@ test('a package name written as markup renders as text', async ({ page }) => {
   await page.goto('/discover?network=alpha');
   await settle(page);
 
-  const card = page.locator('#discover-content .dsc-card').first();
-  await expect(card.locator('.dsc-headline')).toContainText(HOSTILE);
+  const row = page.locator('#discover-content .dsc-row').first();
+  await expect(row.locator('.dsc-row-line')).toContainText(HOSTILE);
   // The injected tag must not have become an element anywhere on the page.
   expect(await page.locator('#discover-content img').count()).toBe(0);
 
@@ -217,4 +221,37 @@ test('all-networks offers a chain to pick instead of an error', async ({ page })
 
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
   expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);
+});
+
+// Density is the point of the two-line row, and it is easy to lose: one
+// well-meaning change that moves the reason or the fact set back onto the row's
+// face undoes it, and nothing else would fail. The card was seven lines, which
+// put four events on a screen.
+//
+// Asserted structurally rather than in pixels, so it does not break on a font:
+// the feed uses rows, the row's face carries the sentence and the identifiers
+// and nothing else, and the depth is behind the row's own disclosure.
+test('a feed row shows the sentence and hides the reasoning until opened', async ({ page }) => {
+  await stub(page, { ranked: [DEPLOY, HELD], shares: [SPIKE] });
+  await page.goto('/discover?network=alpha');
+  await settle(page);
+
+  const row = page.locator('#discover-content .dsc-row').first();
+  await expect(row.locator('.dsc-row-line')).toContainText('put a new app on the chain');
+  await expect(row.locator('.dsc-row-meta')).toContainText('package.deployed');
+
+  // Closed: the reason, the axes, what-it-changes and the fact set are all
+  // present for a reader who wants them and none of them costs a line.
+  await expect(row.locator('.dsc-reason')).not.toBeVisible();
+  await expect(row.locator('.dsc-matters')).not.toBeVisible();
+
+  await row.locator('> summary').click();
+  await expect(row.locator('.dsc-reason')).toBeVisible();
+  await expect(row.locator('.dsc-matters')).toBeVisible();
+
+  // The lead block is deliberately the other way round: two or three rows that
+  // are the answer, shown whole.
+  const lead = page.locator('#discover-content .dsc-card').first();
+  await expect(lead.locator('.dsc-matters')).toBeVisible();
+  await expect(lead.locator('.dsc-reason')).toBeVisible();
 });

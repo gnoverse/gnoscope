@@ -217,7 +217,7 @@ main { padding: 20px 0; }
  * scans for down a column, and a 3px rule reads faster than a pill they have to
  * fixate on, so the pill is there too but the border is what you see first. */
 .dsc-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
-.dsc-sub { color: var(--fg2); font-size: 12px; margin-bottom: 16px; max-width: 78ch; line-height: 1.5; }
+.dsc-sub { color: var(--fg2); font-size: 12px; margin-bottom: 10px; max-width: 78ch; line-height: 1.5; }
 .dsc-filters { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; padding: 10px 0 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
 .dsc-fgroup { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .dsc-flabel { color: var(--fg2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; margin-right: 2px; }
@@ -233,6 +233,40 @@ main { padding: 20px 0; }
 .dsc-card.v-maybe { border-left-color: var(--amber); }
 .dsc-card.v-hold  { border-left-color: var(--border); opacity: 0.72; }
 .dsc-card.demoted { opacity: 0.66; }
+
+/* The feed row: the same event as a card, at a third of the height.
+ *
+ * The card is right for the two or three rows that answer the question and
+ * wrong for the fifty underneath: seven lines each put four events on a screen,
+ * and a feed you cannot scan is a feed nobody reads to the bottom. So the lead
+ * block keeps the card and the feed gets this, which is two lines plus whatever
+ * the reader opens.
+ *
+ * A <details> rather than a click handler, so the whole thing keeps working
+ * from a keyboard and the browser owns the open state. */
+.dsc-row { border-bottom: 1px solid var(--border); }
+.dsc-row > summary { display: grid; grid-template-columns: 52px 60px 1fr; gap: 10px; align-items: baseline;
+                     padding: 7px 4px; cursor: pointer; list-style: none; }
+.dsc-row > summary::-webkit-details-marker { display: none; }
+.dsc-row > summary:hover { background: var(--bg2); }
+.dsc-row[open] > summary { background: var(--bg2); }
+.dsc-row-age { font-family: var(--mono); font-size: 11px; color: var(--fg2); text-align: right; }
+.dsc-row-main { min-width: 0; }
+.dsc-row-line { font-size: 13.5px; line-height: 1.4; color: var(--fg); }
+/* One line, clipped rather than wrapped: a row that grows to two lines when a
+ * package has a long name reintroduces exactly the raggedness this replaced. */
+.dsc-row-meta { font-family: var(--mono); font-size: 10.5px; color: var(--fg2); margin-top: 2px;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dsc-row-meta .sep { opacity: 0.4; margin: 0 5px; }
+.dsc-row.v-hold .dsc-row-line { color: var(--fg2); }
+.dsc-row-body { padding: 2px 4px 14px 126px; }
+.dsc-row-body .dsc-matters { margin-top: 0; }
+.dsc-row-body .dsc-verdict { border-top: none; padding-top: 0; margin-top: 9px; }
+@media (max-width: 720px) {
+  .dsc-row > summary { grid-template-columns: 44px 1fr; }
+  .dsc-row > summary .dsc-pill { grid-column: 1; }
+  .dsc-row-body { padding-left: 4px; }
+}
 .dsc-headline { font-size: 15px; line-height: 1.45; color: var(--fg); }
 .dsc-matters { font-size: 13px; line-height: 1.5; color: var(--fg2); margin-top: 5px; max-width: 78ch; }
 .dsc-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px;
@@ -432,6 +466,10 @@ html.embed .pagenav { display: none; }
     /* Code search results. One hit is a path, a file and the matched line;
        the line is the part people scan, so it gets the monospace and the
        highlight and everything else stays quiet. */
+    /* A stdlib path is not a chain path: no namespace, no identicon, so it
+       renders as plain monospace rather than through realmPathEl. */
+    .code-hit-std { font-family: var(--mono, monospace); color: var(--fg); }
+
     .code-hits { display: flex; flex-direction: column; gap: 2px; }
     .code-hit { padding: 6px 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
     .code-hit:hover { background: var(--bg2, rgba(127,127,127,.07)); border-color: var(--border, rgba(127,127,127,.2)); }
@@ -1257,6 +1295,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-contracts"><main><div id="contracts-content"></div></main></div>
   <div class="view" id="view-apps"><main><div id="apps-content"></div></main></div>
   <div class="view" id="view-developer"><main><div id="developer-content"></div></main></div>
+  <div class="view" id="view-stdlib"><main><div id="stdlib-content"></div></main></div>
   <div class="view" id="view-devapi"><main><div id="devapi-content"></div></main></div>
   <div class="view" id="view-devmcp"><main><div id="devmcp-content"></div></main></div>
   <div class="view" id="view-gas"><main><div id="gas-content"></div></main></div>
@@ -3647,6 +3686,7 @@ function route() {
   else if (path === '/contracts') { view = 'contracts'; }
   else if (path === '/apps') { view = 'apps'; }
   else if (path === '/developer' || path === '/developer/search') { view = 'developer'; }
+  else if (path.startsWith('/stdlib/')) { view = 'stdlib'; data = path.slice(8); }
   else if (path === '/developer/api') { view = 'devapi'; }
   else if (path === '/developer/mcp') { view = 'devmcp'; }
   else if (path === '/txs') { view = 'txs'; }
@@ -3738,6 +3778,7 @@ function route() {
     case 'contracts': loadContracts(); break;
     case 'apps': loadApps(); break;
     case 'developer': loadDeveloper(); break;
+    case 'stdlib': loadStdlib(data); break;
     case 'devapi': loadDevApi(); break;
     case 'devmcp': loadDevMcp(); break;
     case 'txs': enterTxs(); break;
@@ -8297,6 +8338,10 @@ async function loadPeople() {
 function renderPeople(container, cat, data, f) {
   container.textContent = '';
   const byslug = catalogIndex(cat.achievements);
+  // The denominator counts only what can be earned. A marker badge says what an
+  // address *is* rather than what it did, so it belongs in nobody's score: with
+  // it in, every row read one short of its own ceiling.
+  const scorable = (cat.achievements || []).filter(a => !a.marker).length;
 
   container.appendChild(el('h1', {}, 'people'));
   container.appendChild(el('div', { className: 'section-sub' },
@@ -8386,7 +8431,7 @@ function renderPeople(container, cat, data, f) {
       el('td', { style: { color: 'var(--fg2)' } }, String(i + 1)),
       who,
       el('td', {}, badgeStrip(p.badges, byslug, 14)),
-      el('td', {}, fmtNum(p.count) + ' / ' + fmtNum((cat.achievements || []).length)),
+      el('td', {}, fmtNum(p.badges.filter(b => !byslug[b]?.marker).length) + ' / ' + fmtNum(scorable)),
       el('td', {}, blockWithAge(p.first_height, p.first_time, data.network)),
       el('td', {}, blockWithAge(p.last_height, p.last_time, data.network))));
   });
@@ -8480,7 +8525,10 @@ const DSC_WINDOW_DEFAULT = '30d';
 // share+maybe is what a reader wants on arrival; holds are one disclosure away.
 // Stored as a set rather than a string so the chips can toggle independently.
 const DSC_VERDICT_DEFAULT = 'share,maybe';
-const DSC_PAGE = 25;
+// 50, not 25: a two-line row is about a third the height of the card this
+// replaced, so the same screenful now holds more than twice as many events and
+// a 25-row page ends before the scroll does.
+const DSC_PAGE = 50;
 
 let _dscGen = 0;
 let _dscCursor = '';
@@ -8657,56 +8705,49 @@ function dscShortTarget(target) {
   return parts.map(p => (looksLikeAddress(p) ? truncAddr(p) : p)).join('/');
 }
 
-function dscCard(e) {
-  const v = ['share', 'maybe', 'hold'].includes(e.verdict) ? e.verdict : 'hold';
-  const card = el('div', { className: 'dsc-card v-' + v + (e.demoted ? ' demoted' : '') });
+function dscVerdictOf(e) {
+  return ['share', 'maybe', 'hold'].includes(e.verdict) ? e.verdict : 'hold';
+}
 
-  card.appendChild(el('div', { className: 'dsc-headline' }, (e.layers && e.layers.means && e.layers.means.text) || e.headline || ''));
-  const matters = e.layers && e.layers.matters && e.layers.matters.text;
-  if (matters) card.appendChild(el('div', { className: 'dsc-matters' }, matters));
+// The identifiers, in the order a reader needs them: when, what kind, what it
+// touched, who did it, and the transaction that proves it.
+function dscMeta(e, className) {
+  const meta = el('div', { className: className });
+  const sep = () => el('span', { className: 'sep' }, '\u00b7');
+  let first = true;
+  const add = (node) => { if (!first) meta.appendChild(sep()); first = false; meta.appendChild(node); };
 
-  // The footer: the identifiers, in the order a reader needs them. When, what
-  // kind, what it touched, who did it, and the transaction that proves it.
-  const meta = el('div', { className: 'dsc-meta' });
-  const when = el('span', null, timeAgo(e.at));
-  when.title = e.at || '';
-  meta.appendChild(when);
-  const sep = () => el('span', { className: 'sep' }, '·');
-  meta.appendChild(sep());
-  meta.appendChild(el('span', null, e.kind || ''));
+  add(el('span', null, e.kind || ''));
   if (e.target) {
-    meta.appendChild(sep());
     // A package path is deployer-controlled text going into a route. navigate()
     // takes it as data, and the /realm/ prefix strip is the same one every
     // other call site on this page uses.
     //
     // Shown abbreviated when the namespace is an unregistered address, because
     // `gno.land/r/g1s2g47cas6gxamxlkpxu65zu2g4aqma38tx36yv/perun` is 56
-    // characters of which 40 carry no meaning for a reader, and it pushes the
-    // deployer and the transaction off the end of the row. The full path stays
+    // characters of which 40 carry no meaning for a reader. The full path stays
     // in the tooltip and the link target is unchanged.
     const a = link(dscShortTarget(e.target), () => navigate('/realm/' + e.target.replace('gno.land/', '')));
     a.title = e.target;
-    meta.appendChild(a);
+    add(a);
   }
-  if (e.actor) {
-    meta.appendChild(sep());
-    meta.appendChild(addrLink(e.actor));
-  }
-  if (e.evidence_tx) {
-    meta.appendChild(sep());
-    meta.appendChild(txLink(e.evidence_tx, e.height, null, { showBlock: false }));
-  }
+  if (e.actor) add(addrLink(e.actor));
+  if (e.evidence_tx) add(txLink(e.evidence_tx, e.height, null, { showBlock: false }));
   if (e.demoted) {
-    meta.appendChild(sep());
     const d = el('span', null, 'demoted');
     d.title = 'the diversity cap moved this down: the same actor is already higher in this list';
-    meta.appendChild(d);
+    add(d);
   }
-  card.appendChild(meta);
+  return meta;
+}
 
-  const verdict = el('div', { className: 'dsc-verdict' },
-    el('span', { className: 'dsc-pill v-' + v }, v));
+// The verdict, its reason, and the two axes behind it. `withPill` is false where
+// the pill is already in the row's own header and repeating it would say the
+// same word twice within one line of itself.
+function dscVerdictBlock(e, withPill) {
+  const v = dscVerdictOf(e);
+  const box = el('div', { className: 'dsc-verdict' });
+  if (withPill) box.appendChild(el('span', { className: 'dsc-pill v-' + v }, v));
   const body = el('div');
   body.appendChild(el('div', { className: 'dsc-reason' }, e.verdict_reason || ''));
   const j = e.judgement || {};
@@ -8718,15 +8759,70 @@ function dscCard(e) {
   }
   if (axes.children.length) body.appendChild(axes);
   if (j.blocking) body.appendChild(el('div', { className: 'dsc-blocking', style: { marginTop: '6px' } }, j.blocking));
-  verdict.appendChild(body);
-  card.appendChild(verdict);
+  box.appendChild(body);
+  return box;
+}
 
+// Layer 1 and the fact set: the audit trail, one click away rather than always
+// on screen.
+function dscWhy(e) {
   const why = el('details', { className: 'dsc-why' }, el('summary', null, 'what the chain actually recorded'));
   const what = e.layers && e.layers.what && e.layers.what.text;
   if (what) why.appendChild(el('p', { className: 'dsc-what' }, what));
   why.appendChild(dscFacts(e.facts));
-  card.appendChild(why);
+  return why;
+}
+
+function dscHeadline(e) {
+  return (e.layers && e.layers.means && e.layers.means.text) || e.headline || '';
+}
+
+// The full card. Used for the lead block only, where there are two or three
+// rows and every one of them is the answer to the reader's question.
+function dscCard(e) {
+  const v = dscVerdictOf(e);
+  const card = el('div', { className: 'dsc-card v-' + v + (e.demoted ? ' demoted' : '') });
+  card.appendChild(el('div', { className: 'dsc-headline' }, dscHeadline(e)));
+  const matters = e.layers && e.layers.matters && e.layers.matters.text;
+  if (matters) card.appendChild(el('div', { className: 'dsc-matters' }, matters));
+  const meta = dscMeta(e, 'dsc-meta');
+  const when = el('span', null, timeAgo(e.at));
+  when.title = e.at || '';
+  meta.insertBefore(el('span', { className: 'sep' }, '\u00b7'), meta.firstChild);
+  meta.insertBefore(when, meta.firstChild);
+  card.appendChild(meta);
+  card.appendChild(dscVerdictBlock(e, true));
+  card.appendChild(dscWhy(e));
   return card;
+}
+
+// The feed row: two lines, and everything else behind the disclosure.
+//
+// The card above puts seven lines on screen per event, which is right for the
+// handful that answer the question and wrong for the fifty underneath: at that
+// height four events fill a screen, and a feed nobody scrolls to the bottom of
+// is a feed that may as well be three rows long. The age, the verdict and the
+// sentence are what a reader scans; the reason, the axes and the fact set are
+// what they open one row to read.
+function dscRow(e) {
+  const v = dscVerdictOf(e);
+  const row = el('details', { className: 'dsc-row v-' + v + (e.demoted ? ' demoted' : '') });
+
+  const age = el('span', { className: 'dsc-row-age' }, shortAge(e.at));
+  age.title = e.at || '';
+  const main = el('div', { className: 'dsc-row-main' },
+    el('div', { className: 'dsc-row-line' }, dscHeadline(e)));
+  main.appendChild(dscMeta(e, 'dsc-row-meta'));
+
+  row.appendChild(el('summary', null, age, el('span', { className: 'dsc-pill v-' + v }, v), main));
+
+  const body = el('div', { className: 'dsc-row-body' });
+  const matters = e.layers && e.layers.matters && e.layers.matters.text;
+  if (matters) body.appendChild(el('div', { className: 'dsc-matters' }, matters));
+  body.appendChild(dscVerdictBlock(e, false));
+  body.appendChild(dscWhy(e));
+  row.appendChild(body);
+  return row;
 }
 
 // The one thing a fresh deployment gets wrong on its own. With no clearance
@@ -8752,10 +8848,12 @@ function renderDiscover(container, data, leadEvents) {
     el('h2', { style: { margin: '0' } }, 'discover'),
     el('span', { style: { color: 'var(--fg2)', fontSize: '12px' } },
       data.built_at ? 'rolled up ' + timeAgo(data.built_at) : '')));
+  // One line. Four lines of preamble above a feed is four lines of feed the
+  // reader does not get, and the page explains itself better by being read than
+  // by being described.
   container.appendChild(el('div', { className: 'dsc-sub' },
-    'What changed on this chain, said once in plain words and once in the chain\'s own terms, ' +
-    'ranked by how much it is likely to matter rather than by when it happened. ' +
-    'Each row carries a judgement about whether it is worth telling anyone, and the reason behind it.'));
+    'What changed on this chain, in plain words, ranked by how much it is likely to matter. ' +
+    'Open a row for the reasoning and the record behind it.'));
 
   container.appendChild(dscFilters(data));
 
@@ -8801,7 +8899,7 @@ function renderDiscover(container, data, leadEvents) {
         ? 'Nothing here cleared the bar. ' + held.length + ' events were ruled out, below.'
         : 'No events in this window yet.'));
   }
-  for (const e of shown) feed.appendChild(dscCard(e));
+  for (const e of shown) feed.appendChild(dscRow(e));
   container.appendChild(feed);
 
   if (!data.clearance_configured && !(data.verdict_counts || {}).share) {
@@ -8811,7 +8909,7 @@ function renderDiscover(container, data, leadEvents) {
   if (held.length) {
     const ruled = el('details', { className: 'dsc-ruled' },
       el('summary', null, 'ruled out (' + held.length + ')'));
-    for (const e of held) ruled.appendChild(dscCard(e));
+    for (const e of held) ruled.appendChild(dscRow(e));
     container.appendChild(ruled);
   }
 
@@ -8827,7 +8925,7 @@ function renderDiscover(container, data, leadEvents) {
         const page = await api(dscPath(_dscCursor));
         if (gen !== _dscGen) return;
         for (const e of (page.events || [])) {
-          if (wanted.includes(e.verdict) && (inlineHolds || e.verdict !== 'hold')) feed.appendChild(dscCard(e));
+          if (wanted.includes(e.verdict) && (inlineHolds || e.verdict !== 'hold')) feed.appendChild(dscRow(e));
         }
         _dscCursor = page.next_cursor || '';
         if (_dscCursor) { more.disabled = false; more.textContent = 'load more'; }
@@ -8991,16 +9089,24 @@ function runCodeSearch(into, term, kind) {
     const list = el('div', { className: 'code-hits' });
     d.hits.forEach(h => {
       const hit = el('div', { className: 'code-hit' });
+      // Stdlib is neither a realm nor a deployed package: it ships inside the
+      // node, so it gets its own badge and its path is not a chain path that
+      // realmPathEl could linkify.
       const head = el('div', { className: 'code-hit-head' },
-        el('span', { className: 'badge' }, h.is_realm ? 'realm' : 'package'),
-        realmPathEl(h.path),
+        el('span', { className: 'badge' }, h.is_stdlib ? 'stdlib' : h.is_realm ? 'realm' : 'package'),
+        h.is_stdlib ? el('span', { className: 'code-hit-std' }, h.path) : realmPathEl(h.path),
         el('span', { className: 'code-hit-file' }, h.file));
       hit.appendChild(head);
       // The snippet arrives with the match wrapped in « », not in markup: the
       // frontend builds DOM and must never parse a server string as HTML, and
       // this is on-chain source, which is attacker-controlled.
       hit.appendChild(snippetEl(h.snippet));
-      hit.addEventListener('click', () => navigate('/realm/' + h.path.replace('gno.land/', '') + '?tab=source&file=' + encodeURIComponent(h.file)));
+      // A stdlib package has no realm page, so routing it to one would make
+      // every `strings` hit a dead end. A result you cannot open is worse than
+      // one that is not listed.
+      hit.addEventListener('click', () => navigate(h.is_stdlib
+        ? '/stdlib/' + h.path + '?file=' + encodeURIComponent(h.file)
+        : '/realm/' + h.path.replace('gno.land/', '') + '?tab=source&file=' + encodeURIComponent(h.file)));
       list.appendChild(hit);
     });
     into.appendChild(list);
@@ -9055,6 +9161,62 @@ async function renderVersions(into) {
   row('explorer build', ver && ver.git_hash, 'the commit this instance of mygnoscan was built from');
   row('explorer built', ver && ver.build_time);
   into.appendChild(tbl);
+}
+
+// A standard library package.
+//
+// Its own page rather than the realm page, because a stdlib package is not a
+// deployment: it has no height, no publisher, no transaction and no storage
+// bill, and the realm header is built entirely out of those. Rendering it
+// there would mean either inventing a provenance or leaving five fields blank.
+async function loadStdlib(pkgPath) {
+  const container = clear('stdlib-content');
+  skeletonBlock(container);
+  let d;
+  try {
+    d = await api('stdlib/' + pkgPath);
+  } catch (err) {
+    container.textContent = '';
+    container.appendChild(el('div', { style: { color: 'var(--fg2)' } }, String(err.message || err)));
+    return;
+  }
+  container.textContent = '';
+
+  const titleRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', margin: '16px 0 8px' } },
+    el('h2', { style: { margin: 0 } }, d.path));
+  titleRow.appendChild(copyButton(d.path, 'copy package path'));
+  container.appendChild(titleRow);
+
+  container.appendChild(el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' } },
+    badge('pkg', 'stdlib'),
+    el('span', { style: { color: 'var(--fg2)', fontSize: '12px' } }, d.provenance)));
+
+  // The import line, which is the thing a reader most often came for.
+  container.appendChild(el('div', { className: 'card', style: { marginBottom: '14px' } },
+    el('div', { className: 'section-title' }, 'import'),
+    el('code', {}, 'import "' + d.path + '"')));
+
+  const files = d.files || [];
+  const want = new URL(window.location).searchParams.get('file');
+  container.appendChild(el('div', { className: 'section-title' },
+    fmtNum(files.length) + ' file' + (files.length === 1 ? '' : 's')));
+
+  files.forEach(f => {
+    const open = want ? f.name === want : false;
+    const body = el('pre', { className: 'src' }, f.body);
+    body.style.display = open ? '' : 'none';
+    const tw = el('span', { className: 'state-twisty' }, open ? '\u25be' : '\u25b8');
+    const head = el('div', {
+      className: 'state-head', style: { cursor: 'pointer' },
+      onclick: () => {
+        const showing = body.style.display !== 'none';
+        body.style.display = showing ? 'none' : '';
+        tw.textContent = showing ? '\u25b8' : '\u25be';
+      },
+    }, tw, el('span', { className: 'state-name' }, f.name),
+       el('span', { className: 'state-size' }, shortBytes(f.body.length)));
+    container.appendChild(el('div', {}, head, body));
+  });
 }
 
 async function loadDevApi() {
@@ -15180,12 +15342,24 @@ function renderAddressAchievements(pane, data) {
     byGroup[a.group].items.push(a);
   }
   for (const b of buckets) {
-    const n = b.items.filter(x => x.unlocked).length;
+    // A marker is not scored. It says what this address *is* (a delegated
+    // signing key), which a master account can never become, so counting it
+    // would put a badge in the denominator that nobody reading their own page
+    // can ever move. It is still drawn, last and unscored: on a session address
+    // it is the most useful thing here.
+    const scored = b.items.filter(x => !x.marker);
+    const markers = b.items.filter(x => x.marker && x.unlocked);
+    const n = scored.filter(x => x.unlocked).length;
     pane.appendChild(el('div', { className: 'section-title', style: { marginTop: '6px', fontSize: '12px' } },
-      b.label + ' (' + n + '/' + b.items.length + ')'));
+      b.label + ' (' + n + '/' + scored.length + ')'));
     const grid = el('div', { className: 'ach-grid' });
-    for (const a of b.items.filter(x => x.unlocked).concat(b.items.filter(x => !x.unlocked))) {
+    for (const a of scored.filter(x => x.unlocked).concat(scored.filter(x => !x.unlocked))) {
       grid.appendChild(achCard(a, a.unlocked ? 'unlocked' : 'locked', achEarnedMeta(a, data.network)));
+    }
+    // An unearned marker is drawn nowhere: "you are not a session key" is true
+    // of almost every address and is not a thing to be locked out of.
+    for (const a of markers) {
+      grid.appendChild(achCard(a, 'unlocked', el('span', { className: 'ach-got' }, 'what this address is')));
     }
     pane.appendChild(grid);
   }

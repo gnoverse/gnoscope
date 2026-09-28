@@ -1435,6 +1435,22 @@ A network configured without an indexer client gets no feed rather than a broken
 one, and a subscription naming a network with no feed is accepted but silent —
 the connection stays open and delivers nothing.
 
+## Badges
+
+`GET /_badges/…` is the one part of the surface that answers with an image
+rather than JSON: small SVG cards meant to be embedded in somebody else's
+document, including a gno realm's own `Render()`.
+
+```
+/_badges/realm/{path...}?network=&metric=messages|callers&days=&theme=
+/_badges/network?network=&days=&theme=
+```
+
+They are registered through the same route table as everything above, so they
+appear in `/api/endpoints`. Windows, caching, the drawn-not-returned error
+convention and the gnoweb CSP allowlist that decides whether one renders on
+gno.land at all: [docs/badges.md](badges.md).
+
 ## Embed mode
 
 Any page accepts `?embed=1`, which strips the header, footer and sub-bar so a

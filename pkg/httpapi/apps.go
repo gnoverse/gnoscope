@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moul/mygnoscan/pkg/discover"
 	"github.com/moul/mygnoscan/pkg/registry"
 	"github.com/moul/mygnoscan/pkg/store"
 )
@@ -131,9 +132,6 @@ func firstSentence(s string) string {
 	return s
 }
 
-// versionSegment matches a trailing generation marker: v0, v1, v23.
-var versionSegment = regexp.MustCompile(`^v[0-9]+$`)
-
 // nameFromPath is the last resort, and it is a poor one on purpose: it is what
 // a card looks like when nobody has said anything about a realm and the realm
 // says nothing about itself, which is exactly the case a contributor should be
@@ -159,7 +157,7 @@ func nameFromPath(path string) string {
 	// because a card with a blank name is worse than one called `v0`.
 	kept := parts[:0:0]
 	for _, seg := range parts {
-		if !versionSegment.MatchString(seg) {
+		if !discover.VersionSegment(seg) {
 			kept = append(kept, seg)
 		}
 	}
