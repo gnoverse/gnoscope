@@ -31,7 +31,6 @@
       "why": "the sole entry in vm:p:pkg_approvers on mainnet, and the actor on every MsgEnablePackage in the enable history. It is the process that decides whether a parked package ever becomes callable",
       "checked": "2026-09-19"
     },
-
     "g1r929wt2qplfawe4lvqv9zuwfdcz4vxdun7qh8l": {
       "label": "@sys_deployer",
       "kind": "inferred",
@@ -50,7 +49,6 @@
       "why": "deployed gno.land/r/gnops/valopers (the validator registry) plus gnoland/coins and gnoland/blog, which are official gno.land realms rather than one user's namespace",
       "checked": "2026-09-14"
     },
-
     "g18qhq2fl54lszhmxeyqlvxnwjzc3xpu4nnakclp": {
       "label": "@faucet",
       "kind": "inferred",
@@ -86,6 +84,42 @@
       "kind": "inferred",
       "why": "1637 uniform 500000 ugnot sends plus router::ExactInSwapRoute calls",
       "checked": "2026-08-28"
+    },
+    "g1pku9u3jwr8k8vjpfypqzd0uhmrwr35zk0f8u7p": {
+      "label": "@nt_llc",
+      "kind": "curated",
+      "why": "the 332,000,000 GNOT genesis allocation to NT,LLC (Constitution §124), named in gnolang/independence-day's README. It has never sent a transaction, so nothing in the index would otherwise know it exists",
+      "checked": "2026-09-28"
+    },
+    "g1x7tm26g9wj84cmg3cs74uwf3g9lqj4mjp6gax3": {
+      "label": "@investors_vesting",
+      "kind": "curated",
+      "why": "the 150,000,000 GNOT vesting investor allocation (Constitution §132), named in gnolang/independence-day's README",
+      "checked": "2026-09-28"
+    },
+    "g1j3et7juxr3npgdll3lml3mpv0y6m49rztjnf76": {
+      "label": "@investors_unlocked",
+      "kind": "curated",
+      "why": "the investor allocation unlocked at launch (Constitution §136), named in gnolang/independence-day's README",
+      "checked": "2026-09-28"
+    },
+    "g1ugke9x9ylrlex0lxcgw7eu0mdftvcrgglru0l0": {
+      "label": "@ecosystem_treasury",
+      "kind": "curated",
+      "why": "the 59,511,000 GNOT Ecosystem Treasury (Constitution §121), named in gnolang/independence-day's README",
+      "checked": "2026-09-28"
+    },
+    "g1shmvjxkvx9kgnrta5rzwcpdqszy4pkfvv9qjz9": {
+      "label": "@core_treasury",
+      "kind": "curated",
+      "why": "the 39,989,000 GNOT Core Treasury (Constitution §120), named in gnolang/independence-day's README",
+      "checked": "2026-09-28"
+    },
+    "g1kj5ag4xdjws00rfzg49x6lljv34pty5uchcq2p": {
+      "label": "@validator_services_treasury",
+      "kind": "curated",
+      "why": "the 19,994,000 GNOT Validator Services Treasury (Constitution §122), named in gnolang/independence-day's README",
+      "checked": "2026-09-28"
     }
   }
 }

@@ -1067,6 +1067,10 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	// other.
 	mux.HandleFunc("GET "+BadgePrefix+"realm/{path...}", a.HandleBadgeRealm)
 	mux.HandleFunc("GET "+BadgePrefix+"network", a.HandleBadgeNetwork)
+	// The one-line shields, and the shields.io endpoint that carries the same
+	// numbers through somebody else's renderer (see shields.go).
+	mux.HandleFunc("GET "+BadgePrefix+"shield/{kind}/{path...}", a.HandleBadgeShield)
+	mux.HandleFunc("GET /api/shield/{kind}/{path...}", a.HandleShieldEndpoint)
 }
 
 // --- RPC / indexer chain agreement -----------------------------------------

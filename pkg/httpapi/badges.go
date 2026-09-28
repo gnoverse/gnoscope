@@ -312,6 +312,24 @@ func matchesETag(inm, etag string) bool {
 // that is not a browser: a monitor can alert on the header, and no cache stores
 // a typo's answer for five minutes.
 func badgeError(w http.ResponseWriter, msg, detail string) {
+	// detail goes in the plot area, not the footer: with no series there is no
+	// graph, and the renderer's own "not enough history to draw" is a sentence
+	// about a graph nobody asked for. The footer says who is speaking.
+	writeBadgeError(w, msg, badge.Render(badge.Card{
+		Title:    "gnoscope",
+		Headline: msg,
+		Empty:    detail,
+		Sub:      "badge error",
+	}))
+}
+
+// writeBadgeError serves an already-drawn failure.
+//
+// Split from badgeError because the shield routes draw their failure in their
+// own shape (a 480x120 card in a README's badge row reads as the page being
+// broken, not as one badge being wrong), and the headers are the half that has
+// to stay identical whatever the picture is.
+func writeBadgeError(w http.ResponseWriter, msg string, svg []byte) {
 	h := w.Header()
 	h.Set("X-Badge-Error", msg)
 	h.Set("Cache-Control", "no-store")
@@ -319,15 +337,7 @@ func badgeError(w http.ResponseWriter, msg, detail string) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
 	h.Set("Access-Control-Allow-Origin", "*")
-	// detail goes in the plot area, not the footer: with no series there is no
-	// graph, and the renderer's own "not enough history to draw" is a sentence
-	// about a graph nobody asked for. The footer says who is speaking.
-	w.Write(badge.Render(badge.Card{
-		Title:    "gnoscope",
-		Headline: msg,
-		Empty:    detail,
-		Sub:      "badge error",
-	}))
+	w.Write(svg)
 }
 
 // plural writes a count and its noun, agreeing.
