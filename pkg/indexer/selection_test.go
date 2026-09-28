@@ -179,3 +179,79 @@ func TestTypeSupportIsCachedPerEndpointNotPerPool(t *testing.T) {
 			"so its typed fragments would be stripped and its grants arrive empty")
 	}
 }
+
+// A pool whose members run different schemas must route a query that NEEDS a
+// type to a member that has it, rather than picking on health alone.
+//
+// mainnet's two indexers disagree about Signature, and session_addr is the only
+// field linking a transaction to the session that signed it. Picking on health
+// meant about half the sweep's batches came back from the endpoint with no
+// signatures field, and that answer is a valid empty rather than an error.
+func TestEndpointForPicksAMemberThatHasTheType(t *testing.T) {
+	const (
+		bare = "https://indexer.bare.example/graphql/query"
+		rich = "https://indexer.rich.example/graphql/query"
+	)
+	c := &Client{
+		urls: []string{bare, rich},
+		typeSupport: map[string]bool{
+			typeSupportKey(bare, signatureProbeType): false,
+			typeSupportKey(rich, signatureProbeType): true,
+		},
+	}
+
+	// Selected endpoint cannot answer, so the other one is chosen.
+	c.active = 0
+	if got := c.endpointFor(context.Background(), signatureProbeType); got != rich {
+		t.Errorf("endpointFor = %q, want the capable endpoint %q", got, rich)
+	}
+
+	// Already on the capable one: keep it, do not churn the selection.
+	c.active = 1
+	if got := c.endpointFor(context.Background(), signatureProbeType); got != rich {
+		t.Errorf("endpointFor = %q, want to stay on %q", got, rich)
+	}
+}
+
+// No member has it: say so, so the caller falls back to the pooled path rather
+// than pinning to an endpoint that cannot answer either.
+func TestEndpointForReportsNoneWhenNobodyHasTheType(t *testing.T) {
+	const only = "https://indexer.only.example/graphql/query"
+	c := &Client{
+		urls:        []string{only},
+		typeSupport: map[string]bool{typeSupportKey(only, signatureProbeType): false},
+	}
+	if got := c.endpointFor(context.Background(), signatureProbeType); got != "" {
+		t.Errorf("endpointFor = %q, want empty", got)
+	}
+}
+
+// The fields have to be trimmed for the endpoint the query is SENT to, not for
+// whichever one happens to be selected, or the pin achieves nothing.
+func TestFieldsForTrimsAgainstTheNamedEndpoint(t *testing.T) {
+	const (
+		bare = "https://indexer.bare.example/graphql/query"
+		rich = "https://indexer.rich.example/graphql/query"
+	)
+	c := &Client{
+		urls: []string{bare, rich},
+		typeSupport: map[string]bool{
+			typeSupportKey(bare, signatureProbeType): false,
+			typeSupportKey(rich, signatureProbeType): true,
+			typeSupportKey(bare, inertProbeType):     true,
+			typeSupportKey(rich, inertProbeType):     true,
+			typeSupportKey(bare, sessionProbeType):   true,
+			typeSupportKey(rich, sessionProbeType):   true,
+			typeSupportKey(bare, transferProbeType):  true,
+			typeSupportKey(rich, transferProbeType):  true,
+		},
+	}
+	c.active = 0 // selected endpoint is the one WITHOUT signatures
+
+	if got := c.fieldsFor(context.Background(), rich, txFieldsLight); !strings.Contains(got, signatureFields) {
+		t.Error("fields for the capable endpoint dropped the signature group")
+	}
+	if got := c.fieldsFor(context.Background(), bare, txFieldsLight); strings.Contains(got, signatureFields) {
+		t.Error("fields for the bare endpoint kept a group it cannot parse")
+	}
+}
