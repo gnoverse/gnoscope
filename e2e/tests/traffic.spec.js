@@ -222,3 +222,59 @@ test.describe('/traffic', () => {
     for (const n of nets) expect(n).toBe('all');
   });
 });
+
+test('a page view survives the navigation that causes it', async ({ page }) => {
+  // The beacon fires at the moment the page changes, which is the exact moment
+  // a browser is entitled to cancel in-flight requests. With fetch it did:
+  // four of six navigations came back net::ERR_ABORTED and those page views
+  // were lost, in proportion to how fast someone clicks. navigator.sendBeacon
+  // hands the request to the browser to deliver regardless of what the page
+  // does next.
+  const aborted = [];
+  page.on('requestfailed', r => {
+    if (r.url().includes('/api/traffic/pageview')) aborted.push(r.url());
+  });
+
+  await page.goto('/');
+  await settle(page);
+  // Navigate several times in quick succession, which is what loses them.
+  for (const p of ['/realms', '/packages', '/apps', '/txs']) {
+    await page.locator(`nav a[href="${p}"]`).first().click();
+  }
+  await settle(page);
+
+  expect(aborted, 'page view beacons must not be cancelled by the navigation that fires them').toEqual([]);
+});
+
+test('an in-content link is a real link and still counts as a page view', async ({ page }) => {
+  // The two halves of the same request: a link people can hover, copy and
+  // cmd-click, that still navigates instantly and still gets counted.
+  // Seed two page views so /traffic has a realms panel to click through, and
+  // so the test does not depend on which rows the fixture happens to render.
+  await page.goto('/');
+  await page.evaluate(() => Promise.all([
+    fetch('/api/traffic/pageview?path=/realm/gno.land/r/moul/home', { method: 'POST' }),
+    fetch('/api/traffic/pageview?path=/realm/r/moul/home', { method: 'POST' }),
+  ]));
+  await page.goto('/traffic?who=all&kind=page&host=');
+  await settle(page);
+
+  const link = page.locator('#traffic-content a[href^="/realm/"]').first();
+  await expect(link).toBeVisible();
+
+  const href = await link.getAttribute('href');
+  expect(href, 'an in-content link must carry a real destination, not #').toMatch(/^\/realm\//);
+  expect(await link.evaluate(a => !!a.closest('nav')), 'this must be a content link, not the rail').toBe(false);
+
+  const sent = [];
+  page.on('request', r => {
+    if (r.url().includes('/api/traffic/pageview')) sent.push(new URL(r.url()).searchParams.get('path'));
+  });
+
+  await link.click();
+  await settle(page);
+
+  // Client-side: the path changed and the document did not reload.
+  expect(new URL(page.url()).pathname).toBe(href);
+  expect(sent, 'clicking a link in the page must report a page view').toContain(href);
+});

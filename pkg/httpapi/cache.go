@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gnoverse/gnoscope/pkg/traffic"
 )
 
 // Response caching for the read-only API.
@@ -366,6 +368,12 @@ func cacheable(r *http.Request) bool {
 		// trap to avoid. It was avoided on the realm detail and reintroduced
 		// one endpoint over, because `?path=` keys separately and happened to
 		// be asked first in the test.
+		return false
+	case traffic.PageViewPath:
+		// A beacon is a write dressed as a GET. Cached, the second reader of a
+		// page would be answered from the first one's entry and never recorded,
+		// which is the same shape as the /api/views bug below and would make
+		// page views undercount by exactly the amount people share pages.
 		return false
 	case "/api/traffic", "/api/traffic/health":
 		// Third time in this file, so the comment above was not enough and

@@ -1308,7 +1308,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 <symbol id="i-message" viewBox="0 0 16 16"><path d="M13.6 9.6a1.6 1.6 0 0 1-1.6 1.6H5.2L2.4 14V4a1.6 1.6 0 0 1 1.6-1.6h8A1.6 1.6 0 0 1 13.6 4z"/></symbol>
 </defs></svg>
 <aside class="rail">
-  <div class="rail-top"><span class="logo" onclick="navigate('/')" title="gnoscope, formerly mygnoscan"><svg class="logo-mark" aria-hidden="true"><use href="#i-mark"/></svg><span class="rail-label">gnoscope</span></span></div>
+  <div class="rail-top"><span class="logo" href="/" title="gnoscope, formerly mygnoscan"><svg class="logo-mark" aria-hidden="true"><use href="#i-mark"/></svg><span class="rail-label">gnoscope</span></span></div>
   <!-- Kept in lockstep with the NAV table in the script below, which drives
        the .pagenav strips and route()'s active-state bookkeeping off the same
        sections. TestRailMatchesNavTable fails the build if the two drift.
@@ -1317,85 +1317,85 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
        make the whole navigation hostage to cdn.jsdelivr.net being up (#214). -->
   <nav>
       <div class="nav-group">
-        <a onclick="navigate('/')" id="nav-home" class="active" title="home, analytics, dashboards"><svg aria-hidden="true"><use href="#i-home"/></svg><span class="rail-label">home</span></a>
+        <a href="/" id="nav-home" class="active" title="home, analytics, dashboards"><svg aria-hidden="true"><use href="#i-home"/></svg><span class="rail-label">home</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/analytics')" id="nav-analytics" title="analytics"><span class="rail-label">analytics</span></a>
-          <a onclick="navigate('/dashboards')" id="nav-dashboards" title="dashboards"><span class="rail-label">dashboards</span></a>
-          <a onclick="navigate('/traffic')" id="nav-traffic" title="what readers of this explorer actually open"><span class="rail-label">traffic</span></a>
+          <a href="/analytics" id="nav-analytics" title="analytics"><span class="rail-label">analytics</span></a>
+          <a href="/dashboards" id="nav-dashboards" title="dashboards"><span class="rail-label">dashboards</span></a>
+          <a href="/traffic" id="nav-traffic" title="what readers of this explorer actually open"><span class="rail-label">traffic</span></a>
         </div>
       </div>
       <!-- Childless, so a bare link and not a .nav-group: every group is
            asserted to carry a .nav-kids, the same shape glossary and watch
            already use at the bottom of this rail. -->
-      <a onclick="navigate('/discover')" id="nav-discover" title="what is new on this chain, in plain words, and whether it is worth sharing"><svg aria-hidden="true"><use href="#i-compass"/></svg><span class="rail-label">discover</span></a>
+      <a href="/discover" id="nav-discover" title="what is new on this chain, in plain words, and whether it is worth sharing"><svg aria-hidden="true"><use href="#i-compass"/></svg><span class="rail-label">discover</span></a>
       <div class="nav-group">
-        <a onclick="navigate('/contracts')" id="nav-contracts" title="contracts map, realms, packages, apps"><svg aria-hidden="true"><use href="#i-bubbles"/></svg><span class="rail-label">contracts</span></a>
+        <a href="/contracts" id="nav-contracts" title="contracts map, realms, packages, apps"><svg aria-hidden="true"><use href="#i-bubbles"/></svg><span class="rail-label">contracts</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/realms')" id="nav-realms" title="realms"><span class="rail-label">realms</span></a>
-          <a onclick="navigate('/packages')" id="nav-packages" title="packages"><span class="rail-label">packages</span></a>
-          <a onclick="navigate('/apps')" id="nav-apps" title="apps"><span class="rail-label">apps</span></a>
+          <a href="/realms" id="nav-realms" title="realms"><span class="rail-label">realms</span></a>
+          <a href="/packages" id="nav-packages" title="packages"><span class="rail-label">packages</span></a>
+          <a href="/apps" id="nav-apps" title="apps"><span class="rail-label">apps</span></a>
         </div>
       </div>
       <div class="nav-group">
-        <a onclick="navigate('/developer')" id="nav-developer" title="code search, chain and tooling versions, the API"><svg aria-hidden="true"><use href="#i-code"/></svg><span class="rail-label">developer</span></a>
+        <a href="/developer" id="nav-developer" title="code search, chain and tooling versions, the API"><svg aria-hidden="true"><use href="#i-code"/></svg><span class="rail-label">developer</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/developer/search')" id="nav-devsearch" title="full-text search over every file the chain stores"><span class="rail-label">code search</span></a>
-          <a onclick="navigate('/developer/api')" id="nav-devapi" title="the HTTP API this explorer serves"><span class="rail-label">api</span></a>
-          <a onclick="navigate('/developer/mcp')" id="nav-devmcp" title="the MCP endpoint an agent connects to"><span class="rail-label">mcp</span></a>
+          <a href="/developer/search" id="nav-devsearch" title="full-text search over every file the chain stores"><span class="rail-label">code search</span></a>
+          <a href="/developer/api" id="nav-devapi" title="the HTTP API this explorer serves"><span class="rail-label">api</span></a>
+          <a href="/developer/mcp" id="nav-devmcp" title="the MCP endpoint an agent connects to"><span class="rail-label">mcp</span></a>
         </div>
       </div>
       <div class="nav-group">
-        <a onclick="navigate('/blocks')" id="nav-blocks" title="blocks, transactions, events, validators, sanity"><svg aria-hidden="true"><use href="#i-blocks"/></svg><span class="rail-label">blocks</span></a>
+        <a href="/blocks" id="nav-blocks" title="blocks, transactions, events, validators, sanity"><svg aria-hidden="true"><use href="#i-blocks"/></svg><span class="rail-label">blocks</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/txs')" id="nav-txs" title="transactions"><span class="rail-label">txs</span></a>
-          <a onclick="navigate('/events')" id="nav-events" title="events"><span class="rail-label">events</span></a>
-          <a onclick="navigate('/validators')" id="nav-validators" title="who is producing blocks, and the valopers registry"><span class="rail-label">validators</span></a>
-          <a onclick="navigate('/sanity')" id="nav-sanity" title="is the chain healthy, and is our sync keeping up"><span class="rail-label">sanity</span></a>
+          <a href="/txs" id="nav-txs" title="transactions"><span class="rail-label">txs</span></a>
+          <a href="/events" id="nav-events" title="events"><span class="rail-label">events</span></a>
+          <a href="/validators" id="nav-validators" title="who is producing blocks, and the valopers registry"><span class="rail-label">validators</span></a>
+          <a href="/sanity" id="nav-sanity" title="is the chain healthy, and is our sync keeping up"><span class="rail-label">sanity</span></a>
         </div>
       </div>
       <div class="nav-group">
-        <a onclick="navigate('/defi')" id="nav-defi" title="the money side: coins and grc20"><svg aria-hidden="true"><use href="#i-coin"/></svg><span class="rail-label">defi</span></a>
+        <a href="/defi" id="nav-defi" title="the money side: coins and grc20"><svg aria-hidden="true"><use href="#i-coin"/></svg><span class="rail-label">defi</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/coins')" id="nav-coins" title="native ugnot: transfers, volume, who moves it"><span class="rail-label">coins</span></a>
-          <a onclick="navigate('/grc20')" id="nav-grc20" title="grc20 assets, supply and holders"><span class="rail-label">grc20</span></a>
+          <a href="/coins" id="nav-coins" title="native ugnot: transfers, volume, who moves it"><span class="rail-label">coins</span></a>
+          <a href="/grc20" id="nav-grc20" title="grc20 assets, supply and holders"><span class="rail-label">grc20</span></a>
         </div>
       </div>
       <div class="nav-group">
-        <a onclick="navigate('/directory')" id="nav-directory" title="who is on this chain: people, accounts, sessions, teams"><svg aria-hidden="true"><use href="#i-users"/></svg><span class="rail-label">directory</span></a>
+        <a href="/directory" id="nav-directory" title="who is on this chain: people, accounts, sessions, teams"><svg aria-hidden="true"><use href="#i-users"/></svg><span class="rail-label">directory</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/directory/people')" id="nav-people" title="find people by what they have done on chain"><span class="rail-label">people</span></a>
-          <a onclick="navigate('/accounts')" id="nav-accounts" title="accounts, balances and the rich list"><span class="rail-label">accounts</span></a>
-          <a onclick="navigate('/sessions')" id="nav-sessions" title="delegated signing keys: who lets what sign for them"><span class="rail-label">sessions</span></a>
-          <a onclick="navigate('/directory/teams')" id="nav-teams" title="teams and organisations"><span class="rail-label">teams</span></a>
+          <a href="/directory/people" id="nav-people" title="find people by what they have done on chain"><span class="rail-label">people</span></a>
+          <a href="/accounts" id="nav-accounts" title="accounts, balances and the rich list"><span class="rail-label">accounts</span></a>
+          <a href="/sessions" id="nav-sessions" title="delegated signing keys: who lets what sign for them"><span class="rail-label">sessions</span></a>
+          <a href="/directory/teams" id="nav-teams" title="teams and organisations"><span class="rail-label">teams</span></a>
         </div>
       </div>
       <div class="nav-group">
-        <a onclick="navigate('/gas')" id="nav-gas" title="gas summary, by realm, by user, top txs, storage"><svg aria-hidden="true"><use href="#i-gauge"/></svg><span class="rail-label">gas</span></a>
+        <a href="/gas" id="nav-gas" title="gas summary, by realm, by user, top txs, storage"><svg aria-hidden="true"><use href="#i-gauge"/></svg><span class="rail-label">gas</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/gas/realms')" id="nav-gas-realms" title="gas by realm"><span class="rail-label">by realm</span></a>
-          <a onclick="navigate('/gas/users')" id="nav-gas-users" title="gas by user"><span class="rail-label">by user</span></a>
-          <a onclick="navigate('/gas/txs')" id="nav-gas-txs" title="the most expensive transactions"><span class="rail-label">top txs</span></a>
-          <a onclick="navigate('/storage')" id="nav-storage" title="storage"><span class="rail-label">storage</span></a>
+          <a href="/gas/realms" id="nav-gas-realms" title="gas by realm"><span class="rail-label">by realm</span></a>
+          <a href="/gas/users" id="nav-gas-users" title="gas by user"><span class="rail-label">by user</span></a>
+          <a href="/gas/txs" id="nav-gas-txs" title="the most expensive transactions"><span class="rail-label">top txs</span></a>
+          <a href="/storage" id="nav-storage" title="storage"><span class="rail-label">storage</span></a>
         </div>
       </div>
       <div class="nav-group">
-        <a onclick="navigate('/govdao')" id="nav-govdao" title="govdao overview, proposals, voters, options, params"><svg aria-hidden="true"><use href="#i-gavel"/></svg><span class="rail-label">govdao</span></a>
+        <a href="/govdao" id="nav-govdao" title="govdao overview, proposals, voters, options, params"><svg aria-hidden="true"><use href="#i-gavel"/></svg><span class="rail-label">govdao</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/govdao/proposals')" id="nav-govdao-proposals" title="every proposal"><span class="rail-label">proposals</span></a>
-          <a onclick="navigate('/govdao/voters')" id="nav-govdao-voters" title="who votes, and who does not"><span class="rail-label">voters</span></a>
-          <a onclick="navigate('/govdao/options')" id="nav-govdao-options" title="what govdao can be asked to execute"><span class="rail-label">options</span></a>
-          <a onclick="navigate('/govdao/params')" id="nav-params" title="chain parameters"><span class="rail-label">params</span></a>
+          <a href="/govdao/proposals" id="nav-govdao-proposals" title="every proposal"><span class="rail-label">proposals</span></a>
+          <a href="/govdao/voters" id="nav-govdao-voters" title="who votes, and who does not"><span class="rail-label">voters</span></a>
+          <a href="/govdao/options" id="nav-govdao-options" title="what govdao can be asked to execute"><span class="rail-label">options</span></a>
+          <a href="/govdao/params" id="nav-params" title="chain parameters"><span class="rail-label">params</span></a>
         </div>
       </div>
       <div class="nav-group">
-        <a onclick="navigate('/lab')" id="nav-lab" title="surfaces being tried out"><svg aria-hidden="true"><use href="#i-flask"/></svg><span class="rail-label">lab</span></a>
+        <a href="/lab" id="nav-lab" title="surfaces being tried out"><svg aria-hidden="true"><use href="#i-flask"/></svg><span class="rail-label">lab</span></a>
         <div class="nav-kids">
-          <a onclick="navigate('/gnohub')" id="nav-gnohub" title="a realm read as a repository: owners, files, deploys"><span class="rail-label">gnohub</span></a>
-          <a onclick="navigate('/lab/github')" id="nav-labgithub" title="the ecosystem on github: contributors, pull requests, and projects that depend on gno"><span class="rail-label">github</span></a>
+          <a href="/gnohub" id="nav-gnohub" title="a realm read as a repository: owners, files, deploys"><span class="rail-label">gnohub</span></a>
+          <a href="/lab/github" id="nav-labgithub" title="the ecosystem on github: contributors, pull requests, and projects that depend on gno"><span class="rail-label">github</span></a>
         </div>
       </div>
-      <a onclick="navigate('/glossary')" id="nav-glossary" title="what the words on this site mean"><svg aria-hidden="true"><use href="#i-info"/></svg><span class="rail-label">glossary</span></a>
-      <a onclick="navigate('/watch')" id="nav-watch" title="watch"><svg aria-hidden="true"><use href="#i-eye"/></svg><span class="rail-label">watch</span></a>
+      <a href="/glossary" id="nav-glossary" title="what the words on this site mean"><svg aria-hidden="true"><use href="#i-info"/></svg><span class="rail-label">glossary</span></a>
+      <a href="/watch" id="nav-watch" title="watch"><svg aria-hidden="true"><use href="#i-eye"/></svg><span class="rail-label">watch</span></a>
   </nav>
   <div class="rail-foot">
     <!-- Which build is this, how long has it been up, what changed, and where
@@ -1423,7 +1423,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
       <span class="kbd-hint" aria-hidden="true">/</span>
     </div>
     <div id="search-results"></div>
-    <span class="net-swatch" id="network-swatch" title=""></span><select class="network-select" id="network-select" onchange="onNetworkChange()"></select><a class="health-chip" id="health-chip" onclick="navigate('/sanity')" title=""></a>
+    <span class="net-swatch" id="network-swatch" title=""></span><select class="network-select" id="network-select" onchange="onNetworkChange()"></select><a class="health-chip" id="health-chip" href="/sanity" title=""></a>
     <button class="live-hud" id="live-toggle" onclick="toggleLive()"><span class="live-dot"></span><span class="live-height" id="live-height">live</span><span class="live-train" id="live-train" aria-hidden="true"></span><span class="live-beat" id="live-beat"><i></i></span></button>
   </div>
   <div id="refresh-bar" aria-hidden="true"></div>
@@ -1510,7 +1510,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
       <div class="section">
         <div class="section-title">most active accounts</div>
         <div class="section-sub">who is actually using the chain right now. the full list, with
-          every message type broken out, is on <a href="/accounts" onclick="navigate('/accounts'); return false;">accounts</a>.</div>
+          every message type broken out, is on <a href="/accounts">accounts</a>.</div>
         <table><thead><tr><th>address</th><th>calls</th><th>deploys</th><th>total</th></tr></thead><tbody id="top-accounts"></tbody></table>
       </div>
       <div class="section"><div class="section-title">recent activity</div>
@@ -1789,7 +1789,19 @@ function badge(type, text) {
   b.setAttribute('data-hl', 'badge:' + text);
   return b;
 }
-function link(text, onclick) { const a = el('a', { href: '#' }, text); a.addEventListener('click', (e) => { e.preventDefault(); onclick(); }); return a; }
+// link builds an in-app link.
+//
+// `to` is either a path, which becomes a real href and is navigated by the
+// document-level handler, or a function for the few callers that do something
+// other than navigate. The path form is the one to use: href="#" costs the
+// status-bar preview, open-in-new-tab and copy-link-address, which is most of
+// what makes a link a link.
+function link(text, to) {
+  if (typeof to === 'string') return el('a', { href: to }, text);
+  const a = el('a', { href: '#' }, text);
+  a.addEventListener('click', (e) => { e.preventDefault(); to(); });
+  return a;
+}
 // parkedBadgeEl flags a package row's own status inline in a list —
 // realms/packages/search/an address's deploys — so a parked package reads
 // as parked wherever it is listed, not only after clicking through to its
@@ -4153,6 +4165,48 @@ function navigate(path, replace) {
   if (replace) history.replaceState(null, '', path);
   else history.pushState(null, '', path);
   route();
+  reportPageView();
+}
+
+// reportPageView tells the server a page was opened.
+//
+// Without this the server cannot see a page view at all. Navigation here is
+// history.pushState, so moving from /realms to /apps sends no document request:
+// the only trace is whatever XHRs the new page happens to fetch, which is why
+// one refresh used to look like ten "requests" and why in-app navigation looked
+// like no traffic whatsoever.
+//
+// Deliberately fire-and-forget, and deliberately not awaited: analytics must
+// never be in front of a reader. A failure here is silent because the
+// alternative is a console error on every navigation when the log is switched
+// off, which is the common case for anyone running gnoscope locally.
+let _lastPageView = '';
+function reportPageView() {
+  const path = location.pathname;
+  // A tab switch inside a realm page calls replaceState and re-routes without
+  // changing the path. That is one page view, not two.
+  if (path === _lastPageView) return;
+  _lastPageView = path;
+  const q = new URLSearchParams({ path });
+  const net = getNetwork();
+  if (net) q.set('network', net);
+  const url = '/api/traffic/pageview?' + q.toString();
+
+  // sendBeacon, not fetch.
+  //
+  // A page view is reported at the moment the page changes, which is the exact
+  // moment the browser is entitled to cancel in-flight requests. With fetch the
+  // browser aborted them: net::ERR_ABORTED on four of six navigations in the
+  // e2e suite, so page views were being lost in proportion to how fast someone
+  // clicked. keepalive:true is not enough on a same-document navigation.
+  //
+  // sendBeacon exists for this one job: the request is handed to the browser to
+  // deliver regardless of what the page does next. It is a POST, which is also
+  // the honest method for something that writes.
+  if (navigator.sendBeacon && navigator.sendBeacon(url)) return;
+  // Older browsers, and the case where sendBeacon refuses because its queue is
+  // full. Losing a view here is acceptable; blocking a reader is not.
+  fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
 }
 
 function route() {
@@ -11103,7 +11157,13 @@ let _trafficWindow = '7d';
 // location.hostname needs no configuration and cannot drift from reality.
 let _trafficHost = location.hostname;
 let _trafficWho = 'noncrawlers';
-let _trafficKind = '';
+// Page views by default, not every request.
+//
+// One refresh of this app fires a document load plus ten or so XHRs, so an
+// unfiltered request count moves in jumps of ten and answers "how chatty is the
+// frontend" rather than "how many people looked". Everything is one click away
+// under `what`.
+let _trafficKind = 'page';
 let _trafficErrors = false;
 
 // The filters live in the URL as well as in those variables.
@@ -11179,12 +11239,14 @@ async function loadTraffic(fromURL) {
   ], _trafficWho, v => { _trafficWho = v; });
 
   row('what', [
-    ['', 'everything'],
-    ['page', 'pages'],
+    ['page', 'page views', 'the default: one row per page a reader opened, in-app navigation included'],
+    ['', 'all requests', 'every request including the XHRs a page fires, which is roughly ten per page open'],
+    ['document', 'documents', 'the HTML that bootstraps the app: cold loads, not in-app navigation'],
     ['api', 'api'],
     ['mcp', 'mcp'],
-    ['badge', 'badges'],
     ['asset', 'assets'],
+    ['badge', 'badges'],
+    ['probe', 'scanners', 'requests for software this server does not run: wp-login.php, .env, .git and friends'],
   ], _trafficKind, v => { _trafficKind = v; });
 
   const statusRow = row('status', [[false, 'all'], [true, 'errors only']],
@@ -11251,7 +11313,13 @@ async function loadTraffic(fromURL) {
     if (title) c.setAttribute('title', title);
     return c;
   };
-  cards.appendChild(stat('requests', fmtNum(t.requests)));
+  cards.appendChild(stat(
+    _trafficKind === 'page' ? 'page views' : _trafficKind === '' ? 'requests' : _trafficKind,
+    fmtNum(t.requests),
+    _trafficKind === 'page'
+      ? 'pages opened, reported by the app itself. in-app navigation counts, and the ten or so '
+        + 'XHRs a page fires do not.'
+      : undefined));
   cards.appendChild(stat('visitors', fmtNum(t.visitors),
     'distinct clients within a day. the id is a keyed hash whose key is regenerated at midnight UTC '
     + 'and never stored, so somebody here on two days counts twice and cannot be linked across them.'));
@@ -11286,18 +11354,39 @@ async function loadTraffic(fromURL) {
     ['mcp tools', 'what agents asked for. a name that is not a tool is a tool worth writing', rep.tools, p => p, null],
     ['networks', 'the query string carries this, which is exactly what a page-view script drops', rep.networks, p => p, null],
     ['clients', 'browser, agent, bot, unknown. from the user agent, which is classified and then discarded', rep.clients, p => p, null],
-    ['referrers', 'host only, never the path. own-origin links are not counted', rep.referers, p => p, null],
+    ['referrers', 'the whole link, so one tweet and one thread are two rows rather than both being \u201ctwitter.com\u201d. tracking parameters stripped; own-origin links not counted', rep.referers, p => p, p => p],
     ['statuses', null, rep.statuses, p => p, null],
     ['cache', 'HIT served from cache, MISS computed, STALE served while refreshing behind the reader', rep.cache, p => p, null],
     ['not found', 'what people ask for that this explorer does not serve', rep.not_found, p => p, null],
     ['hosts', 'which name readers asked for. always across every host, so this panel can act as the host filter\u2019s own control', rep.hosts, p => p, null],
   ];
-  const grid = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' } });
-  for (const [title, sub, rows, label, href] of panels) {
-    if (!rows || !rows.length) continue;
-    grid.appendChild(trafficBarPanel(title, sub, rows, label, href));
-  }
-  container.appendChild(grid);
+
+  // The entity panels answer the question a list of paths cannot: which
+  // subject, rather than which URL. One realm read through its overview, its
+  // usage tab and its source browser is three paths and one row here.
+  const groups = [
+    ['realms viewed', 'any page about a realm, folded into one row per realm. always page views, whatever the what filter says', rep.realms_viewed, p => p, p => '/realm/' + p],
+    ['addresses viewed', 'accounts and validators, folded the same way', rep.addresses_viewed, p => p, p => '/address/' + p],
+    ['transactions viewed', null, rep.txs_viewed, p => p, p => '/tx/' + p],
+    ['assets viewed', null, rep.assets_viewed, p => p, null],
+    ['kind of page', 'the opposite question: not which realm, but what readers come here to do', rep.page_kinds, p => p, null],
+  ];
+  const gridOf = (list) => {
+    const g = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' } });
+    let any = false;
+    for (const [title, sub, rows, label, href] of list) {
+      if (!rows || !rows.length) continue;
+      any = true;
+      g.appendChild(trafficBarPanel(title, sub, rows, label, href));
+    }
+    return any ? g : null;
+  };
+  // Grouped first: "which realm" is the question people actually arrive with,
+  // and a ranked list of raw paths is the one they settle for.
+  const groupGrid = gridOf(groups);
+  if (groupGrid) container.appendChild(groupGrid);
+  const panelGrid = gridOf(panels);
+  if (panelGrid) container.appendChild(panelGrid);
 
   if (rep.slowest && rep.slowest.length) container.appendChild(trafficSlowestSection(rep.slowest));
 
@@ -11371,9 +11460,19 @@ function trafficBarPanel(title, sub, rows, label, href) {
         background: 'var(--accent, #4dabf7)', opacity: '0.16', borderRadius: '3px',
       },
     });
-    const name = href
-      ? el('a', { onclick: () => navigate(href(r.label)), style: { cursor: 'pointer', position: 'relative', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, r.label)
-      : el('span', { style: { position: 'relative', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, r.label);
+    const nameStyle = { position: 'relative', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+    let name;
+    const dest = href ? href(r.label) : null;
+    if (dest && /^https?:\/\//.test(dest)) {
+      // An external referrer. A real anchor with rel=noreferrer: following a
+      // link out of an analytics page should not tell the destination that
+      // somebody was reading their inbound traffic.
+      name = el('a', { href: dest, target: '_blank', rel: 'noopener noreferrer', style: nameStyle }, r.label);
+    } else if (dest) {
+      name = el('a', { href: dest, style: nameStyle }, r.label);
+    } else {
+      name = el('span', { style: nameStyle }, r.label);
+    }
     const count = el('span', { className: 'dim', style: { position: 'relative', flex: '0 0 auto', marginLeft: '10px', fontVariantNumeric: 'tabular-nums' } },
       r.visitors ? fmtNum(r.hits) + ' · ' + fmtNum(r.visitors) + ' vis' : fmtNum(r.hits));
     const row = el('div', {
@@ -25861,9 +25960,45 @@ async function ghTree(prefix, gen) {
 }
 
 // --- Routing ---
-window.addEventListener('popstate', route);
+// One click handler for every in-app link, so links can be links.
+//
+// Before this, navigation was `href="/x"` on an anchor with
+// href="#". That works and costs four things a real link gives for free: the
+// destination in the status bar on hover, open-in-new-tab, copy-link-address,
+// and anything that reads the page without running it. The href is the truth
+// now and this handler is the optimisation, rather than the href being a
+// decoration over the handler.
+//
+// Deliberately does nothing for: modified clicks (cmd, ctrl, shift, alt) and
+// middle clicks, which the browser already handles better than any router; any
+// anchor with a target, a download, or an external origin; and anything a
+// deeper handler already called preventDefault on.
+document.addEventListener('click', (e) => {
+  if (e.defaultPrevented || e.button !== 0) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a) return;
+  if (a.target && a.target !== '_self') return;
+  if (a.hasAttribute('download')) return;
+  const href = a.getAttribute('href');
+  // Same-document fragments and anything not rooted at this app are the
+  // browser's business.
+  if (!href || !href.startsWith('/') || href.startsWith('//')) return;
+  const url = new URL(href, location.origin);
+  if (url.origin !== location.origin) return;
+  e.preventDefault();
+  navigate(url.pathname + url.search);
+});
+
+// Back and forward are page views too, and the browser sends nothing for them.
+window.addEventListener('popstate', () => { route(); reportPageView(); });
 initRenameNotice();
 route();
+// The first view of the session. The document fetch that bootstrapped this app
+// is recorded as a "document", which is a different event: one document load
+// carries however many page views the reader goes on to make, and a crawler
+// that never runs JavaScript produces a document load and no page view at all.
+reportPageView();
 
 // Live mode starts here, at the bottom, and not in the --- Init --- block
 // above: it reads _liveTips and the rest of the live state, which are declared
