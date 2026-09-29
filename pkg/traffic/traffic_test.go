@@ -268,6 +268,7 @@ func TestReportFiltersHost(t *testing.T) {
 	if one.Totals.Requests != 6 {
 		t.Errorf("host filter = %d rows, want 6 (5 matching plus 1 unrecorded)", one.Totals.Requests)
 	}
+	// The other host is still excluded, or the filter does nothing.
 	other, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Host: "www.gnoscope.com", Now: testNow})
 	if err != nil {
 		t.Fatal(err)

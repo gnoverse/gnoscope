@@ -992,6 +992,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/realm/{path...}", a.HandleRealm)
 	mux.HandleFunc("GET /api/views", a.HandleViews)
 	mux.HandleFunc("GET /api/traffic", a.HandleTraffic)
+	mux.HandleFunc("GET "+traffic.PageViewPath, a.HandlePageView)
 	mux.HandleFunc("GET /api/traffic/health", a.HandleTrafficHealth)
 	// The lab's off-chain section. No ?network= on any of these: GitHub is
 	// one place. See lab_github.go.

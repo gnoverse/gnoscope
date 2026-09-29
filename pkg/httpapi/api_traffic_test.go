@@ -41,6 +41,11 @@ func trafficTestMux() *http.ServeMux {
 		NoteMCPTool(r.Context(), "get_realm_state")
 		w.Write([]byte(`{}`))
 	})
+	// The beacon has to be a registered route, or mux.Handler falls through to
+	// the SPA catch-all and the row is classified as a document.
+	mux.HandleFunc("GET "+traffic.PageViewPath, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/nope" {
 			http.Error(w, "no", http.StatusNotFound)
@@ -80,18 +85,32 @@ func TestAccessLogRecordsRouteAndTarget(t *testing.T) {
 	if rep.Totals.Requests != 3 {
 		t.Fatalf("requests = %d, want 3", rep.Totals.Requests)
 	}
-	if rep.Totals.API != 2 || rep.Totals.Pages != 1 {
-		t.Errorf("api/pages = %d/%d, want 2/1", rep.Totals.API, rep.Totals.Pages)
+	// /realms is a *document* now, not a page view. The document that
+	// bootstraps the app and the page views a reader then makes are different
+	// events: one document load carries many page views, and only the beacon
+	// reports those.
+	if rep.Totals.API != 2 || rep.Totals.Pages != 0 {
+		t.Errorf("api/pages = %d/%d, want 2/0", rep.Totals.API, rep.Totals.Pages)
 	}
 
 	// The realm path is what "which realms do people read" is built on.
 	if len(rep.TopRealms) != 1 || rep.TopRealms[0].Label != "r/moul/home" {
 		t.Errorf("top realms = %+v, want one row for r/moul/home", rep.TopRealms)
 	}
-	// The SPA catch-all matches every non-API URL, so the page identity has to
-	// come from the path rather than the pattern.
-	if len(rep.TopPages) != 1 || rep.TopPages[0].Label != "/realms" {
-		t.Errorf("top pages = %+v, want one row for /realms", rep.TopPages)
+	// The document is still identified by its path: the SPA catch-all matches
+	// every non-API URL, so the pattern says nothing about which one it was.
+	docs, err := store.Report(traffic.Query{
+		Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll,
+		Kind: "document", Now: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// TopPages ranks page views, so it is empty here by construction: this
+	// test makes no beacon call. What it pins is that the document itself was
+	// recorded and identified by its path.
+	if docs.Totals.Requests != 1 {
+		t.Errorf("documents = %d, want 1 for /realms", docs.Totals.Requests)
 	}
 	// #448: the query string is where the network lives, and dropping it is
 	// what made every chain one row in the old client-side analytics.
@@ -101,6 +120,78 @@ func TestAccessLogRecordsRouteAndTarget(t *testing.T) {
 	}
 	if labels["mainnet"] != 2 || labels["pearl"] != 1 {
 		t.Errorf("networks = %+v, want mainnet:2 pearl:1", rep.Networks)
+	}
+}
+
+// The beacon is the only thing that produces a page view, and it is what makes
+// in-app navigation visible at all: the frontend moves with history.pushState,
+// so going from /realms to /apps sends no document request whatsoever.
+func TestAccessLogRecordsPageViewsFromTheBeacon(t *testing.T) {
+	store := trafficTestStore(t)
+	mux := trafficTestMux()
+	h := WithAccessLog(store, mux, "", mux)
+
+	fire(t, h, "GET", traffic.PageViewPath+"?path=/realm/gno.land/r/moul/home", browserUA)
+	fire(t, h, "GET", traffic.PageViewPath+"?path=/gnohub/r/moul/home/-/blob/x.gno", browserUA)
+	fire(t, h, "GET", traffic.PageViewPath+"?path=/address/g1abc", browserUA)
+	fire(t, h, "GET", traffic.PageViewPath+"?path=/realms", browserUA)
+	store.Flush()
+
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Totals.Pages != 4 {
+		t.Errorf("page views = %d, want 4", rep.Totals.Pages)
+	}
+	// Two paths, one realm. That is the whole point of grouping by entity: a
+	// list of raw paths would split this realm in two and rank neither.
+	if len(rep.Realms) != 1 || rep.Realms[0].Label != "r/moul/home" || rep.Realms[0].Hits != 2 {
+		t.Errorf("realms = %+v, want r/moul/home with 2 hits", rep.Realms)
+	}
+	if len(rep.Addresses) != 1 || rep.Addresses[0].Label != "g1abc" {
+		t.Errorf("addresses = %+v, want g1abc", rep.Addresses)
+	}
+	kinds := map[string]int64{}
+	for _, c := range rep.PageKinds {
+		kinds[c.Label] = c.Hits
+	}
+	if kinds["realm detail"] != 1 || kinds["source browser"] != 1 || kinds["address detail"] != 1 || kinds["listing"] != 1 {
+		t.Errorf("page kinds = %+v, want one each of realm detail, source browser, address detail, listing", rep.PageKinds)
+	}
+}
+
+// Scanners are recorded but never mixed into a view of anything else.
+func TestAccessLogSeparatesProbes(t *testing.T) {
+	store := trafficTestStore(t)
+	mux := trafficTestMux()
+	h := WithAccessLog(store, mux, "", mux)
+
+	fire(t, h, "GET", "/wp-login.php", browserUA)
+	fire(t, h, "GET", "/.env", browserUA)
+	fire(t, h, "GET", "/nope", browserUA)
+	store.Flush()
+
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Totals.Requests != 1 {
+		t.Errorf("default view = %d requests, want 1; probes must not be counted with everything else", rep.Totals.Requests)
+	}
+	// A real mistyped path is still a real 404, and is the one worth reading.
+	if len(rep.NotFound) != 1 || rep.NotFound[0].Label != "/nope" {
+		t.Errorf("not found = %+v, want only /nope", rep.NotFound)
+	}
+	// And the probes are reachable, because being scanned is worth seeing.
+	probes, err := store.Report(traffic.Query{
+		Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll, Kind: "probe", Now: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probes.Totals.Requests != 2 {
+		t.Errorf("probes = %d, want 2", probes.Totals.Requests)
 	}
 }
 

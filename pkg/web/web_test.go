@@ -292,9 +292,14 @@ func TestRailMatchesNavTable(t *testing.T) {
 	navTable := between(t, html, "const NAV = [", "\n];")
 
 	// id and path, in document order, from each side. The rail's <a> carries
-	// both as `navigate('<path>')` and `id="nav-<id>"`; NAV's entries carry
-	// them as `id: '<id>'` and `path: '<path>'`.
-	railRe := regexp.MustCompile(`navigate\('([^']+)'\)" id="nav-([A-Za-z0-9-]+)"`)
+	// both as `href="<path>"` and `id="nav-<id>"`; NAV's entries carry them as
+	// `id: '<id>'` and `path: '<path>'`.
+	//
+	// The rail used to say `onclick="navigate('<path>')"` and this pattern
+	// matched that. Links are real anchors now, so the path lives in href: the
+	// destination is the truth and the click handler is the optimisation over
+	// it, rather than the other way round.
+	railRe := regexp.MustCompile(`href="([^"]+)" id="nav-([A-Za-z0-9-]+)"`)
 	tableRe := regexp.MustCompile(`id: '([A-Za-z0-9-]+)',[^\n]*?path: '([^']+)'`)
 
 	type entry struct{ id, path string }

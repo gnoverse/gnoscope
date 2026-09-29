@@ -19,6 +19,7 @@ package traffic
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -61,21 +62,29 @@ type Record struct {
 	// rename adds), and every panel here was silently treating them as one
 	// place. "Only the canonical host" is a claim, and a claim needs a column
 	// to be checkable.
-	Host    string
-	Method  string // GET, POST
-	Route   string // mux pattern, e.g. "/api/realm/{path...}", bounded by the routing table
-	Target  string // the wildcard part, e.g. "r/moul/home", the interesting half
-	Network string // ?network=, "" when absent
-	Kind    string // page | api | mcp | badge | asset
-	Tool    string // MCP tool name, when Kind is mcp
-	Status  int
-	Bytes   int64   // bytes on the wire, so after compression
-	DurMS   float64 // total, measured outermost
-	AppMS   float64 // handler cost from Server-Timing, 0 on a cache hit
-	Cache   string  // HIT | MISS | STALE | WAIT | ""
-	RefHost string  // referer host only, never its path
-	Client  string  // browser | agent | bot | unknown
-	Robot   bool
+	Host string
+	// EntityKind and Entity say what a page view is *about*: one realm read
+	// through its overview, its usage tab and its source browser is three
+	// paths and one subject, and a list of paths splits it three ways.
+	EntityKind string
+	Entity     string
+	// PageKind is the opposite question: not which realm, but what sort of
+	// page. Both are cheap and neither substitutes for the other.
+	PageKind string
+	Method   string // GET, POST
+	Route    string // mux pattern, e.g. "/api/realm/{path...}", bounded by the routing table
+	Target   string // the wildcard part, e.g. "r/moul/home", the interesting half
+	Network  string // ?network=, "" when absent
+	Kind     string // page | api | mcp | badge | asset
+	Tool     string // MCP tool name, when Kind is mcp
+	Status   int
+	Bytes    int64   // bytes on the wire, so after compression
+	DurMS    float64 // total, measured outermost
+	AppMS    float64 // handler cost from Server-Timing, 0 on a cache hit
+	Cache    string  // HIT | MISS | STALE | WAIT | ""
+	RefHost  string  // referer host only, never its path
+	Client   string  // browser | agent | bot | unknown
+	Robot    bool
 }
 
 // Store buffers records and writes them in batches.
@@ -126,6 +135,9 @@ CREATE TABLE IF NOT EXISTS requests (
 	hour     INTEGER NOT NULL,
 	visitor  TEXT    NOT NULL DEFAULT '',
 	host     TEXT    NOT NULL DEFAULT '',
+	entity_kind TEXT NOT NULL DEFAULT '',
+	entity      TEXT NOT NULL DEFAULT '',
+	page_kind   TEXT NOT NULL DEFAULT '',
 	method   TEXT    NOT NULL DEFAULT '',
 	route    TEXT    NOT NULL DEFAULT '',
 	target   TEXT    NOT NULL DEFAULT '',
@@ -147,13 +159,15 @@ CREATE INDEX IF NOT EXISTS idx_requests_day_rt   ON requests(day, route);
 CREATE INDEX IF NOT EXISTS idx_requests_ts       ON requests(ts);
 CREATE INDEX IF NOT EXISTS idx_requests_target   ON requests(day, target) WHERE target <> '';
 CREATE INDEX IF NOT EXISTS idx_requests_day_host ON requests(day, host);
+CREATE INDEX IF NOT EXISTS idx_requests_entity ON requests(day, entity_kind, entity) WHERE entity <> '';
+CREATE INDEX IF NOT EXISTS idx_requests_pagekind ON requests(day, page_kind) WHERE page_kind <> '';
 `
 	// Migrate before the DDL, not after: the DDL creates an index on `host`,
 	// and on a database written before that column existed the index is what
 	// fails, with "no such column: host" at Open time. Caught by
 	// TestOpenMigratesDatabaseWithoutHostColumn before it reached a real
 	// database; the failure mode is a server that will not start.
-	if err := migrateAddHost(db); err != nil {
+	if err := migrateAddColumns(db); err != nil {
 		return err
 	}
 	_, err := db.Exec(ddl)
@@ -167,7 +181,17 @@ CREATE INDEX IF NOT EXISTS idx_requests_day_host ON requests(day, host);
 // which is the honest handling: this process cannot know what name those
 // readers typed, and backfilling the canonical one would make a filter return
 // rows it has no evidence for. The bucket drains as retention advances.
-func migrateAddHost(db *sql.DB) error {
+// addedColumns are columns that arrived after the table first shipped, in the
+// order they arrived. Adding one here is the whole migration: ALTER TABLE ADD
+// COLUMN with a default is cheap in SQLite and rewrites nothing.
+var addedColumns = []struct{ name, ddl string }{
+	{"host", "host TEXT NOT NULL DEFAULT ''"},
+	{"entity_kind", "entity_kind TEXT NOT NULL DEFAULT ''"},
+	{"entity", "entity TEXT NOT NULL DEFAULT ''"},
+	{"page_kind", "page_kind TEXT NOT NULL DEFAULT ''"},
+}
+
+func migrateAddColumns(db *sql.DB) error {
 	// PRAGMA table_info, not a substring search of the CREATE statement. The
 	// obvious `strings.Contains(ddl, "host")` is wrong and silently so: the
 	// table already has a `ref_host` column, so the check passes on a database
@@ -178,7 +202,7 @@ func migrateAddHost(db *sql.DB) error {
 		return err
 	}
 	defer rows.Close()
-	found, any := false, false
+	have, any := map[string]bool{}, false
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -189,19 +213,24 @@ func migrateAddHost(db *sql.DB) error {
 			return err
 		}
 		any = true
-		if name == "host" {
-			found = true
-		}
+		have[name] = true
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if !any || found {
-		// No table yet (CREATE TABLE below writes the column), or it is there.
+	if !any {
+		// No table yet. CREATE TABLE below writes every column.
 		return nil
 	}
-	_, err = db.Exec(`ALTER TABLE requests ADD COLUMN host TEXT NOT NULL DEFAULT ''`)
-	return err
+	for _, c := range addedColumns {
+		if have[c.name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE requests ADD COLUMN ` + c.ddl); err != nil {
+			return fmt.Errorf("add column %s: %w", c.name, err)
+		}
+	}
+	return nil
 }
 
 // Visitor derives the stored identity for one request's client.
@@ -253,9 +282,10 @@ func (s *Store) Flush() {
 		return
 	}
 	stmt, err := tx.Prepare(`INSERT INTO requests
-		(ts, day, hour, visitor, host, method, route, target, network, kind, tool,
+		(ts, day, hour, visitor, host, entity_kind, entity, page_kind,
+		 method, route, target, network, kind, tool,
 		 status, bytes, dur_ms, app_ms, cache, ref_host, client, robot)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		log.Printf("traffic: prepare: %v", err)
@@ -269,7 +299,8 @@ func (s *Store) Flush() {
 		}
 		if _, err := stmt.Exec(
 			utc.Unix(), utc.Format("2006-01-02"), utc.Hour(),
-			r.Visitor, r.Host, r.Method, r.Route, r.Target, r.Network, r.Kind, r.Tool,
+			r.Visitor, r.Host, r.EntityKind, r.Entity, r.PageKind,
+			r.Method, r.Route, r.Target, r.Network, r.Kind, r.Tool,
 			r.Status, r.Bytes, r.DurMS, r.AppMS, r.Cache, r.RefHost, r.Client, robot,
 		); err != nil {
 			stmt.Close()
