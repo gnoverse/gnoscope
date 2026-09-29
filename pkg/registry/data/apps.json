@@ -87,9 +87,9 @@
       "path": "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble4",
       "name": "Bubble Rumble",
       "category": "games",
-      "description": "Last bidder wins. A bid pushes the pool's clock out and splits itself: 55% into the pot, 30% credited at once to the bidders before you, 10% to whoever invited you, 5% to the pool's creator, settled by a flag war on the pool's last day. Later generations add the shot, extra money on a bid that can pop the bubble and take the pot on a commit-reveal draw.",
+      "description": "Last bid standing takes the pot. A bid pushes the pool's clock out and splits itself between the pot, the pool's earlier bidders, whoever invited the bidder, the pool's creator and the BUBBLE treasury, settled by a flag war on the pool's last day. A bid may also carry a shot at popping the bubble early, drawn by a keeper's commit-reveal. The realm renders the current split itself, which is why none of it is quoted here.",
       "url": "https://bubblerumble.net",
-      "checked": "2026-09-24"
+      "checked": "2026-09-29"
     },
     {
       "path": "gno.land/r/moul/blog",
