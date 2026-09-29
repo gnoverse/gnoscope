@@ -897,3 +897,82 @@ func warningCodes(q Quote) []string {
 	}
 	return out
 }
+
+// A chain that cannot be READ is not a chain with no pools, and publishing the
+// second when the first is true is this feature committing the error it exists
+// to prevent.
+//
+// Live on 2026-09-29: val1 started getting 403 from rpc.gno.land, every
+// LoadPool failed against a pool set that was still in cache, and the endpoint
+// answered a perfectly well-formed `pool_count: 0, priced_count: 1` that then
+// sat in the response cache. The page said the chain had no liquidity.
+func TestRefreshSaysWhenNoPoolCouldBeRead(t *testing.T) {
+	ctx := context.Background()
+	anchor := &Anchor{USDPerGNOT: gnotUSD, Sources: []AnchorSource{{Venue: "Kraken", USD: gnotUSD, Kind: "vwap-24h"}}}
+	keys := []PoolKey{
+		{Token0: WUGNOT, Token1: tokGNS, Fee: 3000},
+		{Token0: tokBubble, Token1: WUGNOT, Fee: 3000},
+	}
+	assets := []Asset{
+		{Token: keyGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns", Fungible: true, Decimals: 6, DecimalsKnown: true},
+	}
+	dead := func(_ context.Context, _ string) (string, error) {
+		return "", errors.New("Post \"https://rpc.gno.land\": 403 Forbidden")
+	}
+
+	res := Refresh(ctx, dead, anchor, assets, keys, "")
+	if res.Unavailable == "" {
+		t.Fatal("a refresh that read none of its pools reported no reason")
+	}
+	if !strings.Contains(res.Unavailable, "403") {
+		t.Errorf("unavailable = %q, want the underlying error in it", res.Unavailable)
+	}
+	// And it must not publish prices built on nothing.
+	if len(res.Quotes) != 0 {
+		t.Errorf("got %d quotes from a chain that could not be read", len(res.Quotes))
+	}
+	// The anchor still stands: it came from an exchange, not from the chain.
+	if res.Anchor == nil || res.Anchor.USDPerGNOT <= 0 {
+		t.Error("the off-chain anchor was dropped along with the chain reads")
+	}
+}
+
+// A partial read is not a failure, and must not be reported as one: some tokens
+// price and others do not, for a reason that is about this server.
+func TestRefreshReportsPartialReads(t *testing.T) {
+	ctx := context.Background()
+	anchor := &Anchor{USDPerGNOT: gnotUSD, Sources: []AnchorSource{{Venue: "Kraken", USD: gnotUSD, Kind: "vwap-24h"}}}
+	good := PoolKey{Token0: WUGNOT, Token1: tokGNS, Fee: 3000}
+	bad := PoolKey{Token0: tokBubble, Token1: WUGNOT, Fee: 3000}
+
+	eval := func(_ context.Context, expr string) (string, error) {
+		if strings.Contains(expr, bad.Path()) {
+			return "", errors.New("403 Forbidden")
+		}
+		switch {
+		case strings.Contains(expr, "GetSlot0SqrtPriceX96"):
+			return `("` + sqrtWugnotGNS + `" string)`, nil
+		case strings.Contains(expr, "GetSlot0Tick"):
+			return `(13902 int32)`, nil
+		case strings.Contains(expr, "GetBalances"):
+			return "(3571040328026 int64)\n(28769887840258 int64)\n(undefined)", nil
+		case strings.Contains(expr, "GetSlot0"):
+			return slot0WugnotGNS, nil
+		}
+		return "", errors.New("unexpected: " + expr)
+	}
+
+	res := Refresh(ctx, eval, anchor, []Asset{
+		{Token: keyGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns", Fungible: true, Decimals: 6, DecimalsKnown: true},
+	}, []PoolKey{good, bad}, "")
+
+	if res.Unavailable != "" {
+		t.Fatalf("one readable pool is not an outage: %q", res.Unavailable)
+	}
+	if res.PartialReads != 1 {
+		t.Errorf("partial_reads = %d, want 1", res.PartialReads)
+	}
+	if res.PoolCount != 1 {
+		t.Errorf("pool_count = %d, want the one that answered", res.PoolCount)
+	}
+}

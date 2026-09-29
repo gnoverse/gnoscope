@@ -7080,8 +7080,18 @@ function priceBanner(meta) {
       el('b', {}, 'No prices on this network. '),
       fact(meta.unavailable,
         'This is why the price column is empty, and it is a fact about this explorer rather than about the chain. '
-        + 'Pricing needs a verified RPC endpoint to read GnoSwap pools through; without one nothing here can be computed.')));
+        + 'Pricing reads GnoSwap pools over RPC; when that read fails there is nothing to compute, and an empty '
+        + 'price column must not be mistaken for a chain with no liquidity.')));
     return box;
+  }
+  // A partial read is not an outage and is not silence either: some tokens are
+  // priced and others say "no market" for a reason that is about this server.
+  if (meta.partial_reads > 0) {
+    box.appendChild(el('div', {},
+      el('b', {}, 'Partly read. '),
+      fact(fmtNum(meta.partial_reads) + ' known pool' + (meta.partial_reads === 1 ? '' : 's') + ' could not be read this pass',
+        'Any token priced only through one of them shows "no market" below, which here means this server could not '
+        + 'reach the chain rather than that no market exists. The next refresh may well show it.')));
   }
 
   const line1 = el('div');
