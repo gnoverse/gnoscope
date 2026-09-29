@@ -2716,7 +2716,7 @@ func mustStore(t *testing.T, db *DB, network, hash string, idx int, path string,
 // Search returns the same PackageInfo the listing does, so every count on it
 // has to be selected. unique_users was not, and a field that is never assigned
 // does not read as absent: it reads as a confident 0, which is how the search
-// box claimed a realm with 479 callers had none (moul/gno-meta#382).
+// box claimed a realm with 479 callers had none.
 func TestSearchFillsUniqueUsers(t *testing.T) {
 	db := NewTestDB(t)
 
