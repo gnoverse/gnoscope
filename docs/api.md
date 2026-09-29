@@ -1574,6 +1574,61 @@ bodies an older submission was compiled from are simply not in the database. An
 API diff between two deploys of the same path therefore still needs a spine of
 its own, and this table is not it.
 
+## The GitHub lab
+
+```
+GET /api/lab/github/overview?days=
+GET /api/lab/github/contributors?days=&limit=
+GET /api/lab/github/prs?days=&limit=&state=merged|open
+GET /api/lab/github/repos?kind=&source=&limit=
+```
+
+**The only endpoints here with no `network` parameter**, and the absence is
+deliberate. Everything else on this surface reads a gno.land chain and is keyed
+by network; these read GitHub. A repository is the same repository whichever
+network its realms end up on, so a selector would be a parameter that changes
+nothing, which is worse than no parameter.
+
+Two halves. `overview`, `contributors` and `prs` describe a curated list of
+ecosystem repositories, walked in full: their pull requests over the last 180
+days and their all-time contributor counts. `repos` is the other half, projects
+found by searching GitHub that nobody curated, each row carrying the query and
+the file that matched.
+
+`days` defaults to 30 and is capped at 365; the pull-request walk only reaches
+180 days back, so a longer window returns a real number computed over data the
+instance never fetched.
+
+Off by default. All four answer `{"enabled": false, "reason": "..."}` rather
+than 404 when the instance runs without `-github-db` and a token, so a page can
+say the section is off instead of rendering an error.
+
+### What "new contributor" means here
+
+Somebody whose **first ever merged** pull request across every tracked
+repository landed inside the window. Not first opened: opening is not
+contributing yet, and counting it would count drive-by duplicates. Not first
+commit, which is the better definition and one this data cannot support, since
+GitHub's contributors endpoint carries counts and no dates. An empty list is a
+real answer.
+
+### The totals are larger than the tables
+
+`repos` returns a `queries` array beside the rows: each discovery query and the
+number of files or repositories GitHub reports for it. GitHub caps any search at
+1,000 results however many pages are asked for, and reports a total estimated
+over its whole index, so the row count is a sample of that number and not equal
+to it.
+
+### Private repositories are excluded, twice
+
+A search runs as the token, so results include private repositories the token's
+owner can read. Repository search is filtered with `is:public` in the query;
+**code search has no such qualifier** and appending one matches nothing at all
+(140 results without it, 0 with), so code hits are filtered on the hit's own
+`repository.private` and `repository.visibility`. A private repository is never
+written, rather than written and filtered at read time.
+
 ## Live feed
 
 ```

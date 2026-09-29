@@ -23,6 +23,7 @@ config.go     network configuration and flag resolution
 indexer.go    GraphQL client for the tx-indexer API
 db.go         SQLite storage: schema, migrations, all queries
 analyzer.go   import extraction from .gno source, dependency graph building
+pkg/ghlab/    the GitHub lab: ecosystem repos, PRs, contributors, discovery
 syncer.go     background sync from tx-indexer into SQLite
 api.go        REST API handlers
 ws.go         SSE live feed (polls the indexer, fans out to browsers)
@@ -42,7 +43,19 @@ Break these and things go wrong in ways that are hard to see:
   `network` column, and it is part of the primary key or unique constraint. Any
   new query, join or aggregate must filter or group by `network`, otherwise data
   from two chains gets silently mixed. Joins on `pkg_path` alone are the usual way
-  this goes wrong.
+  this goes wrong. The one exception is `pkg/ghlab`, whose subject is GitHub and
+  not a chain: a repository is the same repository whichever network its realms
+  end up on, and a `network` column there would be two rows that must always
+  agree. It lives in its own database file and its endpoints take no `network`.
+- **Nothing private reaches `gh_repos`.** A GitHub search runs as the token, so
+  an operator's token returns private repositories it can read: measured
+  2026-09-29, the first discovery run here surfaced eight of them, with the
+  matching file paths ready to print in a public page's evidence column.
+  Repository search is fixed with `is:public`; **code search has no such
+  qualifier** and appending one matches nothing instead of erroring, so its hits
+  are filtered on `repository.private`. `UpsertRepo` refuses a private row rather
+  than skipping it. Same shape as the two invariants above: quiet, load-bearing,
+  and broken invisibly, because the leaked row looks exactly like a good one.
 - **Sync is incremental and cursor-driven.** Cursors are derived from the highest
   stored `block_height` for that network, not stored separately. Anything that
   deletes or rewrites rows moves the cursor as a side effect.

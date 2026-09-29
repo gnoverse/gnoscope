@@ -19,6 +19,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/analyzer"
 	"github.com/gnoverse/gnoscope/pkg/config"
 	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/ghlab"
 	"github.com/gnoverse/gnoscope/pkg/indexer"
 	"github.com/gnoverse/gnoscope/pkg/registry"
 	"github.com/gnoverse/gnoscope/pkg/store"
@@ -61,6 +62,15 @@ type API struct {
 	// when -traffic-db is unset, and every use of it is nil-safe: an explorer
 	// that does not want a request log should not need a second build.
 	traffic *traffic.Store
+
+	// github is the lab's off-chain half: ecosystem repositories, their pull
+	// requests and contributors, and the projects a search found that nobody
+	// curated. Nil when -github-db is unset or no token was given, and
+	// githubOff then carries the sentence the page prints instead of numbers.
+	// Unlike every other store here it is not network-scoped; see
+	// lab_github.go.
+	github    *ghlab.Store
+	githubOff string
 
 	// syncHealth is how the sanity page answers "are our sync passes
 	// succeeding", which chain liveness cannot: a chain can be producing
@@ -983,6 +993,12 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/views", a.HandleViews)
 	mux.HandleFunc("GET /api/traffic", a.HandleTraffic)
 	mux.HandleFunc("GET /api/traffic/health", a.HandleTrafficHealth)
+	// The lab's off-chain section. No ?network= on any of these: GitHub is
+	// one place. See lab_github.go.
+	mux.HandleFunc("GET /api/lab/github/overview", a.HandleLabGitHubOverview)
+	mux.HandleFunc("GET /api/lab/github/contributors", a.HandleLabGitHubContributors)
+	mux.HandleFunc("GET /api/lab/github/prs", a.HandleLabGitHubPRs)
+	mux.HandleFunc("GET /api/lab/github/repos", a.HandleLabGitHubRepos)
 	mux.HandleFunc("GET /api/packages", a.HandlePackages)
 	mux.HandleFunc("GET /api/packages/facets", a.HandlePackageFacets)
 	// {hash...}, not {hash}: roughly a third of gno transaction hashes are

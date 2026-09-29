@@ -232,6 +232,53 @@ log {
 Set `roll_size`/`roll_keep` when you add it, not after: an access log with no
 rotation is the one that reaches 141 MB unnoticed.
 
+## The GitHub lab and /lab/github
+
+The off-chain section: contributors and pull requests on a curated set of
+ecosystem repositories, plus discovery of projects that depend on gno and
+nobody curated. Off by default and needing two things, a database and a token.
+
+```
+gnoscope -github-db /root/gnoscope-github.db -github-token ghp_... -github-interval 3h
+```
+
+`-github-token` falls back to `$GITHUB_TOKEN`. **It needs no scopes**:
+everything read is public, and a classic token with nothing ticked already
+lifts the budget from 60 requests an hour to 5,000. Granting more buys nothing
+and risks something.
+
+Its own database file, for the same reasons as the request log above: small,
+entirely re-fetchable from GitHub, and with nothing in common with the chain
+index but the process. Delete it and the next pass rebuilds it.
+
+A pass costs about 130 core requests and 20 search requests and takes roughly
+two minutes, most of it the deliberate 2.5s spacing between search calls
+(measured 2026-09-29, 23 seeds and 8 discovery queries). Discovery caps new
+repositories at 120 a pass, so a cold start reaches its full picture over two
+or three passes rather than spending an hour's budget in ninety seconds.
+
+**A token is not optional.** Without one the section stays off and says so.
+Sixty requests an hour is fewer than one pass needs, so an unauthenticated
+instance would not fail, it would half-fill its tables and serve a picture of
+the ecosystem missing whichever repositories happened to come last.
+
+### A token that can read private repositories
+
+A GitHub search runs as the token, so a token with private access returns
+private repositories in its results. This is handled and worth knowing about
+anyway when picking which token to use:
+
+- Repository search carries `is:public`.
+- Code search has no such qualifier, and appending one silently matches
+  nothing, so its hits are filtered on the hit's own `repository.private` and
+  `repository.visibility` instead.
+- Nothing private is ever written to the database, rather than written and
+  filtered at read time.
+
+The cheapest way to hold that line is a token that has nothing private to
+offer. A fine-grained token scoped to public repositories only is the right
+default here.
+
 ## Choosing network IDs
 
 The `id` labels the network and keys every row belonging to it. It is not the chain
