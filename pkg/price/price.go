@@ -388,6 +388,20 @@ type Quote struct {
 	// not the replayed figure the rest of the page shows.
 	ChainSupply int64 `json:"chain_supply,omitempty"`
 
+	// TVLUSD is the total value locked in every pool this token sits in, both
+	// sides of each pool counted.
+	//
+	// Both sides, because that is what "locked in this pool" means and it is
+	// the figure every DEX quotes. It does mean the chain-wide total double
+	// counts: wugnot/GNS contributes its whole depth to wugnot's TVL and again
+	// to GNS's, so summing this column across assets is not the chain's TVL.
+	// The page says so rather than half-counting, which would make each
+	// individual figure wrong instead.
+	TVLUSD float64 `json:"tvl_usd,omitempty"`
+	// Pools is how many pools contributed to TVLUSD, so a one-pool token and a
+	// three-pool one are distinguishable at a glance.
+	Pools int `json:"pools,omitempty"`
+
 	Warnings []Warning `json:"warnings"`
 	ReadAt   time.Time `json:"read_at"`
 }

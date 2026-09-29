@@ -7958,6 +7958,29 @@ function assetUSD(a) {
   return priceCell(a.token);
 }
 
+// assetTVL is how much is actually pooled against this token.
+//
+// The number that answers "could I trade this", which a price alone cannot: a
+// $0.02 token over a $47 pool and a $0.02 token over a $759,104 pool have the
+// same price column and nothing else in common. Both sides of every pool the
+// token sits in, which is what a DEX means by TVL.
+function assetTVL(a) {
+  const q = priceFor(a.token);
+  if (!q) return el('span', { style: { color: 'var(--fg2)' } }, '\u2014');
+  if (!(q.tvl_usd > 0)) {
+    return el('span', {
+      style: { color: 'var(--fg2)', cursor: 'help' },
+      title: 'no GnoSwap pool holds this token, so there is nothing pooled against it to measure',
+    }, 'no pool');
+  }
+  const wrap = el('span', { style: { cursor: 'help' },
+    title: 'both sides of the ' + fmtNum(q.pools) + ' pool' + (q.pools === 1 ? '' : 's') + ' this token sits in.\n\n'
+      + 'Summing this column down the page does NOT give the chain’s total: a wugnot/GNS pool counts its whole depth '
+      + 'toward wugnot and again toward GNS. Half-counting each would make every individual figure wrong instead.' },
+    fmtUSD(q.tvl_usd));
+  return wrap;
+}
+
 // --- filtering ---------------------------------------------------------------
 //
 // One filter object drives every list page. The kind filter is what makes
@@ -8037,6 +8060,7 @@ function unifiedAssetTable(assets, f) {
     el('th', {}, 'asset'),
     el('th', {}, 'realm'),
     el('th', { title: 'price per whole token in US dollars, routed through GnoSwap and anchored on GNOT’s price on real exchanges. the badge says how much weight it carries' }, 'price'),
+    el('th', { title: 'value pooled against this token on GnoSwap, both sides of every pool it sits in. this is the column that separates a real price from a decorative one' }, 'tvl'),
     el('th', { title: 'for a grc20, the replayed supply. for the native coin, what the chain reports, with its locked share beside it. an nft has none' }, 'supply'),
     el('th', { title: 'how the two kinds count holders is NOT the same. hover the marker on a native row' }, 'holders'),
     el('th', { title: 'how the two kinds count transfers is NOT the same. hover the marker on a native row' }, 'transfers'),
@@ -8073,6 +8097,7 @@ function unifiedAssetTable(assets, f) {
         : el('span', { style: { color: 'var(--fg2)' }, title: a.kind === 'native' ? 'the chain’s own coin belongs to no realm' : 'this token emits a bare symbol rather than its realm path' },
           a.kind === 'native' ? 'the chain' : 'unknown')),
       el('td', {}, assetUSD(a)),
+      el('td', {}, assetTVL(a)),
       supplyCell,
       holderCell,
       el('td', {}, basisCell(fmtNum(a.transfers || 0), a.transfers_basis)),
@@ -8081,7 +8106,7 @@ function unifiedAssetTable(assets, f) {
   tbl.appendChild(body);
 
   if (!shown) {
-    body.appendChild(el('tr', {}, el('td', { colspan: '7', style: { color: 'var(--fg2)' } },
+    body.appendChild(el('tr', {}, el('td', { colspan: '8', style: { color: 'var(--fg2)' } },
       assets.length ? 'no asset matches this filter' : 'no assets on this network yet')));
   }
   return { table: tbl, shown };

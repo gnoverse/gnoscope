@@ -976,3 +976,45 @@ func TestRefreshReportsPartialReads(t *testing.T) {
 		t.Errorf("pool_count = %d, want the one that answered", res.PoolCount)
 	}
 }
+
+// TVL is over every pool a token sits in, not only the route that priced it.
+// A token with one deep pool and one shallow one is a different asset from one
+// with a single pool of the same total, and the route alone cannot say which.
+func TestQuoteTVLCoversEveryPoolTheTokenTouches(t *testing.T) {
+	res := Build(mainnetInputs())
+
+	// PERUN sits in two pools: PERUN/wugnot ($92) and PERUN/GNS ($78).
+	perun := quoteFor(t, res, keyPerun)
+	if perun.Pools != 2 {
+		t.Errorf("PERUN pools = %d, want 2", perun.Pools)
+	}
+	if perun.TVLUSD < 150 || perun.TVLUSD > 200 {
+		t.Errorf("PERUN tvl = %.2f, want about 170 (both its pools, not just the priced route)", perun.TVLUSD)
+	}
+
+	// GNS sits in wugnot/GNS ($759k) and PERUN/GNS ($78).
+	gns := quoteFor(t, res, keyGNS)
+	if gns.Pools != 2 {
+		t.Errorf("GNS pools = %d, want 2", gns.Pools)
+	}
+	if gns.TVLUSD < 700000 {
+		t.Errorf("GNS tvl = %.0f, want the deep pool's whole depth", gns.TVLUSD)
+	}
+
+	// GNOMIC sits in exactly one, and it is the $47 one the whole feature
+	// exists to flag.
+	gnomic := quoteFor(t, res, keyGnomic)
+	if gnomic.Pools != 1 {
+		t.Errorf("GNOMIC pools = %d, want 1", gnomic.Pools)
+	}
+	if gnomic.TVLUSD > 100 {
+		t.Errorf("GNOMIC tvl = %.2f, want the roughly $47 its one pool holds", gnomic.TVLUSD)
+	}
+
+	// An asset with no pool has no TVL, and that must be absent rather than a
+	// zero that reads as "this pool is empty".
+	gdog := quoteFor(t, res, "gno.land/r/x/y.GDOG.0000000")
+	if gdog.TVLUSD != 0 || gdog.Pools != 0 {
+		t.Errorf("GDOG has no pool but reports tvl %.2f over %d pools", gdog.TVLUSD, gdog.Pools)
+	}
+}

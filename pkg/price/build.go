@@ -202,6 +202,20 @@ func Build(in Inputs) *Result {
 		q.TierLabel = q.Tier.Label()
 		q.TierExplain = q.Tier.Explain()
 
+		// Depth this token actually sits in, over EVERY pool it touches rather
+		// than only the route that priced it. A token with one deep pool and
+		// one shallow one is a different asset from one with a single pool of
+		// the same total, and the route alone cannot say which it is.
+		for _, p := range in.Pools {
+			if p.Key.Token0 != pk && p.Key.Token1 != pk {
+				continue
+			}
+			if t := tvl[p.Key.Path()]; t > 0 {
+				q.TVLUSD += t
+				q.Pools++
+			}
+		}
+
 		if usdPerBase != nil {
 			q.USDPerBaseUnit = ratString(usdPerBase, 18)
 			scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(q.Decimals)), nil)
