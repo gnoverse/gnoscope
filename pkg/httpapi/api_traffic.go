@@ -125,6 +125,15 @@ func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, ne
 			target = traffic.PageTarget(r.URL.Path)
 		}
 
+		// An SSE connection is not a request that took four hours. next.ServeHTTP
+		// returns when the client disconnects, so DurMS for /api/live is the
+		// whole connection lifetime; left in the api bucket it would top the
+		// slowest-routes panel forever and drag every percentile with it.
+		// Recorded as its own kind, and excluded from the timing queries.
+		if strings.HasPrefix(lw.Header().Get("Content-Type"), "text/event-stream") {
+			kind = "stream"
+		}
+
 		ua := r.Header.Get("User-Agent")
 		client := traffic.ClientClass(ua)
 		status := lw.status

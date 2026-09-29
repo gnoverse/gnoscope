@@ -229,10 +229,26 @@ func (s *Store) Report(q Query) (*Report, error) {
 	return out, nil
 }
 
+// streamExcluded drops SSE connections from anything measuring duration.
+//
+// Their DurMS is how long a reader stayed connected, not how long they waited,
+// and the two numbers do not belong in one column. They stay in every count.
+const streamExcluded = ` AND kind <> 'stream'`
+
 // percentile reads the nth value by rank rather than computing one, because
 // SQLite has no percentile function and an ORDER BY over an indexed window of
 // this size costs less than carrying an approximation nobody can check.
-func (s *Store) percentile(w string, args []any, n int64, pct int) (float64, error) {
+func (s *Store) percentile(w string, args []any, _ int64, pct int) (float64, error) {
+	// Counted here rather than reused from Totals.Requests: that figure counts
+	// streams and this ranking does not, and an offset taken past the end of a
+	// shorter set silently returns the maximum instead of the percentile.
+	var n int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM requests WHERE `+w+streamExcluded, args...).Scan(&n); err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, nil
+	}
 	offset := (n * int64(pct)) / 100
 	if offset >= n {
 		offset = n - 1
@@ -241,7 +257,7 @@ func (s *Store) percentile(w string, args []any, n int64, pct int) (float64, err
 		offset = 0
 	}
 	var v float64
-	q := `SELECT dur_ms FROM requests WHERE ` + w + ` ORDER BY dur_ms LIMIT 1 OFFSET ?`
+	q := `SELECT dur_ms FROM requests WHERE ` + w + streamExcluded + ` ORDER BY dur_ms LIMIT 1 OFFSET ?`
 	err := s.db.QueryRow(q, append(append([]any{}, args...), offset)...).Scan(&v)
 	if err == sql.ErrNoRows {
 		return 0, nil
@@ -323,7 +339,7 @@ func (s *Store) slowest(w string, args []any, limit int) ([]Timing, error) {
 			SELECT route, dur_ms, app_ms,
 			       ROW_NUMBER() OVER (PARTITION BY route ORDER BY dur_ms) AS rn,
 			       COUNT(*)    OVER (PARTITION BY route)                  AS n
-			FROM requests WHERE `+w+`
+			FROM requests WHERE `+w+streamExcluded+`
 		)
 		SELECT route, MAX(n),
 		       MAX(CASE WHEN rn = MAX(1, n * 50 / 100) THEN dur_ms END),

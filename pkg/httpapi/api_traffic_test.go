@@ -210,3 +210,45 @@ func TestAppDurationMS(t *testing.T) {
 		}
 	}
 }
+
+// An SSE connection returns from ServeHTTP when the reader disconnects, so its
+// duration is how long they stayed, not how long they waited. Left in the api
+// bucket it tops the slowest-routes panel forever and drags every percentile
+// with it.
+func TestAccessLogSeparatesSSEStreams(t *testing.T) {
+	store := trafficTestStore(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/live", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("data: hi\n\n"))
+	})
+	mux.HandleFunc("GET /api/stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("{}"))
+	})
+	h := WithAccessLog(store, mux, "", mux)
+
+	fire(t, h, "GET", "/api/live", browserUA)
+	for i := 0; i < 6; i++ {
+		fire(t, h, "GET", "/api/stats", browserUA)
+	}
+	store.Flush()
+
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Still counted: a stream is real load.
+	if rep.Totals.Requests != 7 {
+		t.Errorf("requests = %d, want 7", rep.Totals.Requests)
+	}
+	if rep.Totals.API != 6 {
+		t.Errorf("api = %d, want 6; the stream must not be in the api bucket", rep.Totals.API)
+	}
+	// Excluded from timing: only /api/stats clears the 5-hit floor anyway, but
+	// the stream must not appear even when it does.
+	for _, tm := range rep.Slowest {
+		if tm.Route == "/api/live" {
+			t.Errorf("/api/live is in the slowest panel: %+v", tm)
+		}
+	}
+}
