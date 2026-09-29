@@ -774,8 +774,6 @@ tr.total-row td { font-weight: bold; color: var(--accent); }
 .ach-way span { display: block; color: var(--fg2); font-size: 11.5px; margin-top: 3px; }
 .table-filter-note { color: var(--fg2); font-size: 11px; margin: 4px 0 8px; }
 .table-filter-note a { color: var(--accent); }
-.table-export { display: flex; gap: 6px; align-items: center; margin: 4px 0 8px; }
-.table-export-label { color: var(--fg2); font-size: 11px; }
 .addr-inferred { color: var(--fg2); font-size: 10px; vertical-align: super; cursor: help; margin-left: 1px; }
 .addr-watched { color: var(--accent); font-size: 10px; vertical-align: super; cursor: help; margin-left: 1px; }
 .watch-btn { background: var(--bg2); border: 1px solid var(--border); color: var(--fg2); border-radius: 4px;
@@ -976,6 +974,27 @@ html:not(.has-shots) .shot-cell { display: none; }
 .detail-chart { margin: 4px 0 18px; }
 .detail-chart-box { position: relative; width: 100%; height: 220px; }
 .detail-chart-note { color: var(--fg2); font-size: 11px; margin-top: 6px; }
+
+/* The unified asset list: kind badges, provenance markers, filters.
+   The marker is a superscript rather than a colour, because what it says is
+   "computed differently", not "bad", and a column of red numbers reads as an
+   error state. */
+.asset-kind { font-size: 9px; line-height: 1; padding: 2px 5px; border-radius: 3px;
+  border: 1px solid #333; color: var(--fg2); cursor: help; text-transform: uppercase;
+  letter-spacing: .04em; white-space: nowrap; }
+.asset-kind-native { color: var(--accent); border-color: rgba(78,205,196,.4); }
+.asset-kind-grc721 { color: var(--amber); border-color: rgba(255,217,61,.35); }
+.basis-mark { color: var(--amber); cursor: help; margin-left: 2px; font-size: 11px; }
+.cell-sub { color: var(--fg2); font-size: 10px; margin-top: 2px; }
+.asset-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 6px; }
+.filter-group { display: inline-flex; gap: 4px; }
+.filter-chip { background: none; border: 1px solid #333; color: var(--fg2); font: inherit;
+  font-size: 11px; padding: 3px 9px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.filter-chip:hover { border-color: #555; color: var(--fg); }
+.filter-chip.active { color: var(--accent); border-color: var(--accent); background: rgba(78,205,196,.08); }
+.filter-input { background: #0e0e0e; border: 1px solid #333; color: var(--fg); font: inherit;
+  font-size: 11px; padding: 4px 8px; border-radius: 4px; min-width: 220px; flex: 1 1 220px; max-width: 360px; }
+.filter-input:focus { outline: none; border-color: var(--accent); }
 
 /* Price provenance. Four tiers and a row of warning chips, all of them built
    to be hovered: the badge is the summary and the title= is the argument.
@@ -1577,13 +1596,9 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   </main></div>
   <div class="view" id="view-defi"><main><div id="defi-content"></div></main></div>
   <div class="view" id="view-coins"><main><div id="coins-content"></div></main></div>
-  <div class="view" id="view-grc20"><main>
-    <div id="grc20-stats" class="stats-bar" style="display:none"></div>
-    <div class="section"><div class="section-title">assets (grc20)</div>
-    <div class="section-sub">supply and holders are replayed from the Transfer events the chain emits, so both are exact rather than sampled. prices are new here and every one of them is qualified: hover any badge or figure for what it is made of and why it might be wrong.</div>
-    <div id="grc20-price-banner"></div>
-    <table><thead><tr><th>asset</th><th>realm</th><th title="price per whole token in US dollars, routed through GnoSwap to wugnot and anchored on GNOT's price on Kraken and KuCoin. the badge beside it says how much weight the figure carries.">price</th><th>supply</th><th>holders</th><th>transfers</th><th>24h</th><th>first seen</th></tr></thead><tbody id="grc20-list"></tbody></table></div>
-  </main></div>
+  <div class="view" id="view-grc20"><main><div id="grc20-content"></div></main></div>
+  <div class="view" id="view-nfts"><main><div id="nfts-content"></div></main></div>
+  <div class="view" id="view-holders"><main><div id="holders-content"></div></main></div>
   <div class="view" id="view-asset-detail"><main><div id="asset-detail-content"></div></main></div>
   <div class="view" id="view-validators"><main><div class="section"><div class="section-title">validators</div>
     <div id="validators-content"></div></div></main></div>
@@ -4024,6 +4039,8 @@ const NAV = [
   { id: 'defi', label: 'defi', path: '/defi', own: 'overview', children: [
     { id: 'coins', label: 'coins', path: '/coins' },
     { id: 'grc20', label: 'grc20', path: '/grc20' },
+    { id: 'nfts', label: 'nfts', path: '/nfts' },
+    { id: 'holders', label: 'holders', path: '/holders' },
   ] },
   // accounts and sessions keep the paths they shipped with rather than moving
   // under /directory/. A section is a grouping in the rail, not a URL prefix
@@ -4191,6 +4208,8 @@ function route() {
   else if (path === '/directory/teams') { view = 'teams'; }
   else if (path === '/defi') { view = 'defi'; }
   else if (path === '/coins') { view = 'coins'; }
+  else if (path === '/nfts' || path === '/grc721') { view = 'nfts'; }
+  else if (path === '/holders') { view = 'holders'; }
   // /tokens was this page's URL when it was one page carrying both the bank
   // figures and the GRC20 ledger. It answers as the GRC20 half, which is the
   // larger one and the one the name means; the coin figures are one pill away.
@@ -4268,6 +4287,10 @@ function route() {
   }
 
   if (view !== 'dashboards' && typeof destroyDashCharts === 'function') destroyDashCharts();
+  // The defi charts live on four pages that share one registry, so leaving any
+  // of them must tear down whatever was drawing, or the next render lands on a
+  // canvas that is no longer in the document.
+  if (view !== 'defi' && view !== 'coins' && view !== 'grc20' && view !== 'nfts' && typeof destroyDefiCharts === 'function') destroyDefiCharts();
   if (view !== 'realm-detail' && view !== 'address-detail' && view !== 'asset-detail' && typeof destroyDetailCharts === 'function') destroyDetailCharts();
   switch (view) {
     case 'home': loadHome(); break;
@@ -4289,6 +4312,8 @@ function route() {
     case 'defi': loadDefi(); break;
     case 'coins': loadCoins(); break;
     case 'grc20': loadGRC20(); break;
+    case 'nfts': loadNFTs(); break;
+    case 'holders': loadHolders(); break;
     case 'asset-detail': loadAssetDetail(data); break;
     case 'validators': loadValidators(); break;
     case 'validator-detail': loadValidatorDetail(data); break;
@@ -7124,42 +7149,6 @@ async function loadPrices(onDone) {
   if (onDone) onDone();
 }
 
-function renderAssetRows(assets) {
-  const tbody = clear('grc20-list');
-  for (const t of assets) {
-    // An asset whose transfers carry no amount is not a balance ledger, and
-    // printing 0 for supply and holders would read as "empty" rather than as
-    // "this arithmetic does not apply". GRC721 goes through the same events.
-    const supplyCell = t.fungible ? fmtTokenUnits(t.supply)
-      : el('span', { style: { color: 'var(--fg2)' }, title: 'these transfers carry no amount, so supply and holders do not apply. most likely an NFT collection' }, 'n/a');
-    const holdersCell = t.fungible ? fmtNum(t.holders || 0)
-      : el('span', { style: { color: 'var(--fg2)' } }, 'n/a');
-    // Built before netRow rather than rewritten after it: netRow inserts the
-    // network dot into the first cell, and clearing that cell afterwards
-    // (which is what this did) deleted the dot in all-networks mode.
-    const symbolCell = el('td');
-    const symbolLink = el('a', { href: assetPath(t.token) });
-    symbolLink.appendChild(assetSymbolEl(t));
-    symbolLink.addEventListener('click', (e) => { e.preventDefault(); navigate(assetPath(t.token)); });
-    symbolCell.appendChild(symbolLink);
-    const row = netRow(t.network,
-      symbolCell,
-      el('td', {}, t.pkg_path ? realmPathEl(t.pkg_path, t.network)
-        : el('span', { style: { color: 'var(--fg2)' }, title: 'this token emits a bare symbol rather than its realm path, so the realm is not known from the event' }, 'unknown')),
-      el('td', {}, priceCell(t.token)),
-      el('td', {}, supplyCell),
-      el('td', {}, holdersCell),
-      el('td', {}, fmtNum(t.transfers || 0)),
-      el('td', {}, fmtNum(t.transfers_24h || 0)),
-      el('td', {}, t.first_seen_time ? timeEl(t.first_seen_time) : ''));
-    tbody.appendChild(row);
-  }
-  if (!assets.length) {
-    tbody.appendChild(el('tr', {}, el('td', { colspan: '8', style: { color: 'var(--fg2)' } },
-      'no GRC20 transfers synced yet')));
-  }
-}
-
 // --- /grc20/<key>: one asset, as a page --------------------------------------
 //
 // This was a panel painted under the assets table, which meant a token had no
@@ -7629,172 +7618,742 @@ function bankMoverTable(rows, cols, plain) {
   return tbl;
 }
 
-// --- /defi: the overview ----------------------------------------------------
+// --- the unified asset model, on the page ------------------------------------
+//
+// One list draws the chain's own coin, the GRC20s and the GRC721s, because to a
+// reader they are the same kind of thing and three pages meant three mental
+// models. The whole difficulty is that two of the columns are NOT comparable
+// across kinds, and they fail in opposite directions:
+//
+//   holders   a GRC20's are replayed from every Transfer event: exact inside
+//             the ledger window, blind before it. ugnot's are counted from the
+//             addresses this indexer has read a balance for, because gno cannot
+//             enumerate accounts. One is incomplete at the start, the other at
+//             the top.
+//   transfers a GRC20's counts every move. ugnot's counts BankMsgSend only, so
+//             coin a realm moves inside a call is absent.
+//
+// Both markers come from the server (`holders_basis`, `transfers_basis`) rather
+// than being re-derived here, so the page cannot disagree with the API about
+// which figure is which. A reader who sums or ranks across kinds without seeing
+// them gets a wrong answer that looks right, which is why every such cell is
+// marked and hoverable rather than footnoted once at the bottom.
 
-async function loadDefi() {
-  const container = clear('defi-content');
-  skeletonBlock(container);
-  // Four payloads, all of them ones a child page reads too, so arriving here
-  // first makes the rest of the section instant rather than costing an extra
-  // round trip.
-  await apiSWR(['bankstats', 'assets', 'accounts/population', 'accounts/rich'], ([bank, assetsResp, pop, rich]) => {
-    container.textContent = '';
-    const assets = (assetsResp && assetsResp.assets) || [];
-    const transfers = assets.reduce((s, t) => s + (t.transfers || 0), 0);
+const ASSET_KINDS = {
+  native: {
+    label: 'native',
+    hint: 'the chain’s own coin. it has no realm and emits no Transfer event: its ledger is BankMsgSend, and its supply is set by the chain rather than by minting',
+  },
+  grc20: {
+    label: 'grc20',
+    hint: 'a fungible token in a realm, reconstructed from the Transfer events it emits',
+  },
+  grc721: {
+    label: 'nft',
+    hint: 'non-fungible. it rides the same Transfer event as a grc20 and carries no amount, so a holding is a count of items and supply does not apply',
+  },
+};
 
-    const nums = el('div', { className: 'bignums' });
-    // "addresses seen", never "accounts". gno cannot enumerate the auth
-    // module over RPC, so a true account count is unavailable at any price
-    // and this number under that name would be a different figure wearing it.
-    nums.appendChild(bigNum('addresses seen', fmtCompact(pop.known), {
-      title: fmtNum(pop.known) + ' distinct addresses seen on chain, in any role. not the number of accounts that exist',
-      sub: fmtNum(pop.monthly_active) + ' active in 30d',
-      to: '/accounts',
-    }));
-    nums.appendChild(bigNum('gnot moved', fmtCompact(Math.floor((bank.total_volume || 0) / 1000000)), {
-      title: fmtNum(bank.total_volume) + ' ugnot across ' + fmtNum(bank.total_sends) + ' transfers',
-      sub: fmtNum(bank.total_sends) + ' transfers',
-      to: '/coins',
-    }));
-    nums.appendChild(bigNum('grc20 assets', fmtNum(assets.length), {
-      sub: fmtNum(transfers) + ' transfers',
-      to: '/grc20',
-    }));
-    nums.appendChild(bigNum('senders', fmtCompact(bank.unique_senders), {
-      title: fmtNum(bank.unique_senders) + ' addresses have sent, ' + fmtNum(bank.unique_receivers) + ' have received',
-      sub: fmtNum(bank.unique_receivers) + ' receivers',
-      to: '/coins',
-    }));
-    container.appendChild(nums);
+// The provenance markers. Only the two that need qualifying get one: a marker
+// on every row would make the page look uniformly doubtful and teach a reader
+// to ignore it.
+const BASIS_MARK = {
+  swept: {
+    mark: '∗',
+    hint: 'a SAMPLE, not a total. gno offers no way to enumerate accounts, so this counts only the addresses whose balance this indexer has read. the real number is higher and unknowable.',
+  },
+  banksend: {
+    mark: '∗',
+    hint: 'BankMsgSend only. ugnot that a realm moves inside a call is not a bank send and is not counted here: it surfaces as gas and as realm activity instead. so this figure UNDER-counts movement, where a grc20’s does not.',
+  },
+  replayed: null,
+  events: null,
+};
 
-    const entries = (rich && rich.entries) || [];
-    if (entries.length) {
-      container.appendChild(el('div', { className: 'section-title' }, 'largest balances'));
-      container.appendChild(el('div', { className: 'section-sub' },
-        'ranked over the ' + fmtNum((rich.coverage || {}).swept || 0) + ' addresses whose balance has been read, not over every account: gno offers no way to enumerate them.'));
-      container.appendChild(richListTable(entries.slice(0, 5), rich.network));
-      container.appendChild(moreLink('the full rich list', '/accounts?av=balances'));
-    }
-
-    if ((bank.top_senders || []).length) {
-      container.appendChild(el('div', { className: 'section-title', style: { marginTop: '24px' } }, 'who moves the coin'));
-      container.appendChild(bankMoverTable(bank.top_senders.slice(0, 5), ['txs', 'volume']));
-      container.appendChild(moreLink('senders, receivers and volume', '/coins'));
-    }
-
-    if (assets.length) {
-      container.appendChild(el('div', { className: 'section-title', style: { marginTop: '24px' } }, 'grc20 assets'));
-      // Its own small table rather than renderAssetRows: that one writes into
-      // the grc20 view's tbody, which from here is a hidden view. The rows
-      // route to the same per-asset page.
-      const tbl = el('table');
-      tbl.appendChild(el('thead', {}, el('tr', {},
-        el('th', {}, 'asset'), el('th', {}, 'realm'), el('th', {}, 'supply'), el('th', {}, 'holders'), el('th', {}, 'transfers'))));
-      const body = el('tbody');
-      const dim = { style: { color: 'var(--fg2)' } };
-      for (const t of assets.slice(0, 5)) {
-        body.appendChild(netRow(t.network,
-          el('td', {}, link(t.display_symbol || t.symbol || t.token, () => navigate(assetPath(t.token)))),
-          el('td', {}, t.pkg_path ? realmPathEl(t.pkg_path, t.network) : el('span', dim, 'unknown')),
-          el('td', {}, t.fungible ? fmtTokenUnits(t.supply) : el('span', dim, 'n/a')),
-          el('td', {}, t.fungible ? fmtNum(t.holders || 0) : el('span', dim, 'n/a')),
-          el('td', {}, fmtNum(t.transfers || 0))));
-      }
-      tbl.appendChild(body);
-      container.appendChild(tbl);
-      container.appendChild(moreLink('all ' + fmtNum(assets.length) + ' assets', '/grc20'));
-    }
-  }).catch(err => failBlock(container, err, loadDefi));
+function assetKindBadge(kind) {
+  const k = ASSET_KINDS[kind] || ASSET_KINDS.grc20;
+  return el('span', { className: 'asset-kind asset-kind-' + (kind || 'grc20'), title: k.hint }, k.label);
 }
 
-// --- /coins: the native ugnot ledger ----------------------------------------
+// basisCell renders a figure with the marker its provenance earns.
+//
+// The marker is a superscript rather than a colour, because the thing it says
+// is not "bad", it is "computed differently", and a reader has to be able to
+// see it in a column of numbers without the column looking alarming.
+function basisCell(node, basis) {
+  const m = BASIS_MARK[basis];
+  if (!m) return node;
+  const wrap = el('span', {});
+  wrap.appendChild(typeof node === 'string' ? document.createTextNode(node) : node);
+  wrap.appendChild(el('sup', { className: 'basis-mark', title: m.hint }, m.mark));
+  return wrap;
+}
 
-async function loadCoins() {
-  const container = clear('coins-content');
-  skeletonBlock(container);
-  await apiSWR('bankstats', (bank) => {
-    container.textContent = '';
-    container.appendChild(el('div', { className: 'section-title' }, 'coins'));
-    container.appendChild(el('div', { className: 'section-sub' },
-      'the chain\'s own coin, from BankMsgSend alone. a realm that moves ugnot inside a call is not a bank send and is not counted here: ' +
-      'those show up as gas and as realm activity instead.'));
+// assetLabel is the symbol, its kind badge, and the registry's verification.
+//
+// The verified badge is not decoration and must not be dropped from a list:
+// anyone may deploy a realm called `gns` and mint a token called GNS, so a
+// human's claim in a merged pull request is the only thing separating the real
+// one from a lookalike. Its absence is not an accusation, only the absence of a
+// check, which is what the tooltip says.
+function assetLabel(a) {
+  const wrap = el('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } });
+  const link = el('a', { href: assetPath(a.token), style: { fontWeight: 'bold' } },
+    a.display_symbol || a.symbol || a.token);
+  link.addEventListener('click', (e) => { e.preventDefault(); navigate(assetPath(a.token)); });
+  wrap.appendChild(link);
+  wrap.appendChild(assetKindBadge(a.kind));
+  if (a.verified) {
+    const badge = el('span', { className: 'badge badge-ok' }, 'verified');
+    badge.title = 'a contributor vouched for this being the token it claims to be. nothing on chain says so: anyone may deploy a realm with this name';
+    wrap.appendChild(badge);
+  }
+  if (a.display_name) {
+    wrap.appendChild(el('div', { style: { color: 'var(--fg2)', fontSize: '11px', flexBasis: '100%' } }, a.display_name));
+  }
+  return wrap;
+}
 
-    const bar = el('div', { className: 'stats-bar' });
-    const stat = (label, value) => bar.appendChild(el('div', { className: 'stat' },
-      el('span', { className: 'label' }, label), el('span', { className: 'value' }, value)));
-    stat('transfers', fmtNum(bank.total_sends));
-    bankVolumeStats(bar, bank);
-    stat('unique addresses', fmtNum(bank.unique_addresses));
-    stat('senders', fmtNum(bank.unique_senders));
-    stat('receivers', fmtNum(bank.unique_receivers));
-    container.appendChild(bar);
+// assetAmount prints a supply or a balance in the unit the asset actually has.
+//
+// A GRC721 has neither: its transfers carry no amount, so both are counts of
+// items, and printing 0 would read as "empty" rather than as "this arithmetic
+// does not apply". A native supply that could not be read is "unknown", never
+// zero, because zero on the chain's own coin is a striking claim.
+function assetAmount(a, raw, opts) {
+  opts = opts || {};
+  if (a.kind === 'grc721') {
+    return el('span', { style: { color: 'var(--fg2)' }, title: 'non-fungible: its transfers carry no amount, so there is no quantity to sum' }, 'n/a');
+  }
+  if (a.kind === 'native' && opts.supply && !a.supply_known) {
+    return el('span', { style: { color: 'var(--fg2)' }, title: 'the chain’s supply read did not answer. shown as unknown rather than as zero, which would be a claim' }, 'unknown');
+  }
+  // The exact base-unit figure leads, with the whole-token form beneath it.
+  // Not the other way round and not the scaled one alone: base units are what
+  // the chain actually holds, and the scaling divides by a decimals value that
+  // for most tokens here nobody has confirmed. Same order the asset page uses.
+  const wrap = el('span', {});
+  wrap.appendChild(document.createTextNode(fmtTokenUnits(raw)));
+  const scaled = a.decimals > 0 ? tokenScaledEl(raw, a.decimals, a.display_symbol || a.symbol) : null;
+  if (scaled) wrap.appendChild(scaled);
+  return wrap;
+}
 
-    const grid = el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginTop: '20px' } });
-    // minWidth 0 and its own scrollbar, for the same reason .section carries
-    // them: these rows are `white-space: nowrap`, so a grid column floors at
-    // the width of its widest row, and three of those floors add up past the
-    // 1200px .container — the page grew a horizontal scrollbar and clipped the
-    // third column instead.
-    //
-    // Not caused by the lists going from ten rows to fifty, though that is
-    // when it was noticed: measured on production, the widest row of each
-    // leaderboard is rank 1, and the widest of the first ten equals the widest
-    // of all fifty. What makes a row wide is a registry label printed beside
-    // the address (`@faucet g18qhq2f…kclp`), and those sit at the top.
-    //
-    // Which is why the address cell here is addrLinkPlain: 3x424px does not fit
-    // 1160px of content area at any screen width, and the ~55px a label costs
-    // beside the address was the only slack there was to find. The scrollbar
-    // stays as the backstop for a label-free row that is still too wide.
+// assetUSD is the price column, reusing the pricing work's tier badge so the
+// two pages cannot drift about what a price is worth.
+function assetUSD(a) {
+  return priceCell(a.token);
+}
+
+// --- filtering ---------------------------------------------------------------
+//
+// One filter object drives every list page. The kind filter is what makes
+// /coins, /grc20 and /nfts the same page with a different preset rather than
+// three implementations, and the text and "priced only" filters are what moul
+// asked for: a way to narrow a list to the coins actually being looked at.
+
+function newAssetFilter(preset) {
+  return Object.assign({ kind: '', q: '', pricedOnly: false, hideEmpty: false }, preset || {});
+}
+
+function assetFilterMatches(a, f) {
+  if (f.kind && a.kind !== f.kind) return false;
+  if (f.pricedOnly) {
+    const q = priceFor(a.token);
+    if (!q || q.tier === 'none' || !(q.usd_per_token > 0)) return false;
+  }
+  if (f.hideEmpty && !(a.transfers > 0)) return false;
+  if (f.q) {
+    const hay = ((a.display_symbol || '') + ' ' + (a.symbol || '') + ' ' + (a.display_name || '') + ' ' + (a.pkg_path || '') + ' ' + a.token).toLowerCase();
+    if (!hay.includes(f.q.toLowerCase())) return false;
+  }
+  return true;
+}
+
+// assetFilterBar draws the controls and calls back on every change.
+//
+// `kinds: false` hides the kind buttons, for the three section pages where the
+// kind is the page and offering to change it would just be a second nav.
+function assetFilterBar(f, onChange, opts) {
+  opts = opts || {};
+  const bar = el('div', { className: 'asset-filters' });
+
+  if (opts.kinds !== false) {
+    const group = el('div', { className: 'filter-group' });
+    const kinds = [['', 'all'], ['native', 'native'], ['grc20', 'grc20'], ['grc721', 'nfts']];
+    const buttons = [];
+    for (const [value, label] of kinds) {
+      const b = el('button', { className: 'filter-chip' + (f.kind === value ? ' active' : '') }, label);
+      if (value) b.title = ASSET_KINDS[value].hint;
+      b.addEventListener('click', () => {
+        f.kind = value;
+        buttons.forEach(([btn, v]) => btn.classList.toggle('active', v === value));
+        onChange();
+      });
+      buttons.push([b, value]);
+      group.appendChild(b);
+    }
+    bar.appendChild(group);
+  }
+
+  const search = el('input', {
+    className: 'filter-input', type: 'search', placeholder: 'filter by symbol, name or realm',
+    value: f.q,
+  });
+  search.addEventListener('input', () => { f.q = search.value.trim(); onChange(); });
+  bar.appendChild(search);
+
+  const toggle = (label, key, title) => {
+    const b = el('button', { className: 'filter-chip' + (f[key] ? ' active' : ''), title }, label);
+    b.addEventListener('click', () => { f[key] = !f[key]; b.classList.toggle('active', f[key]); onChange(); });
+    bar.appendChild(b);
+  };
+  toggle('priced only', 'pricedOnly',
+    'keep only the assets a GnoSwap pool can price. on mainnet that is a handful: most assets have no market at all');
+  toggle('active only', 'hideEmpty',
+    'keep only the assets this ledger has seen move at least once');
+
+  return bar;
+}
+
+// --- the unified list --------------------------------------------------------
+
+function unifiedAssetTable(assets, f) {
+  const tbl = el('table', { id: 'asset-list' });
+  tbl.appendChild(el('thead', {}, el('tr', {},
+    el('th', {}, 'asset'),
+    el('th', {}, 'realm'),
+    el('th', { title: 'price per whole token in US dollars, routed through GnoSwap and anchored on GNOT’s price on real exchanges. the badge says how much weight it carries' }, 'price'),
+    el('th', { title: 'for a grc20, the replayed supply. for the native coin, what the chain reports, with its locked share beside it. an nft has none' }, 'supply'),
+    el('th', { title: 'how the two kinds count holders is NOT the same. hover the marker on a native row' }, 'holders'),
+    el('th', { title: 'how the two kinds count transfers is NOT the same. hover the marker on a native row' }, 'transfers'),
+    el('th', {}, '24h'))));
+
+  const body = el('tbody');
+  let shown = 0;
+  for (const a of assets) {
+    if (!assetFilterMatches(a, f)) continue;
+    shown++;
+
+    const supplyCell = el('td');
+    supplyCell.appendChild(assetAmount(a, a.supply, { supply: true }));
+    if (a.kind === 'native' && a.locked > 0 && a.supply > 0) {
+      const pct = (a.locked / a.supply) * 100;
+      supplyCell.appendChild(el('div', {
+        className: 'cell-sub',
+        title: 'the share the chain reports as not yet spendable. this is the only asset here where circulating and fully diluted genuinely differ, which is why its market capitalisation is a fraction of its fully diluted value',
+      }, pct.toFixed(1) + '% locked'));
+    }
+
+    const holders = a.kind === 'grc721'
+      ? el('span', { style: { color: 'var(--fg2)' }, title: 'holders of an nft collection are counted as items held; the collection page lists them' }, fmtNum(a.holders || 0))
+      : document.createTextNode(fmtNum(a.holders || 0));
+    const holderCell = el('td', {}, basisCell(holders, a.holders_basis));
+    if (a.holders_basis === 'swept' && a.holders_swept) {
+      holderCell.appendChild(el('div', { className: 'cell-sub', title: 'how many addresses were read at all. without it the count above reads as a chain total' },
+        'of ' + fmtNum(a.holders_swept) + ' read'));
+    }
+
+    body.appendChild(netRow(a.network,
+      el('td', {}, assetLabel(a)),
+      el('td', {}, a.pkg_path ? realmPathEl(a.pkg_path, a.network)
+        : el('span', { style: { color: 'var(--fg2)' }, title: a.kind === 'native' ? 'the chain’s own coin belongs to no realm' : 'this token emits a bare symbol rather than its realm path' },
+          a.kind === 'native' ? 'the chain' : 'unknown')),
+      el('td', {}, assetUSD(a)),
+      supplyCell,
+      holderCell,
+      el('td', {}, basisCell(fmtNum(a.transfers || 0), a.transfers_basis)),
+      el('td', {}, fmtNum(a.transfers_24h || 0))));
+  }
+  tbl.appendChild(body);
+
+  if (!shown) {
+    body.appendChild(el('tr', {}, el('td', { colspan: '7', style: { color: 'var(--fg2)' } },
+      assets.length ? 'no asset matches this filter' : 'no assets on this network yet')));
+  }
+  return { table: tbl, shown };
+}
+
+// assetListSection is the whole block: filters, the table, and a line saying
+// how many of how many are showing, so a filter can never silently hide the
+// rest of the chain.
+// Returns { rerender, banner }. The banner is an empty slot the caller fills
+// once prices land, rather than a node the caller splices in: the filter bar
+// lives inside this function's own wrapper, so an insertBefore against the
+// container failed with "the node before which the new node is to be inserted
+// is not a child of this node" and took the whole render down with it.
+function assetListSection(container, assets, f, opts) {
+  opts = opts || {};
+  const wrap = el('div');
+  const banner = el('div');
+  const count = el('div', { className: 'section-sub' });
+  const body = el('div', { className: 'asset-list-body' });
+  const rerender = () => {
+    body.textContent = '';
+    const { table, shown } = unifiedAssetTable(assets, f);
+    body.appendChild(table);
+    count.textContent = shown === assets.length
+      ? fmtNum(assets.length) + ' assets'
+      : fmtNum(shown) + ' of ' + fmtNum(assets.length) + ' assets';
+  };
+  wrap.appendChild(banner);
+  wrap.appendChild(assetFilterBar(f, () => rerender(), opts));
+  wrap.appendChild(count);
+  wrap.appendChild(body);
+  container.appendChild(wrap);
+  rerender();
+  return { rerender, banner };
+}
+
+// --- /defi and its four sections ---------------------------------------------
+//
+// One home and four lists, all drawn from the same components. `/defi` is the
+// unified view; `/coins`, `/grc20` and `/nfts` are the same list with the kind
+// preset; `/holders` is the other axis, who holds what rather than what exists.
+//
+// They all read `/api/assets`, which carries the native coin as a row, so the
+// only thing that distinguishes the section pages is a filter and a headline.
+// That is deliberate: the previous version had three implementations of the
+// same table, which is how they drifted into three different mental models.
+
+let _defiCharts = [];
+function destroyDefiCharts() {
+  _defiCharts.forEach(c => { try { c.destroy(); } catch (e) { /* already gone */ } });
+  _defiCharts = [];
+}
+
+// assetsByKind counts a list for the headline tiles.
+function assetsByKind(assets) {
+  const out = { native: 0, grc20: 0, grc721: 0 };
+  for (const a of assets) out[a.kind] = (out[a.kind] || 0) + 1;
+  return out;
+}
+
+// pricedTotal sums what the priced assets are worth, and says how much of the
+// list that covered. The pair is the honest form: a total alone reads as "the
+// value of this chain", and it is the value of the fraction with a market.
+function pricedTotal(assets) {
+  let usd = 0, priced = 0;
+  for (const a of assets) {
+    const q = priceFor(a.token);
+    if (q && q.usd_per_token > 0 && q.chain_supply > 0) { usd += q.fdv_usd || 0; priced++; }
+  }
+  return { usd, priced };
+}
+
+// activityChart draws the three transfer series.
+//
+// Three rather than one stacked total, and that is not a style choice: the
+// native count is BankMsgSend only while the grc20 count includes
+// realm-internal moves, so adding them produces a number that means nothing.
+// Drawn apart, a reader can see which line is which measurement.
+function activityChart(container, points, metric) {
+  if (!points || points.length < 2) return;
+  const labels = points.map(p => p.time);
+  const spec = metric === 'volume'
+    ? {
+      title: 'native value moved per day, in GNOT',
+      note: 'only the chain’s own coin has a comparable value axis here: a grc20’s amounts are in its own units and summing them across tokens would add unlike things.',
+      datasets: [{
+        label: 'ugnot volume', data: points.map(p => (p.native_volume || 0) / 1e6),
+        borderColor: '#4ecdc4', backgroundColor: 'rgba(78,205,196,.15)', fill: true, tension: .25,
+      }],
+    }
+    : {
+      title: 'transfers per day, by kind',
+      note: 'three series, not one total: the native count is BankMsgSend only and the grc20 count includes moves inside a realm call, so adding them would sum two different measurements.',
+      datasets: [
+        { label: 'native', data: points.map(p => p.native_transfers || 0), borderColor: '#4ecdc4', tension: .25 },
+        { label: 'grc20', data: points.map(p => p.grc20_transfers || 0), borderColor: '#ff6b6b', tension: .25 },
+        { label: 'nft', data: points.map(p => p.grc721_transfers || 0), borderColor: '#ffd93d', tension: .25 },
+      ],
+    };
+  detailChart(container, _defiCharts, {
+    type: 'line', height: 240, title: spec.title, note: spec.note,
+    data: { labels, datasets: spec.datasets },
+    scales: { x: chartAxis({ maxTicks: 8 }), y: chartAxis({}) },
+  });
+}
+
+// activitySection wraps the chart in its window and metric controls, which is
+// the "filters on the graphs" half of what this page was missing.
+function activitySection(container, network) {
+  const sec = el('div', { className: 'section' });
+  sec.appendChild(el('div', { className: 'section-title' }, 'activity'));
+  const controls = el('div', { className: 'asset-filters' });
+  const body = el('div');
+  sec.appendChild(controls);
+  sec.appendChild(body);
+  container.appendChild(sec);
+
+  const state = { days: 30, metric: 'transfers' };
+  const chipRow = (opts, key, titles) => {
+    const group = el('div', { className: 'filter-group' });
+    const made = [];
+    for (const [value, label] of opts) {
+      const b = el('button', { className: 'filter-chip' + (state[key] === value ? ' active' : '') }, label);
+      if (titles && titles[value]) b.title = titles[value];
+      b.addEventListener('click', () => {
+        state[key] = value;
+        made.forEach(([btn, v]) => btn.classList.toggle('active', v === value));
+        draw();
+      });
+      made.push([b, value]);
+      group.appendChild(b);
+    }
+    controls.appendChild(group);
+  };
+  chipRow([[7, '7d'], [30, '30d'], [90, '90d']], 'days');
+  chipRow([['transfers', 'transfers'], ['volume', 'gnot moved']], 'metric', {
+    volume: 'native only: a grc20’s amounts are in its own units, so there is no shared value axis to draw them on',
+  });
+
+  let draw = async () => {
+    destroyDefiCharts();
+    body.textContent = '';
+    skeletonBlock(body);
+    try {
+      const data = await api('assets/activity?days=' + state.days, network);
+      body.textContent = '';
+      const points = (data && data.points) || [];
+      if (!points.length) {
+        body.appendChild(el('div', { className: 'section-sub' }, 'no movement in this window'));
+        return;
+      }
+      activityChart(body, points, state.metric);
+    } catch (err) {
+      failBlock(body, err, draw);
+    }
+  };
+  draw();
+}
+
+// moversSection is the "who moves the coin" block, at ten rows.
+//
+// It was fifty, in three full-width columns, and that was too much page for
+// what it answers: the widest row of the first ten is the widest of all fifty
+// (a registry label sits beside the top addresses), so the tail cost a
+// horizontal scrollbar and bought a longer list of the same two faucets. Ten,
+// with a control to go deeper for anyone who wants the tail.
+function moversSection(container, bank) {
+  if (!((bank.top_senders || []).length)) return;
+  const sec = el('div', { className: 'section' });
+  sec.appendChild(el('div', { className: 'section-title' }, 'who moves the coin'));
+  sec.appendChild(el('div', { className: 'section-sub' },
+    'native ugnot only, from BankMsgSend. coin a realm moves inside a call is not a bank send and is not here.'));
+
+  const controls = el('div', { className: 'asset-filters' });
+  const grid = el('div', { className: 'movers-grid' });
+  sec.appendChild(controls);
+  sec.appendChild(grid);
+  container.appendChild(sec);
+
+  const state = { rows: 10, q: '' };
+  const render = () => {
+    grid.textContent = '';
+    const match = (r) => !state.q || (r.address || '').toLowerCase().includes(state.q.toLowerCase());
     const column = (title, rows, cols) => {
-      if (!(rows || []).length) return;
+      const list = (rows || []).filter(match).slice(0, state.rows);
       const col = el('div', { style: { minWidth: 0, overflowX: 'auto' } });
       col.appendChild(el('div', { className: 'section-title' }, title));
-      col.appendChild(bankMoverTable(rows, cols, true));
+      if (!list.length) {
+        col.appendChild(el('div', { className: 'section-sub' }, 'nothing matches'));
+      } else {
+        col.appendChild(bankMoverTable(list, cols, true));
+      }
       grid.appendChild(col);
     };
     column('top senders', bank.top_senders, ['txs', 'volume']);
     column('top receivers (volume)', bank.top_receivers_volume, ['volume', 'txs']);
     column('top receivers (count)', bank.top_receivers_count, ['txs', 'volume']);
-    if (grid.childNodes.length) container.appendChild(grid);
-  }).catch(err => failBlock(container, err, loadCoins));
+  };
+
+  const group = el('div', { className: 'filter-group' });
+  const made = [];
+  for (const n of [10, 25, 50]) {
+    const b = el('button', { className: 'filter-chip' + (state.rows === n ? ' active' : '') }, 'top ' + n);
+    b.addEventListener('click', () => {
+      state.rows = n;
+      made.forEach(([btn, v]) => btn.classList.toggle('active', v === n));
+      render();
+    });
+    made.push([b, n]);
+    group.appendChild(b);
+  }
+  controls.appendChild(group);
+  const search = el('input', { className: 'filter-input', type: 'search', placeholder: 'filter by address' });
+  search.addEventListener('input', () => { state.q = search.value.trim(); render(); });
+  controls.appendChild(search);
+
+  render();
 }
 
-// --- /grc20: the asset ledger -----------------------------------------------
+// --- /defi: the unified home -------------------------------------------------
 
-async function loadGRC20() {
-  skeletonRows(clear('grc20-list'), 3, 5);
-  const statsBar = document.getElementById('grc20-stats');
-  statsBar.style.display = 'none';
-  try {
-    await apiSWR('assets', (assetsResp) => {
-      const assets = (assetsResp && assetsResp.assets) || [];
-      const totalTransfers = assets.reduce((s, t) => s + (t.transfers || 0), 0);
-      const holders = assets.reduce((s, t) => s + (t.holders || 0), 0);
-      statsBar.textContent = ''; statsBar.style.display = 'flex';
-      const stat = (label, value) => statsBar.appendChild(el('div', { className: 'stat' },
-        el('span', { className: 'label' }, label), el('span', { className: 'value' }, fmtNum(value))));
-      stat('assets', assets.length);
-      stat('transfers', totalTransfers);
-      // Summed across assets, so an address holding three tokens counts three
-      // times. Named "holdings" rather than "holders" for exactly that reason.
-      stat('holdings', holders);
-      renderAssetRows(assets);
-      // Prices arrive after the list rather than with it. The list is complete
-      // and correct without them; waiting on a cold RPC refresh to show a
-      // supply figure that was already in the database would be a strictly
-      // worse page for the 15 seconds it takes.
-      loadPrices(() => {
-        const banner = clear('grc20-price-banner');
-        const b = priceBanner(_pricesMeta);
-        if (b) banner.appendChild(b);
-        renderAssetRows(assets);
-      });
+async function loadDefi() {
+  const container = clear('defi-content');
+  destroyDefiCharts();
+  skeletonBlock(container);
+  await apiSWR(['bankstats', 'assets', 'accounts/population'], ([bank, assetsResp, pop]) => {
+    destroyDefiCharts();
+    container.textContent = '';
+    const assets = (assetsResp && assetsResp.assets) || [];
+    const kinds = assetsByKind(assets);
+    const transfers = assets.reduce((s, t) => s + (t.transfers || 0), 0);
+    const native = assets.find(a => a.kind === 'native');
+
+    const nums = el('div', { className: 'bignums' });
+    nums.appendChild(bigNum('assets', fmtNum(assets.length), {
+      title: fmtNum(kinds.grc20) + ' grc20, ' + fmtNum(kinds.grc721) + ' nft collections, and the chain’s own coin',
+      sub: fmtNum(kinds.grc20) + ' grc20 · ' + fmtNum(kinds.grc721) + ' nft',
+    }));
+    nums.appendChild(bigNum('transfers', fmtCompact(transfers), {
+      title: 'every move across every ledger. the native share is BankMsgSend only, so the total under-counts what actually moved',
+      sub: native ? fmtCompact(native.transfers || 0) + ' native' : '',
+    }));
+    if (native && native.supply_known) {
+      const circulating = native.supply - (native.locked || 0);
+      nums.appendChild(bigNum('gnot supply', fmtCompact(native.supply / 1e6), {
+        title: fmtNum(native.supply) + ' ugnot, of which ' + fmtNum(native.locked || 0) + ' is locked. the only asset here where circulating and fully diluted genuinely differ',
+        sub: fmtCompact(circulating / 1e6) + ' circulating',
+        to: assetPath('ugnot'),
+      }));
+    }
+    nums.appendChild(bigNum('addresses seen', fmtCompact(pop.known), {
+      title: fmtNum(pop.known) + ' distinct addresses seen on chain, in any role. not the number of accounts that exist: gno cannot enumerate them',
+      sub: fmtNum(pop.monthly_active) + ' active in 30d',
+      to: '/holders',
+    }));
+    container.appendChild(nums);
+
+    activitySection(container, assetsResp.network);
+
+    // The main list. Everything, filterable, because this is the page that
+    // exists to let a reader see the whole picture at once.
+    const listSec = el('div', { className: 'section' });
+    listSec.appendChild(el('div', { className: 'section-title' }, 'every asset'));
+    listSec.appendChild(el('div', { className: 'section-sub' },
+      'the chain’s own coin and every token, in one list. two columns are marked where the two kinds are not counted the same way: hover a marker.'));
+    container.appendChild(listSec);
+    const f = newAssetFilter();
+    const list = assetListSection(listSec, assets, f);
+    // Prices arrive after the list: a cold refresh is dozens of RPC reads and
+    // the list is complete and correct without them.
+    loadPrices(() => {
+      const b = priceBanner(_pricesMeta);
+      if (b) list.banner.appendChild(b);
+      list.rerender();
     });
-  } catch (err) {
-    console.error(err);
-    failRows(clear('grc20-list'), 3, err, loadGRC20);
+
+    moversSection(container, bank);
+    container.appendChild(moreLink('who holds what, across every asset', '/holders'));
+  }).catch(err => failBlock(container, err, loadDefi));
+}
+
+// --- the three section pages -------------------------------------------------
+//
+// One implementation. The kind is a preset on the same filter the home uses,
+// and the only thing each page adds is the headline its kind deserves.
+
+function sectionStats(container, assets, kind) {
+  const bar = el('div', { className: 'stats-bar' });
+  const stat = (label, value, title) => {
+    const st = el('div', { className: 'stat' },
+      el('span', { className: 'label' }, label), el('span', { className: 'value' }, value));
+    if (title) st.title = title;
+    bar.appendChild(st);
+  };
+  const rows = assets.filter(a => a.kind === kind);
+  const transfers = rows.reduce((s, t) => s + (t.transfers || 0), 0);
+  const holders = rows.reduce((s, t) => s + (t.holders || 0), 0);
+
+  if (kind === 'native') {
+    const n = rows[0];
+    if (!n) return;
+    stat('supply', n.supply_known ? gnotAmount(n.supply) : 'unknown',
+      n.supply_known ? fmtNum(n.supply) + ' ugnot as the chain reports it' : 'the chain’s supply read did not answer. shown as unknown rather than zero, which would be a claim');
+    if (n.supply_known && n.locked > 0) {
+      stat('locked', ((n.locked / n.supply) * 100).toFixed(1) + '%',
+        fmtNum(n.locked) + ' ugnot not yet spendable. the only asset here with this distinction, and why its market cap is a fraction of its fully diluted value');
+    }
+    stat('transfers', fmtNum(n.transfers || 0),
+      'BankMsgSend only. ugnot a realm moves inside a call is not a bank send and is not counted');
+    stat('holders read', fmtNum(n.holders || 0),
+      'addresses with a positive balance among the ' + fmtNum(n.holders_swept || 0) + ' this indexer has read. gno cannot enumerate accounts, so the real number is higher and unknowable');
+  } else {
+    stat(kind === 'grc721' ? 'collections' : 'tokens', fmtNum(rows.length));
+    stat('transfers', fmtNum(transfers));
+    if (kind === 'grc20') {
+      stat('holdings', fmtNum(holders),
+        'summed across tokens, so an address holding three counts three times. named holdings rather than holders for that reason');
+    }
   }
+  container.appendChild(bar);
+}
+
+// assetSectionPage is /coins, /grc20 and /nfts.
+async function assetSectionPage(slot, kind, title, blurb) {
+  const container = clear(slot);
+  skeletonBlock(container);
+  await apiSWR(['assets', { path: 'bankstats', fallback: {} }], ([assetsResp, bank]) => {
+    container.textContent = '';
+    const assets = (assetsResp && assetsResp.assets) || [];
+
+    container.appendChild(el('div', { className: 'section-title' }, title));
+    container.appendChild(el('div', { className: 'section-sub' }, blurb));
+    sectionStats(container, assets, kind);
+
+    const sec = el('div', { className: 'section' });
+    container.appendChild(sec);
+    const f = newAssetFilter({ kind });
+    // kinds:false, because the kind IS the page here and offering to change it
+    // would just be a second nav pretending to be a filter.
+    const list = assetListSection(sec, assets, f, { kinds: false });
+    loadPrices(() => {
+      const b = priceBanner(_pricesMeta);
+      if (b) list.banner.appendChild(b);
+      list.rerender();
+    });
+
+    // The movers belong to the native page: they are a bank-send leaderboard.
+    if (kind === 'native' && bank && bank.top_senders) moversSection(container, bank);
+  }).catch(err => failBlock(container, err, () => assetSectionPage(slot, kind, title, blurb)));
+}
+
+function loadCoins() {
+  return assetSectionPage('coins-content', 'native', 'native coin',
+    'the chain’s own coin. its ledger is BankMsgSend, so ugnot a realm moves inside a call is not here: that surfaces as gas and as realm activity. its holders come from the addresses this indexer has read a balance for, because gno offers no way to enumerate accounts.');
+}
+
+function loadGRC20() {
+  return assetSectionPage('grc20-content', 'grc20', 'grc20 tokens',
+    'fungible tokens, replayed from the Transfer events the chain emits. supply and holders are exact inside the window this ledger covers and blind before it, which is the opposite of how the native figures are incomplete.');
+}
+
+function loadNFTs() {
+  return assetSectionPage('nfts-content', 'grc721', 'nft collections',
+    'non-fungible tokens. they ride the same Transfer event as a grc20 and carry no amount, so a holding is a count of items and supply does not apply: a zero in those columns would read as "empty" rather than as "this arithmetic does not apply".');
+}
+
+// --- /holders: who holds what, across every asset ----------------------------
+
+async function loadHolders() {
+  const container = clear('holders-content');
+  skeletonBlock(container);
+  const state = { limit: 25, native: true, token: '' };
+
+  const draw = async () => {
+    container.textContent = '';
+    skeletonBlock(container);
+    let data;
+    try {
+      data = await api('holders?positions=1&limit=' + state.limit
+        + (state.native ? '' : '&native=0')
+        + (state.token ? '&token=' + encodeURIComponent(state.token) : ''));
+    } catch (err) {
+      failBlock(clear('holders-content'), err, draw);
+      return;
+    }
+    container.textContent = '';
+    container.appendChild(el('div', { className: 'section-title' }, 'holders'));
+    container.appendChild(el('div', { className: 'section-sub' },
+      'every address that holds anything, ranked by what it is worth. ranking by raw balance would put whichever token has the most decimals on top, and ranking by how many assets an address holds would put six worthless ones above the chain.'));
+
+    // The caveat that decides how much of this ranking means anything.
+    const note = el('div', { className: 'px-banner' });
+    const fact = (t, tip) => el('span', { className: 'px-fact', title: tip }, t);
+    if (data.prices_unavailable) {
+      note.appendChild(el('div', {}, el('b', {}, 'No prices. '),
+        fact(data.prices_unavailable, 'without a price there is nothing to rank by, so the order below falls back to how many assets each address holds. that is not a leaderboard of value.')));
+    } else {
+      const line = el('div');
+      line.appendChild(document.createTextNode('Values cover '));
+      line.appendChild(fact(fmtNum(data.priced_assets) + ' of ' + fmtNum(data.total_assets) + ' assets',
+        'the rest have no GnoSwap pool at all, so they have no price. an unpriced position is never counted as zero: a row’s total describes only the part of it that could be valued, and priced_assets on each row says how much of it that was.'));
+      line.appendChild(document.createTextNode('. '));
+      if (data.native_included) {
+        line.appendChild(fact('Native balances come from a sample of ' + fmtNum(data.native_swept) + ' addresses',
+          'gno cannot enumerate accounts, so ugnot holdings are read address by address and this covers only the ones this indexer has looked at. every other position here is an exact replay. the two are incomplete at opposite ends.'));
+        line.appendChild(document.createTextNode('.'));
+      }
+      note.appendChild(line);
+    }
+    if (data.truncated) {
+      note.appendChild(el('div', { style: { marginTop: '6px' } },
+        el('b', {}, 'Truncated. '), 'the position replay hit its guard, so this ranks a prefix of the chain rather than all of it.'));
+    }
+    container.appendChild(note);
+
+    // Controls.
+    const controls = el('div', { className: 'asset-filters' });
+    const group = el('div', { className: 'filter-group' });
+    const made = [];
+    for (const n of [10, 25, 100]) {
+      const b = el('button', { className: 'filter-chip' + (state.limit === n ? ' active' : '') }, 'top ' + n);
+      b.addEventListener('click', () => { state.limit = n; draw(); });
+      made.push(b);
+      group.appendChild(b);
+    }
+    controls.appendChild(group);
+    const nativeToggle = el('button', {
+      className: 'filter-chip' + (state.native ? ' active' : ''),
+      title: 'include the swept native balances. off leaves only the replayed grc20 ledger, which is the one view where every row was computed the same way',
+    }, 'include native');
+    nativeToggle.addEventListener('click', () => { state.native = !state.native; draw(); });
+    controls.appendChild(nativeToggle);
+    container.appendChild(controls);
+
+    const tbl = el('table');
+    tbl.appendChild(el('thead', {}, el('tr', {},
+      el('th', {}, 'address'),
+      el('th', { title: 'summed over the positions that have a price. the count beside it says how many of this address’s assets that was' }, 'value'),
+      el('th', {}, 'assets'),
+      el('th', {}, 'largest position'))));
+    const body = el('tbody');
+    for (const h of (data.holders || [])) {
+      const valueCell = el('td');
+      if (h.usd_value > 0) {
+        valueCell.appendChild(el('span', {}, fmtUSD(h.usd_value)));
+        if (h.priced_assets < h.assets) {
+          valueCell.appendChild(el('div', {
+            className: 'cell-sub',
+            title: 'the other ' + fmtNum(h.assets - h.priced_assets) + ' have no market, so nothing here values them. they are not counted as zero',
+          }, fmtNum(h.priced_assets) + ' of ' + fmtNum(h.assets) + ' priced'));
+        }
+      } else {
+        valueCell.appendChild(el('span', {
+          style: { color: 'var(--fg2)' },
+          title: 'none of what this address holds has a price. that is an absence of a market, not a value of zero',
+        }, 'not priced'));
+      }
+
+      const largest = h.largest || {};
+      const largestCell = el('td');
+      if (largest.token) {
+        const link = el('a', { href: assetPath(largest.token) },
+          (largest.fungible ? fmtTokenUnits(largest.balance) : fmtNum(largest.balance) + ' item' + (largest.balance === 1 ? '' : 's')) + ' ' + (largest.symbol || ''));
+        link.addEventListener('click', (e) => { e.preventDefault(); navigate(assetPath(largest.token)); });
+        largestCell.appendChild(link);
+        largestCell.appendChild(document.createTextNode(' '));
+        largestCell.appendChild(assetKindBadge(largest.kind));
+      }
+
+      const addrCell = el('td', {}, addrLink(h.address, data.network));
+      if (h.holds_native) {
+        addrCell.appendChild(basisCell(document.createTextNode(''), 'swept'));
+      }
+      body.appendChild(el('tr', {}, addrCell, valueCell, el('td', {}, fmtNum(h.assets)), largestCell));
+    }
+    tbl.appendChild(body);
+    if (!(data.holders || []).length) {
+      body.appendChild(el('tr', {}, el('td', { colspan: '4', style: { color: 'var(--fg2)' } }, 'no holdings on this network yet')));
+    }
+    container.appendChild(tbl);
+    container.appendChild(el('div', { className: 'section-sub' },
+      fmtNum(data.total_holders) + ' addresses hold something' + (data.holders.length < data.total_holders ? ', showing the top ' + fmtNum(data.holders.length) : '')));
+  };
+
+  await draw();
 }
 
 let _valopersCache = null;
@@ -17195,87 +17754,6 @@ function processClampQueue() {
   }
 }
 
-// --- Export ----------------------------------------------------------------
-//
-// An explorer that cannot get data out is a dead end for anyone doing analysis:
-// you find the rows you want and then retype them. Exporting the table you are
-// looking at costs nothing and turns "I found it" into "I can work with it".
-//
-// Exports what is on screen, not what the endpoint could return. That is the
-// honest scope — the filename records the page, the network and the row count so
-// a file on disk still says where it came from.
-function csvEscape(v) {
-  const s = String(v ?? '');
-  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-}
-
-// tableToRows reads a rendered table rather than the data behind it, so an
-// export matches what the reader sees — same columns, same filters, same page.
-//
-// Decorative context is dropped. A hash cell renders as "abc= (block 556 537)"
-// because the block number is useful next to a truncated hash on screen; in a
-// CSV it is noise duplicating the block column, and it makes the hash column
-// unusable as a key. Everything in .block-ctx is that kind of restatement.
-function cellText(td) {
-  const copy = td.cloneNode(true);
-  copy.querySelectorAll('.block-ctx, .addr-inferred, .addr-watched').forEach(n => n.remove());
-  return copy.textContent.replace(/\s+/g, ' ').trim();
-}
-
-function tableToRows(table) {
-  const head = [...table.querySelectorAll('thead th')]
-    .map(th => th.textContent.replace(/[\u2195\u2191\u2193]/g, '').trim());
-  const body = [...table.querySelectorAll('tbody tr')]
-    .filter(tr => tr.style.display !== 'none' && !tr.querySelector('.skeleton') && !tr.querySelector('.load-error'))
-    .map(tr => [...tr.children].map(cellText));
-  return { head, body };
-}
-
-function download(name, mime, text) {
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Revoking immediately can cancel the download in some browsers.
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
-
-function exportName(ext, rows) {
-  const view = (window.location.pathname.replace(/^\//, '') || 'home').replace(/\//g, '-');
-  const net = getNetwork() || 'all';
-  return 'gnoscope-' + view + '-' + net + '-' + rows + 'rows.' + ext;
-}
-
-function addTableExport(container, table) {
-  const bar = el('div', { className: 'table-export' });
-
-  const csv = el('button', { className: 'watch-btn' }, 'csv');
-  csv.title = 'download the rows shown, as CSV';
-  csv.addEventListener('click', () => {
-    const { head, body } = tableToRows(table);
-    const text = [head, ...body].map(r => r.map(csvEscape).join(',')).join('\n');
-    download(exportName('csv', body.length), 'text/csv', text);
-  });
-
-  const json = el('button', { className: 'watch-btn' }, 'json');
-  json.title = 'download the rows shown, as JSON';
-  json.addEventListener('click', () => {
-    const { head, body } = tableToRows(table);
-    const key = (h, i) => (h || ('col' + i)).replace(/\s+/g, '_');
-    const objs = body.map(r => Object.fromEntries(r.map((v, i) => [key(head[i], i), v])));
-    download(exportName('json', objs.length), 'application/json', JSON.stringify(objs, null, 2));
-  });
-
-  bar.appendChild(el('span', { className: 'table-export-label' }, 'export:'));
-  bar.appendChild(csv);
-  bar.appendChild(json);
-  container.insertBefore(bar, table);
-}
-
 // --- Filterable + sortable tables ---
 
 // tableKey names a table for the URL, so `?f.<key>=` can carry its filter and
@@ -17483,9 +17961,6 @@ function enhanceTables() {
       const parent = tbl.parentElement;
       if (parent && !parent.querySelector('.table-filter')) {
         addTableFilter(parent, tbl);
-      }
-      if (parent && !parent.querySelector('.table-export')) {
-        addTableExport(parent, tbl);
       }
     }
     restoreTableState(tbl);
