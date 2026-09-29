@@ -2,6 +2,7 @@ package price
 
 import (
 	"context"
+	"errors"
 	"math"
 	"math/big"
 	"strings"
@@ -301,18 +302,32 @@ func mainnetInputs() Inputs {
 	}
 	return Inputs{
 		// Assets arrive keyed the way the ledger keys them, with the `.<id>`
-		// segment, because that is what the caller has.
+		// segment, and carrying the REPLAYED supply, which is what the ledger
+		// has. Every figure below is the live mainnet reading on 2026-09-29,
+		// including the two negative ones: the ledger starts mid-chain, so a
+		// token burned more than it was seen to mint nets below zero.
 		Assets: []Asset{
 			{Token: keyGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns",
-				Supply: 108092465530720, Fungible: true, Decimals: 6, DecimalsKnown: true, Verified: true},
+				Supply: 5019648834462, Fungible: true, Decimals: 6, DecimalsKnown: true, Verified: true},
 			{Token: keyWugnot, Symbol: "WUGNOT", PkgPath: "gno.land/r/gnoland/wugnot",
-				Supply: 3685791634930, Fungible: true, Decimals: 6, DecimalsKnown: true, Verified: true},
-			{Token: keyBubble, Symbol: "BUBBLE", Supply: 123890421048, Fungible: true},
-			{Token: keyGnomic, Symbol: "GNOMIC", Supply: 20985103432232, Fungible: true,
-				Decimals: 6, DecimalsKnown: true},
-			{Token: keyPerun, Symbol: "PERUN", Supply: 1000000000000, Fungible: true},
+				Supply: -2407817556637, Fungible: true, Decimals: 6, DecimalsKnown: true, Verified: true},
+			{Token: keyBubble, Symbol: "BUBBLE", PkgPath: "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/wbubble",
+				Supply: 123890421048, Fungible: true},
+			{Token: keyGnomic, Symbol: "GNOMIC", PkgPath: "gno.land/r/nym-thegnomic001/gnomic",
+				Supply: -8344309160, Fungible: true, Decimals: 6, DecimalsKnown: true},
+			{Token: keyPerun, Symbol: "PERUN", PkgPath: "gno.land/r/demo/defi/grc20factory",
+				Supply: 0, Fungible: true},
 			// An asset with no pool at all, which is 22 of the 28 on mainnet.
 			{Token: "gno.land/r/x/y.GDOG.0000000", Symbol: "GDOG", Supply: 1048226, Fungible: true},
+		},
+		// What each realm answers when asked directly. These are the figures
+		// the supply-times-price column is built from, and the gap against the
+		// replayed ones above is the whole reason it is.
+		ChainSupply: map[string]int64{
+			tokGNS:    108092465530720,
+			tokGnomic: 20985103432232,
+			tokBubble: 123890421048,
+			tokPerun:  1000000000000,
 		},
 		Pools: mainnetPools(),
 		Anchor: &Anchor{USDPerGNOT: gnotUSD, SpreadPct: 0.02,
@@ -370,14 +385,16 @@ func TestBuildAgainstMainnet(t *testing.T) {
 		{name: "wugnot is the anchor", token: keyWugnot, wantTier: TierMarket,
 			wantPerTok: gnotUSD, tol: 1e-9},
 		{name: "BUBBLE is thin", token: keyBubble, wantTier: TierThin,
-			wantPerTok: 0.216365, tol: 1e-4, wantRoutes: 1, wantWarning: "decimals-unknown"},
+			wantPerTok: 0.216365, tol: 1e-4, wantFDV: 26806, fdvTol: 200, wantRoutes: 1,
+			wantWarning: "decimals-unknown"},
 		// The headline: a $582k paper value over a $47 pool.
 		{name: "GNOMIC is decorative", token: keyGnomic, wantTier: TierDecorative,
 			wantPerTok: 0.027734209, tol: 1e-6, wantFDV: 582003, fdvTol: 1000, wantRoutes: 1,
 			wantWarning: "thin-pool"},
 		// PERUN is the only token with two routes, and they disagree slightly.
 		{name: "PERUN has two routes", token: keyPerun, wantTier: TierDecorative,
-			wantPerTok: 0.074965, tol: 1e-3, wantRoutes: 2, wantWarning: "route-disagreement"},
+			wantPerTok: 0.074965, tol: 1e-3, wantFDV: 74965, fdvTol: 200, wantRoutes: 2,
+			wantWarning: "route-disagreement"},
 		{name: "GDOG has no market", token: "gno.land/r/x/y.GDOG.0000000", wantTier: TierNone},
 	}
 	for _, tt := range tests {
@@ -498,6 +515,116 @@ func TestUnpricedTokensCarryNoWarnings(t *testing.T) {
 		t.Error("an unpriced token must still explain why it is unpriced")
 	}
 }
+
+// The bug this replaced: supply times price was built from the replayed ledger,
+// which is a floor. Live on 2026-09-29 that printed $89,711 for GNS against a
+// real $1.9M, and nothing at all for the three tokens whose replay nets to zero
+// or below. Both readings are in the fixture, so a regression to the replayed
+// figure fails here rather than on the deployed site.
+func TestFDVUsesChainSupplyNotTheReplayedFloor(t *testing.T) {
+	res := Build(mainnetInputs())
+	gns := quoteFor(t, res, keyGNS)
+	if gns.ChainSupply != 108092465530720 {
+		t.Fatalf("chain supply = %d, want the figure gns.TotalSupply() answers", gns.ChainSupply)
+	}
+	// The replayed supply would give about $88,800. Anything near that is the
+	// old bug back.
+	if gns.FDVUSD < 1_500_000 {
+		t.Errorf("GNS fdv = %.0f, which is the replayed floor rather than the chain's supply", gns.FDVUSD)
+	}
+	// PERUN's replayed supply is exactly zero and its real one is 1e12. Under
+	// the old rule it had no figure at all.
+	perun := quoteFor(t, res, keyPerun)
+	if perun.FDVUSD <= 0 {
+		t.Errorf("PERUN has a chain supply and a price, so it must have a figure")
+	}
+	// GNOMIC's replayed supply is negative.
+	gnomic := quoteFor(t, res, keyGnomic)
+	if gnomic.FDVUSD <= 0 {
+		t.Errorf("GNOMIC has a chain supply and a price, so it must have a figure")
+	}
+}
+
+// A realm that will not answer TotalSupply() gets no figure, not one built on
+// the replayed floor. That is the half that makes the other half safe:
+// best-effort, and able to say nothing.
+func TestNoFDVWhenTheChainWillNotSayItsSupply(t *testing.T) {
+	in := mainnetInputs()
+	// GNS deliberately, not GNOMIC: GNOMIC's replayed supply is negative, so a
+	// fallback to it is caught by any `> 0` guard and the test proves nothing.
+	// GNS's replayed supply is positive, plausible, and wrong by 20x, which is
+	// exactly the shape that shipped.
+	delete(in.ChainSupply, tokGNS)
+	q := quoteFor(t, Build(in), keyGNS)
+	if q.FDVUSD != 0 {
+		t.Errorf("fdv = %.2f with no chain supply; the replayed figure must never stand in", q.FDVUSD)
+	}
+	if hasWarning(q, "fdv-not-marketcap") {
+		t.Error("no figure means no caveat about the figure")
+	}
+	// The price itself is unaffected: supply and price are independent reads.
+	if q.USDPerToken <= 0 {
+		t.Error("a missing supply must not remove the price")
+	}
+}
+
+// The two expression shapes, and the token that answers neither.
+func TestFetchTotalSupply(t *testing.T) {
+	tests := []struct {
+		name    string
+		answers map[string]string
+		pkg     string
+		symbol  string
+		want    int64
+		wantOK  bool
+	}{
+		{
+			name:    "plain TotalSupply()",
+			answers: map[string]string{"gno.land/r/gnoswap/gns.TotalSupply()": `(108092465530720 int64)`},
+			pkg:     "gno.land/r/gnoswap/gns", symbol: "GNS",
+			want: 108092465530720, wantOK: true,
+		},
+		{
+			// grc20factory exists to hold many tokens, so its supply getter
+			// takes the symbol. Verified live: TotalSupply() alone errors there.
+			name:    "factory shape takes the symbol",
+			answers: map[string]string{`gno.land/r/demo/defi/grc20factory.TotalSupply("PERUN")`: `(1000000000000 int64)`},
+			pkg:     "gno.land/r/demo/defi/grc20factory", symbol: "PERUN",
+			want: 1000000000000, wantOK: true,
+		},
+		{
+			name:    "answers neither",
+			answers: map[string]string{},
+			pkg:     "gno.land/r/g1n4pl5uc4yt5r96m9w6fmdznx3x0jyg8l6arhmt/gnomi/padv3", symbol: "GNOMI",
+			wantOK: false,
+		},
+		{
+			// A realm that answers with an error value in the last position
+			// must not be read as a supply of whatever the first line says.
+			name: "an errored return is not a supply",
+			answers: map[string]string{"gno.land/r/x/y.TotalSupply()": "(0 int64)\n" +
+				`(&(struct{("no such token" string)} gno.land/p/nt/ufmt/v0.errMsg) *gno.land/p/nt/ufmt/v0.errMsg)`},
+			pkg: "gno.land/r/x/y", symbol: "Z", wantOK: false,
+		},
+		{name: "no realm path", pkg: "", symbol: "COVID", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eval := func(_ context.Context, expr string) (string, error) {
+				if out, ok := tt.answers[expr]; ok {
+					return out, nil
+				}
+				return "", errNotDeclared
+			}
+			got, ok := FetchTotalSupply(context.Background(), eval, tt.pkg, tt.symbol)
+			if ok != tt.wantOK || got != tt.want {
+				t.Fatalf("FetchTotalSupply = %d,%v want %d,%v", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+var errNotDeclared = errors.New("name TotalSupply not declared")
 
 func TestBuildWithoutAnchorPricesNothing(t *testing.T) {
 	in := mainnetInputs()

@@ -565,3 +565,45 @@ func ugnotUSDRat(usdPerGNOT float64) *big.Rat {
 }
 
 var _ = time.Now
+
+// FetchTotalSupply asks a token's own realm what its supply is.
+//
+// The replayed supply this indexer computes from Transfer events is a **floor**:
+// the ledger starts wherever the sync cursor happened to begin, so anything
+// minted before that is missing. Multiplying that floor by a price produced a
+// figure 20x too small for GNS ($89,711 against a real $1.9M, live 2026-09-29)
+// and, for the three tokens whose replayed supply is zero or negative, no
+// figure at all. Both are worse than asking.
+//
+// Two shapes, tried in order, because there is no single expression that works:
+//
+//	TotalSupply()           gns, wugnot, wbubble, gnomic, xgns
+//	TotalSupply("<SYMBOL>") grc20factory, whose whole purpose is many tokens per realm
+//
+// Measured against mainnet 2026-09-29: 6 of 7 tokens answer one of the two.
+// The seventh (.../gnomi/padv3) answers neither, and gets no figure rather than
+// a guessed one. That is the shape a supply cross-check has to have:
+// best-effort, per-token, and able to say nothing.
+func FetchTotalSupply(ctx context.Context, eval Eval, pkgPath, symbol string) (int64, bool) {
+	if pkgPath == "" {
+		return 0, false
+	}
+	exprs := []string{pkgPath + ".TotalSupply()"}
+	if symbol != "" {
+		exprs = append(exprs, fmt.Sprintf(`%s.TotalSupply("%s")`, pkgPath, symbol))
+	}
+	for _, expr := range exprs {
+		out, err := eval(ctx, expr)
+		if err != nil || ReprErrored(out) {
+			continue
+		}
+		lines := ReprLines(out)
+		if len(lines) == 0 {
+			continue
+		}
+		if v, ok := ReprInt(lines[0]); ok && v > 0 {
+			return v, true
+		}
+	}
+	return 0, false
+}

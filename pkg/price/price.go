@@ -283,23 +283,21 @@ func warnAnchorDisagreement(spreadPct float64) Warning {
 }
 
 // warnFDVNotMarketCap exists because supply times price is the single most
-// misread number in this whole area, and on this chain the supply half is
-// independently doubtful.
-func warnFDVNotMarketCap(ledgerFrom string) Warning {
-	w := Warning{
-		Code:     "fdv-not-marketcap",
-		Short:    "fully diluted, and the supply is a floor",
-		Severity: SeverityCaution,
-		Explain: "This is supply multiplied by price. It is not a market capitalisation: no part " +
-			"of that supply has to be liquid, and on a pool this size almost none of it is. " +
-			"Selling even a fraction of it at the price shown is not possible.",
-	}
-	if ledgerFrom != "" {
-		w.Explain += " The supply itself is replayed from Transfer events this indexer walked, " +
-			"starting at " + ledgerFrom + ", so anything minted before that is missing and the " +
-			"supply is a floor rather than a total."
-	}
-	return w
+// misread number in this whole area.
+//
+// The supply half is now read from the token's own realm rather than replayed
+// from this indexer's transfer ledger, so the old "and the supply is a floor"
+// caveat is gone: a token whose realm will not answer gets no figure at all.
+// What remains is the part no data source can fix.
+var warnFDVNotMarketCap = Warning{
+	Code:     "fdv-not-marketcap",
+	Short:    "fully diluted, not a market cap",
+	Severity: SeverityCaution,
+	Explain: "This is the token's whole supply, as its own realm reports it, multiplied by the " +
+		"price above. It is not a market capitalisation: none of that supply has to be liquid, " +
+		"and on a pool this size almost none of it is. Selling even a small fraction of it at " +
+		"the price shown is not possible, so the figure is an upper bound on a number that has " +
+		"never existed.",
 }
 
 // Hop is one pool traversed on the way from a token to wugnot.
@@ -381,8 +379,14 @@ type Quote struct {
 	Depth []DepthPoint `json:"depth"`
 
 	// FDVUSD is supply times price, and carries warnFDVNotMarketCap whenever it
-	// is set. Zero when supply is unknown or the asset is not fungible.
+	// is set. Zero when the token's realm did not answer TotalSupply() or the
+	// asset is not fungible; never computed from the replayed ledger, which is
+	// a floor.
 	FDVUSD float64 `json:"fdv_usd,omitempty"`
+	// ChainSupply is the supply FDVUSD was computed from, in base units, as the
+	// token's own realm reported it. Carried so a reader can see that this is
+	// not the replayed figure the rest of the page shows.
+	ChainSupply int64 `json:"chain_supply,omitempty"`
 
 	Warnings []Warning `json:"warnings"`
 	ReadAt   time.Time `json:"read_at"`
@@ -473,7 +477,7 @@ func (q *Quote) buildWarnings(in warningInputs) {
 		add(warnAnchorDisagreement(in.AnchorSpreadPct))
 	}
 	if in.HasFDV {
-		add(warnFDVNotMarketCap(in.LedgerFrom))
+		add(warnFDVNotMarketCap)
 	}
 	add(warnTWAPIsSpot)
 	add(warnSingleVenue)

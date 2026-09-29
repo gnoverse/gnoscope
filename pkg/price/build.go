@@ -31,6 +31,11 @@ type Inputs struct {
 	Assets []Asset
 	Pools  []*Pool
 	Anchor *Anchor
+	// ChainSupply is what each token's own realm says its supply is, keyed in
+	// pool-token space. Present only for the tokens that answered; a token that
+	// did not gets no supply-times-price figure at all, rather than one built
+	// on the replayed floor.
+	ChainSupply map[string]int64
 	// Depth is the measured slippage ladder per token, keyed by event key.
 	// Absent for a token means no measurement was made, which is treated as no
 	// tier rather than as a bad one.
@@ -194,8 +199,15 @@ func Build(in Inputs) *Result {
 			q.USDPerBaseUnit = ratString(usdPerBase, 18)
 			scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(q.Decimals)), nil)
 			q.USDPerToken = ratFloat(new(big.Rat).Mul(usdPerBase, new(big.Rat).SetInt(scale)))
-			if a.Fungible && a.Supply > 0 {
-				q.FDVUSD = ratFloat(new(big.Rat).Mul(new(big.Rat).SetInt64(a.Supply), usdPerBase))
+			// Supply times price comes from the CHAIN's supply, never from the
+			// replayed one. The replayed figure is a floor by construction, and
+			// using it understated GNS by 20x while producing nothing at all
+			// for the three tokens whose replay nets to zero or negative. A
+			// token whose realm will not answer gets no figure: an absent
+			// number is honest, a floor dressed as a total is not.
+			if chain, ok := in.ChainSupply[pk]; a.Fungible && ok && chain > 0 {
+				q.ChainSupply = chain
+				q.FDVUSD = ratFloat(new(big.Rat).Mul(new(big.Rat).SetInt64(chain), usdPerBase))
 			}
 			res.PricedCount++
 		}
@@ -211,7 +223,6 @@ func Build(in Inputs) *Result {
 			Verified:         a.Verified,
 			AnchorSpreadPct:  in.Anchor.SpreadPct,
 			HasFDV:           q.FDVUSD > 0,
-			LedgerFrom:       in.LedgerFrom,
 		})
 		res.Quotes = append(res.Quotes, q)
 	}
@@ -311,9 +322,33 @@ func Refresh(ctx context.Context, eval Eval, anchor *Anchor, assets []Asset, key
 			}
 		}
 	}
+
+	// Supply is asked of the chain, and only for the tokens a pool actually
+	// touches. That is five reads on mainnet, not twenty-eight: a supply figure
+	// is only ever used to multiply a price, so a token with no price has no
+	// use for one.
+	inPool := map[string]bool{}
+	for _, p := range pools {
+		inPool[p.Key.Token0] = true
+		inPool[p.Key.Token1] = true
+	}
+	chainSupply := map[string]int64{}
+	for _, a := range assets {
+		pk := PoolToken(a.Token)
+		if !a.Fungible || !inPool[pk] || pk == WUGNOT {
+			continue
+		}
+		if _, done := chainSupply[pk]; done {
+			continue
+		}
+		if v, ok := FetchTotalSupply(ctx, eval, a.PkgPath, a.Symbol); ok {
+			chainSupply[pk] = v
+		}
+	}
+
 	res := Build(Inputs{
 		Assets: assets, Pools: pools, Anchor: anchor,
-		Depth: depth, LedgerFrom: ledgerFrom,
+		Depth: depth, ChainSupply: chainSupply, LedgerFrom: ledgerFrom,
 	})
 	for _, p := range pools {
 		if p.ObservationCardinality > 1 {

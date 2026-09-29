@@ -1442,6 +1442,24 @@ assumes 6, sets `decimals_known: false` and attaches a `decimals-unknown`
 warning. The anchor itself is safe from this: ugnot's 6 decimals are a chain
 constant, not a token's claim.
 
+### Supply times price comes from the chain, or not at all
+
+`fdv_usd` multiplies the price by what the token's **own realm** answers to
+`TotalSupply()`, and `chain_supply` carries that figure. It is never computed from
+the supply this indexer replays from Transfer events: that ledger starts wherever
+the sync cursor began, so it is a floor. Using it printed **$89,711** for GNS
+against a real $1.9M, and nothing at all for the three tokens whose replay nets to
+zero or negative (live, 2026-09-29).
+
+Two expression shapes are tried, because there is no single one that works:
+`TotalSupply()` answers on `gns`, `wugnot`, `wbubble`, `gnomic` and `xgns`, and the
+factory shape `TotalSupply("<SYMBOL>")` on `grc20factory`, whose whole purpose is
+several tokens per realm. That is 6 of 7 tested. A token that answers neither gets
+**no** figure and no `fdv-not-marketcap` warning, rather than a guessed one.
+
+Only tokens a pool actually touches are asked, which is five reads on mainnet
+rather than twenty-eight: a supply figure is only ever used to multiply a price.
+
 ### Warnings are data, with a paragraph each
 
 Every quote carries a `warnings[]` of `{code, short, explain, severity}`, ordered
