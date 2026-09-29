@@ -133,9 +133,27 @@ func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, ne
 		}
 		route, target := traffic.SplitPattern(pattern, r.URL.Path)
 		kind := traffic.Kind(route, r.URL.Path, MCPPath)
-		if route == traffic.SPARoute && kind == "page" {
+		var entityKind, entity, pageKind string
+		switch {
+		case route == traffic.PageViewPath:
+			// The beacon *is* the page view. Its own URL is uninteresting;
+			// what it carries is which page was opened, so the row is rewritten
+			// to describe that page rather than the instrumentation call.
+			//
+			// Rewritten rather than written separately on purpose: a second
+			// Record would make every page view cost two rows and show up in
+			// the api panel as well, which is the double counting this whole
+			// change exists to remove.
+			viewed := r.URL.Query().Get("path")
+			target = traffic.PageTarget(viewed)
+			// Only a page view is about something. An API call is about the
+			// same realm, but attributing it here would count one page open
+			// as five reads of the realm it happens to fetch.
+			entityKind, entity = traffic.Entity(viewed)
+			pageKind = traffic.PageKind(viewed)
+		case route == traffic.SPARoute && kind == "document":
 			// Every non-API URL matches "GET /", so the pattern says nothing
-			// about which page was opened. The app path is the target instead.
+			// about which document was served. The app path is the target.
 			target = traffic.PageTarget(r.URL.Path)
 		}
 
@@ -148,27 +166,39 @@ func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, ne
 			kind = "stream"
 		}
 
+		// Scanners looking for software this server does not run. Recorded,
+		// because being scanned is worth seeing, and kept out of the reader
+		// buckets, because otherwise they crowd the not-found panel and bury
+		// the mistyped realm paths, which are the ones that say something.
+		if traffic.IsProbe(r.URL.Path) {
+			kind = "probe"
+			entityKind, entity, pageKind = "", "", ""
+		}
+
 		ua := r.Header.Get("User-Agent")
 		client := traffic.ClientClass(ua)
 
 		store.Record(traffic.Record{
-			At:      start,
-			Visitor: store.Visitor(ClientIP(r), ua, start),
-			Host:    requestHost(r),
-			Method:  r.Method,
-			Route:   route,
-			Target:  target,
-			Network: r.URL.Query().Get("network"),
-			Kind:    kind,
-			Tool:    slot.tool,
-			Status:  status,
-			Bytes:   lw.bytes,
-			DurMS:   durMS,
-			AppMS:   appDurationMS(lw.Header().Get("Server-Timing")),
-			Cache:   lw.Header().Get("X-Cache"),
-			RefHost: traffic.RefererHost(r.Header.Get("Referer"), selfHost),
-			Client:  client,
-			Robot:   client == "bot",
+			At:         start,
+			Visitor:    store.Visitor(ClientIP(r), ua, start),
+			Host:       requestHost(r),
+			EntityKind: entityKind,
+			Entity:     entity,
+			PageKind:   pageKind,
+			Method:     r.Method,
+			Route:      route,
+			Target:     target,
+			Network:    r.URL.Query().Get("network"),
+			Kind:       kind,
+			Tool:       slot.tool,
+			Status:     status,
+			Bytes:      lw.bytes,
+			DurMS:      durMS,
+			AppMS:      appDurationMS(lw.Header().Get("Server-Timing")),
+			Cache:      lw.Header().Get("X-Cache"),
+			RefHost:    traffic.RefererURL(r.Header.Get("Referer"), selfHost),
+			Client:     client,
+			Robot:      client == "bot",
 		})
 	})
 }
@@ -218,6 +248,15 @@ func appDurationMS(h string) float64 {
 // SetTraffic hands the API its traffic store, for the same reason
 // SetResponseCache exists: it is built after the API in main.
 func (a *API) SetTraffic(t *traffic.Store) { a.traffic = t }
+
+// HandlePageView answers the beacon the frontend sends when it changes page.
+//
+// The handler itself does nothing but acknowledge: WithAccessLog has already
+// recorded the row, reading ?path= for which page it was. Answering 204 keeps
+// the response off the wire, since nothing reads it.
+func (a *API) HandlePageView(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
 
 // HandleTraffic answers the public traffic dashboard.
 //

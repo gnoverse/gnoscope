@@ -8,7 +8,7 @@
 import { expect, test } from '@playwright/test';
 
 import {
-  MULTICALL_ARG_ADDR, MULTICALL_REALM, MULTICALL_SIGNER,
+  HUB_ADDRESS, MULTICALL_ARG_ADDR, MULTICALL_REALM, MULTICALL_SIGNER,
 } from '../harness/fixture.mjs';
 import { settle, unexpected, watch } from './helpers.js';
 
@@ -142,6 +142,35 @@ test('an address or realm path in an argument is shortened and clickable', async
   await addr.click();
   await settle(page);
   await expect(page).toHaveURL(new RegExp(MULTICALL_ARG_ADDR));
+
+  expect(unexpected(seen.consoleErrors)).toEqual([]);
+});
+
+// An argument list is a few characters wide, not a column, so the two things
+// that earn their place in a table of addresses do not earn it here.
+test('an argument list shows no identicons and never prints a realm path in full', async ({ page }) => {
+  const seen = watch(page);
+  await openTxTab(page);
+
+  const args = txRows(page).nth(1).locator('.msg-line').first().locator('.msg-args');
+
+  // HUB_ADDRESS resolves to `gno.land/r/hub/core`, a label longer than the
+  // address it would replace. It must not be drawn; the short address is.
+  await expect(args).toContainText('g1qql00v…9nxu');
+
+  // The invariant, and it covers both halves at once: realm paths are shortened
+  // by realmPathEl and realm-derived labels are dropped to the tooltip, so this
+  // cell can never print the prefix either way.
+  await expect(args).not.toContainText('gno.land/');
+  await expect(args).toContainText('/r/gnoswap/position');
+
+  // The label is not lost, only moved: it is still reachable on hover.
+  const hub = args.locator('[data-hl="' + HUB_ADDRESS + '"] a');
+  await expect(hub).toHaveAttribute('title', /gno\.land\/r\/hub\/core/);
+
+  // No identicons: five addresses' worth of 14px squares is what a reader sees
+  // instead of the arguments.
+  await expect(args.locator('.identicon:visible')).toHaveCount(0);
 
   expect(unexpected(seen.consoleErrors)).toEqual([]);
 });

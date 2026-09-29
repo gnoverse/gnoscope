@@ -164,8 +164,12 @@ export const MULTICALL_CALLS_IN_BATCH = 4;
 // free-form and carries the ellipsis, so one row proves both halves.
 export const MULTICALL_ARG_ADDR = 'g1vc883gshu5z7ytk5cdynhc8c2dhqnfhsmnhpaz';
 export const MULTICALL_ARG_PATH = 'gno.land/r/gnoswap/position';
+// HUB_ADDRESS is what pkg/gnoaddr derives for HUB, so /api/labels resolves it
+// to the realm's full path. That is the label an argument list must NOT print:
+// it is longer than the address it replaces and longer than every other
+// argument on the row.
 export const MULTICALL_LONG_ARGS =
-  MULTICALL_ARG_ADDR + ', ' + MULTICALL_ARG_PATH + ', some-very-long-flag-value\u2026';
+  MULTICALL_ARG_ADDR + ', ' + MULTICALL_ARG_PATH + ', ' + HUB_ADDRESS + ', some-very-long-flag-value\u2026';
 export const MULTICALL_SEND = '5000000ugnot';
 export const MULTICALL_GAS_USED = 2 * 70000;
 

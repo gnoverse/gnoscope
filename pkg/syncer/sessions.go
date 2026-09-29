@@ -319,6 +319,7 @@ func (s *Syncer) backfillSessions(ctx context.Context) {
 	done := covered
 
 	stored := 0
+	memos := []store.TxMemoRow{}
 	if len(answered) > 0 {
 		// Block times are resolved in one pass: GetTransactionsByBlock does not
 		// populate tx.BlockTime, and a grant stored with an empty time would
@@ -326,7 +327,26 @@ func (s *Syncer) backfillSessions(ctx context.Context) {
 		times := s.fetchBlockTimes(ctx, answered)
 		for _, tx := range answered {
 			stored += s.recordSessions(tx, times[tx.BlockHeight])
+			// The memo rides this sweep rather than getting one of its own.
+			// This walk already fetches whole transactions across every block in
+			// history, memo included, and was discarding that field; a second
+			// full-history sweep to pick it back up would double the indexer
+			// load to read something already in hand. The price of riding along
+			// is the sessionSweepVersion bump, which re-walks what this sweep
+			// had already covered.
+			if tx.Memo != "" {
+				memos = append(memos, store.TxMemoRow{
+					Hash: tx.Hash, Memo: tx.Memo,
+					BlockHeight: tx.BlockHeight, BlockTime: times[tx.BlockHeight],
+				})
+			}
 		}
+	}
+	if err := s.db.UpsertTxMemos(s.networkID, memos); err != nil {
+		// Logged, and deliberately not a reason to hold the cursor. Sessions
+		// are what this sweep exists for, and a memo is a label on a
+		// transaction that is indexed either way.
+		log.Printf("[%s] session backfill memos: %v", s.networkID, err)
 	}
 	if done >= to {
 		return // nothing answered; leave the cursor alone and retry next pass

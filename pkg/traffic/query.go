@@ -184,6 +184,15 @@ type Report struct {
 	Cache      []Count  `json:"cache"`
 	Slowest    []Timing `json:"slowest"`
 	NotFound   []Count  `json:"not_found"`
+	// Realms, Addresses and PageKinds answer the two questions a list of raw
+	// paths cannot: which subject are people looking at, and what sort of page
+	// do they come here for. Page views only, since an API call is about the
+	// same realm and counting it would multiply one page open into five reads.
+	Realms    []Count `json:"realms_viewed"`
+	Addresses []Count `json:"addresses_viewed"`
+	Txs       []Count `json:"txs_viewed"`
+	Assets    []Count `json:"assets_viewed"`
+	PageKinds []Count `json:"page_kinds"`
 	// Hosts is the name readers asked for. Always computed across every host,
 	// ignoring the Host filter, so the panel can act as the filter's own
 	// control: it has to show the options to let anyone pick one.
@@ -242,6 +251,13 @@ func (q Query) where() (string, []any) {
 	}
 	if q.ErrorsOnly {
 		cond = append(cond, "status >= 400")
+	}
+	// Scanner probes are recorded but never mixed into a view of anything
+	// else. `what = probes` is how you look at them, and it is the only way:
+	// left in the default they bury real 404s, which are the ones worth
+	// reading, under people hunting for an unpatched WordPress.
+	if q.Kind != "probe" {
+		cond = append(cond, "kind <> 'probe'")
 	}
 	return strings.Join(cond, " AND "), args
 }
@@ -332,6 +348,32 @@ func (s *Store) Report(q Query) (*Report, error) {
 			return nil, err
 		}
 		*p.dst = got
+	}
+
+	// The entity panels are page views regardless of the kind filter: they are
+	// about what readers looked at, and "what did people look at, among the
+	// requests that were API calls" is not a question.
+	eq := q
+	eq.Kind = "page"
+	ew, eargs := eq.where()
+	for _, p := range []struct {
+		dst  *[]Count
+		kind string
+	}{
+		{&out.Realms, EntityRealm},
+		{&out.Addresses, EntityAddress},
+		{&out.Txs, EntityTx},
+		{&out.Assets, EntityAsset},
+	} {
+		got, err := s.topBy(ew, eargs, "entity",
+			"entity <> '' AND entity_kind = '"+p.kind+"'", lim, true)
+		if err != nil {
+			return nil, err
+		}
+		*p.dst = got
+	}
+	if out.PageKinds, err = s.topBy(ew, eargs, "page_kind", "page_kind <> ''", lim, true); err != nil {
+		return nil, err
 	}
 
 	if out.Slowest, err = s.slowest(w, args, lim); err != nil {
