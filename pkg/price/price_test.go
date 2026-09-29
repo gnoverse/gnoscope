@@ -1018,3 +1018,105 @@ func TestQuoteTVLCoversEveryPoolTheTokenTouches(t *testing.T) {
 		t.Errorf("GDOG has no pool but reports tvl %.2f over %d pools", gdog.TVLUSD, gdog.Pools)
 	}
 }
+
+// Supply must be read before the depth ladder, and the order is load-bearing.
+//
+// Depth is four router quotes per priced token, each a real VM call; supply is
+// one cheap read. With supply last, a slow chain spent the budget on the ladder
+// and every supply read failed on an expired context, so FDV silently vanished
+// from every asset. Observed live 2026-09-29: pool_count 5, priced_count 5, and
+// fdv_usd absent everywhere, which reads as "these tokens have no supply".
+func TestRefreshReadsSupplyBeforeDepth(t *testing.T) {
+	var order []string
+	var mu sync.Mutex
+	note := func(kind string) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, seen := range order {
+			if seen == kind {
+				return
+			}
+		}
+		order = append(order, kind)
+	}
+
+	eval := func(_ context.Context, expr string) (string, error) {
+		switch {
+		case strings.Contains(expr, "TotalSupply"):
+			note("supply")
+			return `(108092465530720 int64)`, nil
+		case strings.Contains(expr, "DrySwapRoute"):
+			note("depth")
+			return `("1000000" string)` + "\n" + `("3997354" string)` + "\n" + `(undefined)`, nil
+		case strings.Contains(expr, "GetSlot0SqrtPriceX96"):
+			note("pool")
+			return `("` + sqrtWugnotGNS + `" string)`, nil
+		case strings.Contains(expr, "GetSlot0Tick"):
+			return `(13902 int32)`, nil
+		case strings.Contains(expr, "GetBalances"):
+			return "(3571040328026 int64)\n(28769887840258 int64)\n(undefined)", nil
+		case strings.Contains(expr, "GetSlot0"):
+			return slot0WugnotGNS, nil
+		}
+		return "", errors.New("unexpected: " + expr)
+	}
+
+	anchor := &Anchor{USDPerGNOT: gnotUSD, Sources: []AnchorSource{{Venue: "Kraken", USD: gnotUSD, Kind: "vwap-24h"}}}
+	res := Refresh(context.Background(), eval, anchor,
+		[]Asset{{Token: keyGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns",
+			Fungible: true, Decimals: 6, DecimalsKnown: true}},
+		[]PoolKey{{Token0: WUGNOT, Token1: tokGNS, Fee: 3000}}, "")
+
+	want := []string{"pool", "supply", "depth"}
+	if len(order) != len(want) {
+		t.Fatalf("read order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("read order = %v, want %v: the cheap load-bearing reads must not be starved by the expensive refining one", order, want)
+		}
+	}
+	// And the figure it exists to produce actually lands.
+	gns := quoteFor(t, res, keyGNS)
+	if gns.FDVUSD <= 0 {
+		t.Errorf("fdv = %v with a readable supply", gns.FDVUSD)
+	}
+}
+
+// A realm that will not answer is counted, so an absent figure is attributable.
+func TestRefreshCountsFailedSupplyReads(t *testing.T) {
+	eval := func(_ context.Context, expr string) (string, error) {
+		switch {
+		case strings.Contains(expr, "TotalSupply"):
+			return "", errors.New("name TotalSupply not declared")
+		case strings.Contains(expr, "DrySwapRoute"):
+			return `("1000000" string)` + "\n" + `("3997354" string)` + "\n" + `(undefined)`, nil
+		case strings.Contains(expr, "GetSlot0SqrtPriceX96"):
+			return `("` + sqrtWugnotGNS + `" string)`, nil
+		case strings.Contains(expr, "GetSlot0Tick"):
+			return `(13902 int32)`, nil
+		case strings.Contains(expr, "GetBalances"):
+			return "(3571040328026 int64)\n(28769887840258 int64)\n(undefined)", nil
+		case strings.Contains(expr, "GetSlot0"):
+			return slot0WugnotGNS, nil
+		}
+		return "", errors.New("unexpected: " + expr)
+	}
+	anchor := &Anchor{USDPerGNOT: gnotUSD, Sources: []AnchorSource{{Venue: "Kraken", USD: gnotUSD, Kind: "vwap-24h"}}}
+	res := Refresh(context.Background(), eval, anchor,
+		[]Asset{{Token: keyGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns",
+			Fungible: true, Decimals: 6, DecimalsKnown: true}},
+		[]PoolKey{{Token0: WUGNOT, Token1: tokGNS, Fee: 3000}}, "")
+
+	if res.SupplyReadsFailed != 1 {
+		t.Errorf("supply_reads_failed = %d, want 1: an absent figure has to be attributable", res.SupplyReadsFailed)
+	}
+	// The price itself is unaffected: supply and price are independent reads.
+	gns := quoteFor(t, res, keyGNS)
+	if gns.USDPerToken <= 0 {
+		t.Error("a failed supply read removed the price")
+	}
+	if gns.FDVUSD != 0 {
+		t.Errorf("fdv = %v with no supply", gns.FDVUSD)
+	}
+}

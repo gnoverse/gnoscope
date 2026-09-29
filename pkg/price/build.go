@@ -75,6 +75,12 @@ type Result struct {
 	// able to tell a reader that.
 	PartialReads int `json:"partial_reads,omitempty"`
 
+	// SupplyReadsFailed is how many priced tokens would not answer
+	// TotalSupply() this pass. Those show no supply-times-price figure, and the
+	// count is what separates "this realm does not expose it" from "this pass
+	// could not reach the chain".
+	SupplyReadsFailed int `json:"supply_reads_failed,omitempty"`
+
 	// TWAPAvailable is false on gno.land and has never been true. Carried as a
 	// field rather than assumed, so the day somebody calls
 	// IncreaseObservationCardinalityNext the page stops saying otherwise
@@ -353,6 +359,42 @@ func Refresh(ctx context.Context, eval Eval, anchor *Anchor, assets []Asset, key
 		}
 		return res
 	}
+	// Supply comes BEFORE the depth ladder, and the order is the fix rather
+	// than a preference.
+	//
+	// Depth is by far the most expensive step here: four router quotes per
+	// priced token, each a real VM call. Supply is one cheap read per token.
+	// With supply last, a slow chain spent the refresh budget on the ladder and
+	// every supply read failed on an expired context, so FDV silently
+	// disappeared from every asset. Observed live 2026-09-29: `pool_count: 5,
+	// priced_count: 5` and `fdv_usd` absent everywhere, which reads as "these
+	// tokens have no supply" rather than as "this pass ran out of time".
+	//
+	// Same shape as the anchor, which had to move to the front for the same
+	// reason. Cheap and load-bearing goes first; expensive and refining goes
+	// last, so what gets dropped under pressure is the least of it.
+	inPool := map[string]bool{}
+	for _, p := range pools {
+		inPool[p.Key.Token0] = true
+		inPool[p.Key.Token1] = true
+	}
+	chainSupply := map[string]int64{}
+	var supplyFailed int
+	for _, a := range assets {
+		pk := PoolToken(a.Token)
+		if !a.Fungible || !inPool[pk] || pk == WUGNOT {
+			continue
+		}
+		if _, done := chainSupply[pk]; done {
+			continue
+		}
+		if v, ok := FetchTotalSupply(ctx, eval, a.PkgPath, a.Symbol); ok {
+			chainSupply[pk] = v
+		} else {
+			supplyFailed++
+		}
+	}
+
 	depth := map[string][]DepthPoint{}
 	if anchor != nil {
 		for _, p := range pools {
@@ -370,29 +412,6 @@ func Refresh(ctx context.Context, eval Eval, anchor *Anchor, assets []Asset, key
 		}
 	}
 
-	// Supply is asked of the chain, and only for the tokens a pool actually
-	// touches. That is five reads on mainnet, not twenty-eight: a supply figure
-	// is only ever used to multiply a price, so a token with no price has no
-	// use for one.
-	inPool := map[string]bool{}
-	for _, p := range pools {
-		inPool[p.Key.Token0] = true
-		inPool[p.Key.Token1] = true
-	}
-	chainSupply := map[string]int64{}
-	for _, a := range assets {
-		pk := PoolToken(a.Token)
-		if !a.Fungible || !inPool[pk] || pk == WUGNOT {
-			continue
-		}
-		if _, done := chainSupply[pk]; done {
-			continue
-		}
-		if v, ok := FetchTotalSupply(ctx, eval, a.PkgPath, a.Symbol); ok {
-			chainSupply[pk] = v
-		}
-	}
-
 	res := Build(Inputs{
 		Assets: assets, Pools: pools, Anchor: anchor,
 		Depth: depth, ChainSupply: chainSupply, LedgerFrom: ledgerFrom,
@@ -402,6 +421,13 @@ func Refresh(ctx context.Context, eval Eval, anchor *Anchor, assets []Asset, key
 	// has nothing to do with the chain.
 	if failed > 0 {
 		res.PartialReads = failed
+	}
+	// A token whose realm would not answer gets no supply-times-price figure,
+	// and the absence has to be attributable: "this realm does not expose
+	// TotalSupply" and "this pass could not reach the chain" look identical on
+	// a page and are different facts.
+	if supplyFailed > 0 {
+		res.SupplyReadsFailed = supplyFailed
 	}
 	for _, p := range pools {
 		if p.ObservationCardinality > 1 {
