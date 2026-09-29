@@ -705,6 +705,11 @@ tr.total-row td { font-weight: bold; color: var(--accent); }
 /* A call's arguments, dimmer than the function they belong to: the function is
    what the row is about and the args are how you tell it from the next one. */
 .msg-args { color: var(--fg2); font-size: 12px; word-break: break-word; }
+/* An address or realm path inside an argument list reads as an argument, not as
+   the row's subject: same links, one step quieter than the function they are
+   being passed to. */
+.msg-args a { color: var(--fg2); }
+.msg-args a:hover { color: var(--accent); }
 /* Coins a message carried. A value, not context, so it does not read as the
    same weight as the block number beside it. */
 .msg-send { color: var(--accent); font-size: 12px; white-space: nowrap; }
@@ -2773,7 +2778,7 @@ function txDetailEl(msg) {
       s.appendChild(realmPathEl(v.pkg_path));
       s.append('.');
       s.appendChild(funcSpan(v.func));
-      s.appendChild(el('span', { className: 'msg-args' }, '(' + argsPreview(v.args) + ')'));
+      s.appendChild(argsEl(argsPreview(v.args)));
       appendSendEl(s, v.send);
       return s;
     case 'MsgRun':
@@ -5937,14 +5942,23 @@ function highlightBtn(group, activeBtn) {
 // Kept deliberately small and duplicated rather than shared: the server has to
 // truncate before writing (the column is bounded) and the client has to
 // truncate what it never wrote. One of the two will always exist.
-const ARGS_PREVIEW_MAX = 96;
+// The same three budgets store.BuildArgsPreview uses, and they have to stay the
+// same three: an address cut here would be just as unlinkable as one cut there.
+const ARGS_PREVIEW_MAX = 224;
 const ARG_PREVIEW_MAX = 32;
+const ARG_ADDRESS_MAX = 48;
+const ARG_PATH_MAX = 72;
+function argBudget(a) {
+  if (/^g1[a-z0-9]{38}$/.test(a)) return ARG_ADDRESS_MAX;
+  if (a.includes('gno.land/')) return ARG_PATH_MAX;
+  return ARG_PREVIEW_MAX;
+}
 function argsPreview(args) {
   if (!args || !args.length) return '';
   let out = '';
   for (const a of args) {
     if (out) out += ', ';
-    out += cutText(a, ARG_PREVIEW_MAX);
+    out += cutText(a, argBudget(a));
     if (out.length >= ARGS_PREVIEW_MAX) break;
   }
   return cutText(out, ARGS_PREVIEW_MAX);
@@ -5957,6 +5971,37 @@ function cutText(v, max) {
   const flat = String(v).split(/\s+/).filter(Boolean).join(' ');
   const r = [...flat];
   return r.length <= max ? flat : r.slice(0, max - 1).join('') + '\u2026';
+}
+
+// argsEl draws the argument preview with its addresses and realm paths
+// shortened and clickable, the way they are everywhere else on the site.
+//
+// An argument that *is* an identifier is the one a reader wants to follow, and
+// it was the one they could not: a 40-character bech32 address rendered in full
+// pushed everything after it off the row, and rendering it truncated turned it
+// into text nobody could click or copy. The preview keeps those two kinds whole
+// (see BuildArgsPreview), and this is where they become `g1vc883g…c2dh` and
+// `/r/gnoswap/position` again.
+//
+// Anything else stays literal, including a string that merely looks addressy.
+// The pattern is the same one linkify uses; the difference is that a path here
+// renders through realmPathEl, so it is shortened and coloured like every other
+// realm reference rather than printed as a bare `gno.land/...` URL.
+function argsEl(args, network) {
+  const wrap = el('span', { className: 'msg-args' });
+  wrap.append('(');
+  const text = args || '';
+  const pattern = /(g1[a-z0-9]{38,42})|(gno\.land\/[a-z0-9/_.-]+)/g;
+  let last = 0, m;
+  while ((m = pattern.exec(text)) !== null) {
+    if (m.index > last) wrap.append(text.slice(last, m.index));
+    if (m[1]) wrap.appendChild(addrLink(m[1], network));
+    else wrap.appendChild(realmPathEl(m[2], network));
+    last = pattern.lastIndex;
+  }
+  if (last < text.length) wrap.append(text.slice(last));
+  wrap.append(')');
+  return wrap;
 }
 
 function storedTxDetail(tx) {
@@ -5978,8 +6023,7 @@ function storedTxDetail(tx) {
       // The cap is what keeps a row one line tall, and a row is not the right
       // place to find out that some other writer put a 4 KB string in the
       // column: cutText is idempotent on anything BuildArgsPreview produced.
-      span.appendChild(el('span', { className: 'msg-args' },
-        '(' + cutText(tx.args || '', ARGS_PREVIEW_MAX) + ')'));
+      span.appendChild(argsEl(tx.args, tx.network));
       appendSendEl(span, tx.send);
       return span;
     }

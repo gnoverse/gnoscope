@@ -29,6 +29,8 @@ func TestArgsBackfillHeightsIgnoresTheBlocksWindow(t *testing.T) {
 		t.Fatalf("insert new call: %v", err)
 	}
 
+	agedRows(t, db)
+
 	got, err := db.ArgsBackfillHeights("mainnet", 50)
 	if err != nil {
 		t.Fatalf("ArgsBackfillHeights: %v", err)
@@ -60,6 +62,8 @@ func TestArgsBackfillHeightsTerminates(t *testing.T) {
 		}
 	}
 
+	agedRows(t, db)
+
 	// One pass at a time, the way the syncer walks it, writing the cursor after
 	// each. Nothing ever fills args, so only the cursor can make this stop.
 	seen := []int{}
@@ -84,5 +88,56 @@ func TestArgsBackfillHeightsTerminates(t *testing.T) {
 		if seen[i] != want[i] {
 			t.Fatalf("walk visited %v, want %v newest-first", seen, want)
 		}
+	}
+}
+
+// agedRows backdates every call to args_pass 0, which is what a row written
+// before these columns existed holds.
+//
+// Needed because InsertCall stamps the *current* pass, so a freshly inserted
+// row is by definition already done and the walk is right to skip it. Without
+// this the fixture would be asserting on rows that need no work.
+func agedRows(t *testing.T, db *DB) {
+	t.Helper()
+	if _, err := db.db.Exec(`UPDATE calls SET args_pass = 0`); err != nil {
+		t.Fatalf("age rows: %v", err)
+	}
+}
+
+// TestArgsBackfillHeightsOffersRowsFromAnOlderPass is what makes changing the
+// truncation rules safe.
+//
+// A row filled by pass 1 is *not* empty, so the emptiness test the first
+// version used would never offer it again, and every address v1 destroyed would
+// stay destroyed. Only args_pass can tell a correct row from a stale one.
+func TestArgsBackfillHeightsOffersRowsFromAnOlderPass(t *testing.T) {
+	db := NewTestDB(t)
+
+	// A row that already has arguments, written by an older pass.
+	if err := db.InsertCall("mainnet", "TXSTALE", 500, 0, "", "g1a", "gno.land/r/x/y", "F",
+		"g1vc883gshu5z7ytk5cdynhc8c2dh…", "", true); err != nil {
+		t.Fatalf("insert stale call: %v", err)
+	}
+	if _, err := db.db.Exec(`UPDATE calls SET args_pass = ?`, argsPass-1); err != nil {
+		t.Fatalf("age row: %v", err)
+	}
+
+	got, err := db.ArgsBackfillHeights("mainnet", 50)
+	if err != nil {
+		t.Fatalf("ArgsBackfillHeights: %v", err)
+	}
+	if len(got) != 1 || got[0] != 500 {
+		t.Fatalf("heights = %v, want [500]: a row from an older pass needs rewriting", got)
+	}
+
+	// And once it is rewritten at the current pass, it stops being offered.
+	if err := db.UpdateCallArgsAndSend("mainnet", "TXSTALE", 0,
+		"g1vc883gshu5z7ytk5cdynhc8c2dhqnfhsmnhpaz", ""); err != nil {
+		t.Fatalf("UpdateCallArgsAndSend: %v", err)
+	}
+	if got, err = db.ArgsBackfillHeights("mainnet", 50); err != nil {
+		t.Fatalf("ArgsBackfillHeights: %v", err)
+	} else if len(got) != 0 {
+		t.Fatalf("heights = %v, want none: the row is current now", got)
 	}
 }

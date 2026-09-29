@@ -20,9 +20,9 @@ func (d *DB) InsertCall(network, txHash string, blockHeight, msgIndex int, block
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.db.Exec(`
-		INSERT OR IGNORE INTO calls (network, tx_hash, msg_index, block_height, block_time, caller, pkg_path, func_name, args, send, success)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, network, txHash, msgIndex, blockHeight, blockTime, caller, pkgPath, funcName, args, send, success)
+		INSERT OR IGNORE INTO calls (network, tx_hash, msg_index, block_height, block_time, caller, pkg_path, func_name, args, send, args_pass, success)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, network, txHash, msgIndex, blockHeight, blockTime, caller, pkgPath, funcName, args, send, argsPass, success)
 	return err
 }
 
@@ -36,10 +36,12 @@ func (d *DB) InsertCall(network, txHash string, blockHeight, msgIndex int, block
 func (d *DB) UpdateCallArgsAndSend(network, txHash string, msgIndex int, args, send string) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
+	// args_pass moves with the values, so a row filled by an older pass is
+	// offered back to the walk and a row filled by this one is not.
 	_, err := d.db.Exec(`
-		UPDATE calls SET args = ?, send = ?
+		UPDATE calls SET args = ?, send = ?, args_pass = ?
 		WHERE network = ? AND tx_hash = ? AND msg_index = ?
-	`, args, send, network, txHash, msgIndex)
+	`, args, send, argsPass, network, txHash, msgIndex)
 	return err
 }
 
