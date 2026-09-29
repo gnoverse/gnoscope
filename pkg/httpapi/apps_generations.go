@@ -103,16 +103,11 @@ func deriveGenerations(cards []*AppCard) {
 
 // mergeProvenance records that a list has entries from more than one source.
 func mergeProvenance(have, add string) string {
-	switch {
-	case have == "":
-		if add == fromDerived {
-			// Anything already present when a derived edge lands was curated:
-			// nothing else writes Supersedes.
-			return add
-		}
+	// Nothing else writes Supersedes, so anything already there when a derived
+	// edge lands was curated.
+	switch have {
+	case "", add:
 		return add
-	case have == add:
-		return have
 	default:
 		return fromCurated + "+" + fromDerived
 	}

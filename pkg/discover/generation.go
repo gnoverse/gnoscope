@@ -90,10 +90,7 @@ func splitGeneration(seg string) (stem string, gen int) {
 	// `padv3` is generation 3 of `pad`, so the `v` goes with the number. A
 	// segment that is only `v` plus digits is a pure version segment and has
 	// no stem left at all.
-	if strings.HasSuffix(stem, "v") {
-		stem = stem[:len(stem)-1]
-	}
-	return stem, n
+	return strings.TrimSuffix(stem, "v"), n
 }
 
 // GenerationLess orders two generation vectors, shorter ones zero-padded.
