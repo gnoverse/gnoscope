@@ -67,6 +67,13 @@ export default async function globalSetup() {
   const dbPath = join(tmpDir, 'e2e.db');
   for (const suffix of ['', '-wal', '-shm']) rmSync(dbPath + suffix, { force: true });
 
+  // The request log, in its own file for the same reason production keeps it
+  // in one: it has nothing to do with the chain index. Enabled here because
+  // /traffic without it renders an empty state, and a suite that only ever
+  // sees the empty state cannot tell a working page from a broken one.
+  const trafficPath = join(tmpDir, 'e2e-traffic.db');
+  for (const suffix of ['', '-wal', '-shm']) rmSync(trafficPath + suffix, { force: true });
+
   const port = PORT;
   const baseURL = `http://127.0.0.1:${port}`;
 
@@ -95,6 +102,7 @@ export default async function globalSetup() {
     // loud instead. The warmer's own behaviour is covered by the Go tests in
     // pkg/httpapi/warmer_test.go.
     '-warm-interval', '0',
+    '-traffic-db', trafficPath,
   ], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] });
 
   const log = [];
