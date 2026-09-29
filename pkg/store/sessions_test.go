@@ -550,3 +550,55 @@ func TestAddressTransactionsIncludeWhatASessionSigned(t *testing.T) {
 		t.Errorf("master has %+v (err %v), want 2 messages", n, err)
 	}
 }
+
+// A sweep-version bump re-pins the boundary, so the re-walk covers the chain as
+// it is now rather than the chain as it was the first time the sweep ever ran.
+//
+// This is the half that was missing when v6 shipped. The cursor was versioned
+// and the stop was not, so bumping it re-walked everything below a line drawn
+// months earlier: on mainnet, stop 306,501 against a tip of 434,955, leaving the
+// newest 128,454 blocks permanently out of reach. v6 existed to collect
+// transaction memos, which are densest in exactly those blocks, so the re-walk
+// recovered the oldest 70% of what it went back for and could never see the rest.
+//
+// Simulated the way the bug actually happened: an old boundary written under the
+// previous version's key, which the current version must ignore rather than
+// inherit.
+func TestASweepVersionBumpRepinsTheBoundary(t *testing.T) {
+	db := NewTestDB(t)
+	for _, h := range []int{1, 300, 900} {
+		if err := db.UpsertBlock("mainnet", h, "2026-09-20T00:00:00Z", 0, 0); err != nil {
+			t.Fatalf("seed block %d: %v", h, err)
+		}
+	}
+	// What the previous sweep version left behind, at a tip long since passed.
+	if err := db.SetSyncState("session_backfill_stop:mainnet", "300"); err != nil {
+		t.Fatalf("seed the old boundary: %v", err)
+	}
+
+	if err := db.PinSessionBackfillStop("mainnet"); err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	_, to, more, err := db.SessionBackfillRange("mainnet", 100)
+	if err != nil || !more {
+		t.Fatalf("batch: more=%v err=%v", more, err)
+	}
+	if to != 901 {
+		t.Errorf("batch ends at %d, want 901: the bump must re-pin at the current tip, not inherit the old version's boundary of 300", to)
+	}
+
+	// And once re-pinned it is still pinned once: the finish line must not chase
+	// the tip on every pass, which is what it exists to prevent.
+	if err := db.UpsertBlock("mainnet", 5000, "2026-09-21T00:00:00Z", 0, 0); err != nil {
+		t.Fatalf("seed later block: %v", err)
+	}
+	if err := db.PinSessionBackfillStop("mainnet"); err != nil {
+		t.Fatalf("pin again: %v", err)
+	}
+	if _, to, _, err = db.SessionBackfillRange("mainnet", 100); err != nil {
+		t.Fatalf("batch again: %v", err)
+	}
+	if to != 901 {
+		t.Errorf("batch ends at %d after a second pin, want 901", to)
+	}
+}

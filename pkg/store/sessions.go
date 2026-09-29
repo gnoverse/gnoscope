@@ -350,13 +350,34 @@ func sessionBackfillCursorKey(network string) string {
 //	v6    the sweep started recording tx memos, which it had been fetching and
 //	      discarding all along, so every block it had already walked holds
 //	      transactions whose tool stamp was seen and thrown away.
+//	v7    the STOP key joined this version, see below. v6 re-walked everything
+//	      under a boundary pinned long ago, which on mainnet was height 306,501
+//	      against a tip of 434,955: the memos it went back for were recovered
+//	      for the oldest 70% of the chain and were unreachable for the newest
+//	      30%, where most of them are.
 //
 // Bump it whenever the sweep's direction or its decoder changes. A stale cursor
 // is not a cosmetic problem: it is a claim that blocks were examined, and that
 // claim is what stops them ever being examined again.
-const sessionSweepVersion = "v6"
+const sessionSweepVersion = "v7"
 
-func sessionBackfillStopKey(network string) string { return "session_backfill_stop:" + network }
+// sessionBackfillStopKey carries the sweep version, for the same reason the
+// cursor does and with a worse failure if it does not.
+//
+// The boundary is pinned once and never moves, which is what gives the sweep a
+// finish line instead of a receding tip. But it was pinned the FIRST time the
+// sweep ever ran, so bumping the cursor version re-walked everything below a
+// line drawn months earlier rather than everything below the tip. Measured on
+// mainnet when v6 shipped: stop 306,501 against a tip of 434,955, so the
+// newest 128,454 blocks were outside the sweep's reach for good, and the memos
+// v6 existed to collect are densest exactly there.
+//
+// Versioning it means a bump re-pins at the current tip and the sweep covers
+// the whole chain again. The old key is left behind rather than deleted: it
+// costs one row and it is the record of where the previous sweep stopped.
+func sessionBackfillStopKey(network string) string {
+	return "session_backfill_stop_" + sessionSweepVersion + ":" + network
+}
 
 // SessionBackfillRange returns the next batch of heights never walked for
 // session messages, and whether any work is left.
