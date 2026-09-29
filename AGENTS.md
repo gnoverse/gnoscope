@@ -77,12 +77,23 @@ Break these and things go wrong in ways that are hard to see:
   holds the line. An endpoint that returns a height and no time is the bug to
   fix, not a reason to drop back to `blockLink`.
 
-- **An `apiSWR` render function runs up to twice, and must be synchronous.**
-  Loaders paint cached data first and fresh data second, so a render has to
-  rebuild its container from scratch (appending to something a previous pass
-  filled is how you get two of everything) and must not `await` (an await
-  reopens the interleaving that rebuilding exists to close). Kick long work off
-  in an async IIFE with a generation guard, the way `renderTsCharts` does.
+- **An `apiSWR` render function runs more than once, and must be synchronous.**
+  Loaders paint cached data first and fresh data second, and a list carrying an
+  optional path (one with a `fallback`) paints a third time: once the required
+  paths land with the optional half at its fallback, once more when the
+  stragglers arrive. So a render has to rebuild its container from scratch
+  (appending to something a previous pass filled is how you get two of
+  everything) and must not `await` (an await reopens the interleaving that
+  rebuilding exists to close). Kick long work off in an async IIFE with a
+  generation guard, the way `renderTsCharts` does.
+- **A `fallback` on an `apiSWR` path means "may fail *and* may be late".**
+  Declaring one is the only thing that keeps a slow endpoint off a page's
+  critical path, so declare it for anything best-effort. Measured against
+  production on 2026-09-29: a cold `/api/inert/package` took 34s and the realm
+  page, which had its own payload in 26ms, rendered nothing at all for those
+  34s. `e2e/tests/slow-optional-endpoint.spec.js` holds the line by stalling
+  that endpoint for 8s and asserting the header, the tab strip and the info
+  table are all up inside 3s.
 - **Anything attached to a painted row has to survive that row being replaced.**
   The corollary of the above, and the one that is easy to miss: the fresh pass
   throws away the rows the cached pass drew, so a one-off applied to them (a
@@ -97,12 +108,21 @@ Break these and things go wrong in ways that are hard to see:
 - **The nav is described twice, and a test keeps the two identical.** The rail
   is static HTML in `index.html`; the `NAV` table in the script beside it drives
   the `.pagenav` section strips and `route()`'s active-state bookkeeping. The
-  rail is not generated from the table because the two CDN `<script>` tags at
-  the bottom of the file are render-blocking, and a generated rail would make
-  the whole navigation hostage to a reachable CDN. Add an entry to both, in the
+  rail is not generated from the table because it must not depend on the
+  script below it having run at all. Add an entry to both, in the
   same order, or `TestRailMatchesNavTable` fails. Left to drift it fails
   silently: a rail entry missing from the table navigates fine and simply has no
   section strip.
+- **Nothing third-party is on the critical path, and nothing may go back on
+  it.** d3, Chart.js, ECharts and echarts-gl are 676 KB compressed and ~2.2 MB
+  parsed from two external origins; they used to be four plain `<script src>`
+  tags above the app script, so every page paid for them before a line of this
+  app's own code ran, including the many that draw no chart. They are fetched on
+  first use now (`loadLib`). A drawing function starts with either
+  `if (!libReady('chart')) return libRetry('chart', () => sameCallAgain())` when
+  it owns and clears its container, or `libBlock(into, 'echarts', draw)` when
+  its caller appends siblings after it and the block has to hold its place. Do
+  not add a fifth `<script src>`.
 - **Never commit the built binary.** `gnoscope` and `*.db` are gitignored.
 
 ## Conventions

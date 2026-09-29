@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>gnoscope</title>
+<!-- The chart libraries are fetched on first use, not here (#214), so the two
+     origins they come from are warmed rather than waited on. A preconnect is a
+     hint the browser is free to drop; a <script src> was not. -->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://d3js.org" crossorigin>
 <script>
 // Embed mode, applied before the body exists so the chrome never paints.
 //
@@ -1504,11 +1509,105 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
     <span id="footer-indexer">data from tx-indexer</span>
   </div>
 </footer>
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js"></script>
 <script>
+// --- Lazy third-party libraries (#214) --------------------------------------
+//
+// These four used to be plain <script src> tags right above this one: 676 KB
+// compressed, ~2.2 MB parsed, from two external origins, downloaded and
+// executed before a single line of the explorer's own code ran. Every page paid
+// it, including the many that draw no chart at all, and three origins had to be
+// reachable for the app to render anything.
+//
+// Now nothing here is fetched until something asks to draw with it. The cost
+// moves off the critical path of the first paint and onto the chart that needs
+// it, which is also the only place a reader can see it being paid.
+//
+// The contract for a caller is one line at the top of a drawing function:
+//
+//     if (!libReady('chart')) return libRetry('chart', () => drawX(a, b));
+//
+// libRetry re-invokes the whole function once the script lands, so the draw
+// stays synchronous (see the apiSWR note on why a render may not await) and a
+// blocked CDN degrades to an empty box with a message instead of a throw.
+const LIB_SRC = {
+  d3: 'https://d3js.org/d3.v7.min.js',
+  chart: 'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js',
+  echarts: 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js',
+  // echarts-gl registers its series types onto the echarts global, so it is
+  // only meaningful after echarts itself has run. Chained, not parallel.
+  // 176 KB for the one 3D caller-graph chart on /dashboards, which is exactly
+  // the kind of thing that should never have been on every page's critical path.
+  echartsgl: 'https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js',
+};
+const LIB_GLOBAL = { d3: 'd3', chart: 'Chart', echarts: 'echarts' };
+const LIB_AFTER = { echartsgl: 'echarts' };
+const _libPromises = new Map();
+
+// libReady is the synchronous question: is the global here right now.
+// echartsgl has no global of its own (it augments echarts), so it is tracked
+// by whether its load promise has resolved.
+const _libLoaded = new Set();
+function libReady(name) {
+  const g = LIB_GLOBAL[name];
+  if (g) return typeof window[g] !== 'undefined';
+  return _libLoaded.has(name);
+}
+
+function loadLib(name) {
+  if (_libPromises.has(name)) return _libPromises.get(name);
+  const dep = LIB_AFTER[name] ? loadLib(LIB_AFTER[name]) : Promise.resolve();
+  const p = dep.then(() => libReady(name) ? undefined : new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = LIB_SRC[name];
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('could not load ' + name));
+    document.head.appendChild(s);
+  })).then(() => {
+    _libLoaded.add(name);
+    if (name === 'chart') applyChartDefaults();
+  });
+  _libPromises.set(name, p);
+  return p;
+}
+
+// libRetry starts the load and re-runs the caller when it lands. Always returns
+// undefined, so `return libRetry(...)` reads as "not now" at the call site.
+//
+// A failure is swallowed on purpose: a missing chart library is a missing
+// chart, not a broken page, and the console carries the reason. There is no
+// retry button because a script that failed to load will not reload on its own.
+function libRetry(name, again) {
+  loadLib(name).then(again, (err) => console.error('chart library unavailable', name, err));
+}
+
+// libBlock is libRetry for a draw that shares its container with other blocks.
+//
+// The plain guard is fine when a function owns its container and clears it: the
+// block simply appears late, in the right place. It is wrong when a caller
+// appends several things in a row, because a deferred draw that appends when
+// the script lands appends *after* everything painted in the meantime: the
+// money-flow graph ended up below the table it is meant to introduce.
+//
+// So the slot is claimed synchronously, at the right index, and pulses until
+// there is something to put in it. draw(slot) owns the slot and may be called
+// once or, on a redraw, again.
+function libBlock(into, name, draw) {
+  const slot = el('div');
+  into.appendChild(slot);
+  if (libReady(name)) { draw(slot); return slot; }
+  slot.appendChild(el('div', { className: 'skeleton', style: { height: '220px' } }));
+  loadLib(name).then(() => {
+    slot.textContent = '';
+    draw(slot);
+  }, (err) => {
+    console.error('chart library unavailable', name, err);
+    slot.textContent = '';
+    slot.appendChild(el('div', { className: 'dash-msg' }, 'charts unavailable \u2014 the chart library failed to load'));
+  });
+  return slot;
+}
+
 function el(tag, attrs, ...children) {
   const e = document.createElement(tag);
   if (attrs) for (const [k, v] of Object.entries(attrs)) {
@@ -1703,12 +1802,31 @@ async function loadNamespaceOwners() {
 // and independent of loadAddrLabels' network-selector gate: a proposer name
 // arriving a moment late just means the first paint shows raw addresses.
 let _proposerMonikers = {};
+// Set once the fetch has settled, either way. Until then every proposerEl is
+// provisional and joins _proposerPending so it can fill itself in later.
+let _proposerMonikersReady = false;
+// The spans painted before the names arrived. A Set rather than a re-route:
+// this used to be `loadProposerMonikers().then(route)`, which re-ran the whole
+// current view (every loader, every endpoint, a second time) on every cold
+// visit to every page, including the many that show no proposer at all. The
+// three cells that actually wanted the names now patch themselves.
+const _proposerPending = new Set();
+// Memoised, so a caller that needs the names before drawing (the validator
+// share donut bakes them into chart labels and cannot patch itself afterwards)
+// joins the one in-flight request rather than issuing a second.
+let _proposerMonikersP = null;
+function proposerMonikersReady() {
+  return _proposerMonikersP || (_proposerMonikersP = loadProposerMonikers());
+}
 async function loadProposerMonikers() {
   try {
     _proposerMonikers = await api('validators/monikers') || {};
   } catch (_) {
     _proposerMonikers = {};
   }
+  _proposerMonikersReady = true;
+  for (const span of _proposerPending) fillProposer(span, span.getAttribute('data-proposer'));
+  _proposerPending.clear();
 }
 
 // addrInfo resolves an address to {label, why, inferred}.
@@ -1764,6 +1882,16 @@ function addrInfo(addr) {
 function proposerEl(addr) {
   const span = el('span');
   span.setAttribute('data-hl', addr);
+  span.setAttribute('data-proposer', addr);
+  fillProposer(span, addr);
+  if (!_proposerMonikersReady) _proposerPending.add(span);
+  return span;
+}
+
+// Rebuilt rather than appended to, because this runs a second time on any span
+// painted before the names landed.
+function fillProposer(span, addr) {
+  span.textContent = '';
   const moniker = _proposerMonikers[addr];
   if (moniker) {
     const name = el('span', { style: { fontWeight: 'bold' } }, moniker);
@@ -1772,7 +1900,6 @@ function proposerEl(addr) {
     span.append(' ');
   }
   span.appendChild(addrLink(addr));
-  return span;
 }
 function addrLabel(addr) { return (addrInfo(addr) || {}).label || ''; }
 // Single source of truth for abbreviating an address: keep the g1 prefix and the
@@ -2993,19 +3120,17 @@ function renderFooterIndexer() {
 // this deployment exist on more than one.
 // Two identical GETs in flight at once are one GET.
 //
-// route() runs twice on initial page load: once synchronously at the bottom of
-// this script, and again when loadProposerMonikers() lands, so a late-arriving
-// proposer name re-renders. That is deliberate, and it means every loader on
-// the landing page fires each of its endpoints twice on every cold visit.
-// Measured on /govdao/proposals against production on 2026-09-24, both copies
-// of /api/govdao/overview cost the full 2.4s, because both missed a cold
-// server cache at the same moment.
+// route() used to run twice on every initial page load, once synchronously at
+// the bottom of this script and again when loadProposerMonikers() landed, so
+// every loader fired each of its endpoints twice on every cold visit. Measured
+// on /govdao/proposals against production on 2026-09-24, both copies of
+// /api/govdao/overview cost the full 2.4s, because both missed a cold server
+// cache at the same moment. The monikers now patch their own cells instead of
+// re-routing (see fillProposer), so that second pass is gone.
 //
-// The server single-flights its own miss path now, so the second copy is no
-// longer expensive there. It is still a second round trip, a second row in
-// every log, and a second tick of the refresh bar. Coalescing here is the same
-// idea one layer up, and it covers every page rather than the one that got
-// noticed.
+// This map stays, because route() can still be entered twice back to back from
+// a popstate or a fast click, and because two sections of one page can want the
+// same endpoint. Coalescing is the same idea one layer up.
 //
 // A coalescing map, not a cache: the entry is dropped the moment the request
 // settles, so the next navigation refetches. apiSWR below is the cache, and it
@@ -3117,13 +3242,13 @@ function swrClear() {
   } catch (_) {}
 }
 
-// apiSWR calls render() up to twice: once with cached data if there is any
-// (synchronously, before a single byte moves), then once with fresh data.
+// apiSWR calls render() with cached data if there is any (synchronously,
+// before a single byte moves), then with fresh data.
 //
 // `paths` is one path or an array of them; render receives the matching shape,
 // plus meta = { stale, age }. Two rules for a render function:
 //
-//   1. It must rebuild its container from scratch — it can and will run twice,
+//   1. It must rebuild its container from scratch. It runs more than once,
 //      and route() can have two loaders for the same view in flight at once
 //      (see the note in loadGovDAO).
 //   2. It must be synchronous. An await inside it reopens exactly the race
@@ -3131,6 +3256,16 @@ function swrClear() {
 //
 // Cached data is only painted when *every* path has one. A half-cached page
 // that fills in the rest a second later reads as a glitch, not as speed.
+//
+// A path carrying `fallback` is optional twice over: it may fail, and it may
+// be LATE. The page paints as soon as every required path has answered, with
+// any optional still in flight sitting at its fallback, and paints again when
+// the stragglers land. Without that, one slow best-effort endpoint holds a
+// whole page hostage. Measured 2026-09-29 against production: a cold
+// /api/inert/package took 34s, and the realm page rendered nothing at all for
+// those 34s, not a header, not a tab, not the source that had arrived in 26ms.
+// At most two fresh renders either way: one on the required set, one on the
+// complete set.
 async function apiSWR(paths, render) {
   const list = (Array.isArray(paths) ? paths : [paths]).map(p =>
     typeof p === 'string' ? { path: p } : p);
@@ -3157,23 +3292,44 @@ async function apiSWR(paths, render) {
   }
 
   try {
-    const fresh = await Promise.all(list.map(async (p) => {
-      let d;
+    // Seeded with the fallbacks, so a render can happen before the optional
+    // half of the list has answered.
+    const values = list.map(p => ('fallback' in p ? p.fallback : undefined));
+    // Counted synchronously (an async function body runs up to its first await
+    // before yielding), so the check below is an honest "is an optional still
+    // out there" rather than a guess.
+    let outstanding = 0;
+    const settled = list.map(async (p, i) => {
+      const optional = 'fallback' in p;
+      if (optional) outstanding++;
       try {
-        d = await api(p.path);
+        const d = await api(p.path);
+        swrWrite(p.path, d);
+        values[i] = d;
       } catch (err) {
         // A path declared optional resolves to its fallback instead of taking
         // the page down with it. /api/inert/package is the case this exists
         // for: a realm that was never parked has nothing there, and the
         // endpoint is a best-effort RPC read on top of that.
-        if (!('fallback' in p)) throw err;
-        return p.fallback;
+        if (!optional) throw err;
+      } finally {
+        if (optional) outstanding--;
       }
-      swrWrite(p.path, d);
-      return d;
-    }));
-    render(one ? fresh[0] : fresh, { stale: false, age: 0 });
-    return one ? fresh[0] : fresh;
+    });
+    const paintNow = () => render(one ? values[0] : values.slice(), { stale: false, age: 0 });
+    // Required first. Promise.all rejects on the first required failure, which
+    // is the old behaviour and the right one: a page without its own payload
+    // has nothing to draw.
+    await Promise.all(settled.filter((_, i) => !('fallback' in list[i])));
+    if (outstanding > 0) {
+      // Paint what is here, then again once the stragglers land. When every
+      // optional has already answered, which is the normal case, this costs
+      // nothing and the page renders exactly once, as before.
+      paintNow();
+      await Promise.all(settled);
+    }
+    paintNow();
+    return one ? values[0] : values.slice();
   } finally {
     if (painted) markFresh();
   }
@@ -4003,13 +4159,13 @@ function route() {
 
 // --- Loaders ---
 // --- Time-series charts ---
-// Guarded, because these four lines are the only place the app touches a CDN
-// library at the top level, and an unguarded reference there does not degrade —
-// it throws a ReferenceError that aborts the rest of this script, so a blocked
-// or slow cdn.jsdelivr.net turns the whole explorer into a blank page rather
-// than one without charts. Seen for real: every page failed with
-// net::ERR_TIMED_OUT on the CDN and nothing rendered, charts or not.
-if (typeof Chart !== 'undefined') {
+// Called by loadLib('chart') the moment the script lands, and never before:
+// touching Chart at the top level was how a blocked or slow cdn.jsdelivr.net
+// used to turn the whole explorer into a blank page rather than one without
+// charts (a ReferenceError here aborts the rest of this script). Seen for real:
+// every page failed with net::ERR_TIMED_OUT on the CDN and nothing rendered,
+// charts or not. Now the library is not on the critical path at all (#214).
+function applyChartDefaults() {
   Chart.defaults.color = '#888';
   Chart.defaults.borderColor = '#2a2a2a';
   Chart.defaults.font.family = "'SF Mono','Cascadia Code','Fira Code',monospace";
@@ -4030,14 +4186,16 @@ if (typeof Chart !== 'undefined') {
 // rest of the tab down with it), the dark theme, and pushing the instance onto
 // a registry so the next render pass destroys it rather than leaving it
 // animating into a canvas no longer in the document.
+// Through libBlock because a tab appends several of these in a row, and the
+// library is fetched on first use (#214): the card has to hold its place while
+// that is in flight rather than arriving under whatever came after it.
 function detailChart(into, registry, spec) {
+  return libBlock(into, 'chart', (slot) => drawDetailChart(slot, registry, spec));
+}
+
+function drawDetailChart(slot, registry, spec) {
   const wrap = el('div', { className: 'detail-chart' });
-  into.appendChild(wrap);
-  if (typeof Chart === 'undefined') {
-    wrap.appendChild(el('div', { className: 'dash-msg' },
-      (spec.title ? spec.title + ': ' : '') + 'no chart, the chart library did not load'));
-    return null;
-  }
+  slot.appendChild(wrap);
   const box = el('div', { className: 'detail-chart-box' });
   if (spec.height) box.style.height = spec.height + 'px';
   const canvas = document.createElement('canvas');
@@ -4215,6 +4373,10 @@ function destroyTsCharts() {
 let _tsGen = 0;
 
 async function renderTsCharts(container) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('chart')) return libRetry('chart', () => renderTsCharts(container));
+
   const gen = ++_tsGen;
   destroyTsCharts();
   container.textContent = '';
@@ -4348,6 +4510,10 @@ function destroyStorageChart() {
 // cumulative net that flattens or falls while the source line keeps climbing
 // is the signal: state is being released, and the source proxy cannot see it.
 async function renderStorageChart(container, realm) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('chart')) return libRetry('chart', () => renderStorageChart(container, realm));
+
   destroyStorageChart();
   container.textContent = '';
 
@@ -4521,6 +4687,10 @@ function networkStacks(data, valueOf, fallback) {
 let _gasGen = 0;
 
 async function renderGasCharts(container) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('chart')) return libRetry('chart', () => renderGasCharts(container));
+
   const gen = ++_gasGen;
   destroyGasCharts();
   container.textContent = '';
@@ -4686,6 +4856,10 @@ async function renderGasCharts(container) {
 // the exact figures; this is for seeing the shape of the distribution — whether
 // one realm dominates or the load is spread.
 function renderTopRealmsChart(container, realms) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('chart')) return libRetry('chart', () => renderTopRealmsChart(container, realms));
+
   destroyChartList(_gasRealmChart);
   container.textContent = '';
   const top = (realms || []).slice(0, 12);
@@ -6907,6 +7081,17 @@ let _validatorShareChart = [];
 // track closely under round-robin-weighted proposer selection, and it is
 // the honest version of "share" this data can actually support.
 function renderValidatorShareChart(container, sorted, total) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('chart')) return libRetry('chart', () => renderValidatorShareChart(container, sorted, total));
+  // The names go into the slice labels, which are baked into the chart at
+  // construction: unlike a proposerEl cell this cannot patch itself later, so
+  // it waits for the map rather than drawing ten truncated addresses.
+  if (!_proposerMonikersReady) {
+    proposerMonikersReady().then(() => renderValidatorShareChart(container, sorted, total));
+    return;
+  }
+
   destroyChartList(_validatorShareChart);
   container.textContent = '';
   if (!sorted.length || !total) return;
@@ -7261,6 +7446,10 @@ let _shareChartInstances = [];
 let _shareGen = 0;
 
 async function renderShareCharts(container) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('chart')) return libRetry('chart', () => renderShareCharts(container));
+
   const gen = ++_shareGen;
   for (const c of _shareChartInstances) c.destroy();
   _shareChartInstances = [];
@@ -7514,6 +7703,10 @@ function destroySanityCharts() {
 }
 
 async function renderSanityCharts(container) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('chart')) return libRetry('chart', () => renderSanityCharts(container));
+
   destroySanityCharts();
   container.textContent = '';
 
@@ -11630,6 +11823,10 @@ let _govDAOTierChart = [];
 // when total power is 0 (a chain gov/dao has not been seeded on yet) —
 // Chart.js draws a meaningless full circle for an all-zero doughnut.
 function renderGovDAOTierChart(container, tierStats) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('chart')) return libRetry('chart', () => renderGovDAOTierChart(container, tierStats));
+
   destroyChartList(_govDAOTierChart);
   container.textContent = '';
   const totalPower = (tierStats || []).reduce((s, t) => s + t.power, 0);
@@ -11724,9 +11921,8 @@ async function loadGovDAO() {
   //
   // Each section owns its own container and rebuilds it from scratch, which is
   // also what makes the old duplicate-table race impossible rather than merely
-  // unlikely: route() runs twice on initial page load (see the
-  // loadProposerMonikers().then(route) call near the bottom of this script), so
-  // two loadGovDAO() calls are routinely in flight together. Two full rebuilds
+  // unlikely: two loadGovDAO() calls can be in flight together (a popstate, a
+  // fast click, or apiSWR's own cached-then-fresh pair). Two full rebuilds
   // of the same container are idempotent; the append-after-await this used to
   // do was not, and put the activity table on the page twice.
   const head = el('div');
@@ -13314,6 +13510,10 @@ function usageCellColor(ok, failed) {
 }
 
 function renderUsageTreemap(mount, host, detail, usage, gen, filtered) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('echarts')) return libRetry('echarts', () => renderUsageTreemap(mount, host, detail, usage, gen, filtered));
+
   disposeUsageTreemap();
   mount.textContent = '';
   if (typeof echarts === 'undefined') return;
@@ -17345,8 +17545,15 @@ function defiNodeLabel(addr) {
 }
 
 function defiFlowGraphEl(into, d, ctx) {
+  if (!(d.counterparties || []).length) return;
+  // Through libBlock, not a bare guard: the counterparty table is appended to
+  // the same container right after this call, so a graph that waited for
+  // ECharts and then appended would land underneath it (#214).
+  libBlock(into, 'echarts', (slot) => drawDefiFlowGraph(slot, into, d, ctx));
+}
+
+function drawDefiFlowGraph(slot, into, d, ctx) {
   const parties = d.counterparties || [];
-  if (!parties.length) return;
 
   const wrap = el('div', { style: { marginBottom: '20px' } });
   const head = el('div', { className: 'dash-bar', style: { marginBottom: '6px' } });
@@ -17397,13 +17604,8 @@ function defiFlowGraphEl(into, d, ctx) {
   note.textContent = bits.join(' · ');
   wrap.appendChild(note);
 
-  into.appendChild(wrap);
+  slot.appendChild(wrap);
 
-  if (typeof echarts === 'undefined') {
-    box.textContent = '';
-    box.appendChild(el('div', { className: 'dash-msg' }, 'charts unavailable — the ECharts library failed to load'));
-    return;
-  }
   // Deferred: ECharts measures the container, and a box that is not in the
   // document yet measures zero. `into` is already attached by the time this
   // runs because renderRealmDefi appends into a live tab, but the toggle path
@@ -18477,10 +18679,20 @@ function layoutFunnel(nodeArr, links, centerPath, width, nodeSize) {
 }
 
 function renderDepGraph(imports, dependents, centerPath) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('d3')) return libRetry('d3', () => renderDepGraph(imports, dependents, centerPath));
+
   _depGraph.imports = imports;
   _depGraph.dependents = dependents;
   _depGraph.center = centerPath;
-  const container = document.getElementById('dep-graph'); container.textContent = '';
+  const container = document.getElementById('dep-graph');
+  // The draw is deferred until d3 arrives (#214), and by then the reader may
+  // have switched tab, changed realm or reloaded: the element this fills is
+  // gone and there is nothing to draw into. renderContractMap has the same
+  // check for the same reason.
+  if (!container) return;
+  container.textContent = '';
   const nodes = new Map(); const links = [];
   const callerMode = _depGraph.links === 'callers';
 
@@ -19343,10 +19555,11 @@ document.querySelectorAll('.stat-link').forEach(tile => {
 // Labels first: they change how every address renders, and arriving after the
 // first paint would show raw addresses that then silently rewrite themselves.
 loadAddrLabels().then(loadNamespaceOwners).then(() => { initNetworkSelector(); startHealthPolling(); });
-// Not gated on anything: a proposer name arriving after the first paint just
-// means blocks/validators re-render plain until it lands, the same way a
-// watch star or an inferred label would.
-loadProposerMonikers().then(() => { route(); });
+// Not gated on anything, and it no longer re-routes: the proposer cells patch
+// themselves when the names land (see fillProposer). Re-routing here doubled
+// every endpoint on every cold page load, on every page, to repaint at most
+// three cells on three of them.
+proposerMonikersReady();
 renderWatchBadge();
 
 // --- Footer version ---
@@ -20760,6 +20973,10 @@ const DASHBOARDS = [
         wide: true,
         mode: 'B',
         networkScoped: true,
+        // The one chart in the app that needs echarts-gl. 176 KB, loaded only
+        // when this card is actually drawn (#214); renderDashChart reads this
+        // flag to decide which library to wait for.
+        gl: true,
         why: 'Who calls into which realms. Blue nodes are calling addresses, teal nodes are realms; edge width is call volume. Rendered in WebGL (no ego drill-down yet) since this graph can have more nodes than the force-directed canvas view above comfortably lays out.',
         fetch: w => dashApi('graph/callers?topN=300', w),
         opt: graph => {
@@ -20839,6 +21056,11 @@ function dashGranularityOf(rows) {
 }
 
 async function renderDashChart(chart, gen) {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here. A `gl` chart
+  // waits for echarts-gl, which chains echarts itself.
+  const dashLib = chart.gl ? 'echartsgl' : 'echarts';
+  if (!libReady(dashLib)) return libRetry(dashLib, () => renderDashChart(chart, gen));
   const host = document.getElementById('dash-chart-' + chart.id);
   if (!host) return;
 
@@ -21734,6 +21956,10 @@ async function ensureContractImportEdges() {
 // and each one drops a dimension the force layout keeps in exchange for
 // answering a question the hairball cannot.
 function renderContractMap() {
+  // The library is fetched on first use (#214); until it lands there is
+  // nothing to draw with, so bail and let libRetry re-enter here.
+  if (!libReady('d3')) return libRetry('d3', () => renderContractMap());
+
   const container = document.getElementById('contract-map');
   if (!container) return;
   container.style.position = 'relative';
@@ -23577,10 +23803,9 @@ function loadLab() {
 
 // --- the hub ----------------------------------------------------------------
 
-// route() runs twice on every initial page load (see the
-// loadProposerMonikers().then(route) call near the bottom of this script), so
-// two loaders for the same view are routinely in flight together, and a reader
-// clicking through the hub can leave a third behind. Everything below either
+// Two loaders for the same view can be in flight together (a popstate, a fast
+// click, or apiSWR's own cached-then-fresh pair), and a reader clicking through
+// the hub can leave a third behind. Everything below either
 // rebuilds its container inside one synchronous block or checks this token
 // before it paints; nothing appends across an await.
 let _ghGen = 0;
