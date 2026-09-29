@@ -77,6 +77,37 @@ type Pool struct {
 	ObservationCardinality int
 }
 
+// PoolToken turns a GRC20 event key into the key a pool path uses.
+//
+// The two are not the same string, and the difference cost a deploy: a Transfer
+// event's `token` attribute is `<realm path>.<name>.<id>`
+// (`gno.land/r/gnoswap/gns.GNS.0000000`, because one realm may expose several
+// tokens), while GnoSwap's CreatePool takes `<realm path>.<name>` and every
+// pool path is built from that. Feed the event key straight into
+// ExistsPoolPath and every probe answers false, which is indistinguishable from
+// a chain with no liquidity: shipped to gnoscope.com on 2026-09-29 and served
+// "28 assets, no market" against five live pools.
+//
+// The id is the trailing dot-segment and it is all digits. Anything else is
+// returned untouched, including the bare-symbol keys two mainnet tokens emit
+// (`COVID`), which carry no realm path and therefore no id either.
+func PoolToken(eventKey string) string {
+	i := strings.LastIndexByte(eventKey, '.')
+	if i <= 0 || !strings.Contains(eventKey, "/") {
+		return eventKey
+	}
+	id := eventKey[i+1:]
+	if id == "" {
+		return eventKey
+	}
+	for _, c := range id {
+		if c < '0' || c > '9' {
+			return eventKey
+		}
+	}
+	return eventKey[:i]
+}
+
 // Ratio is base units of Token1 per base unit of Token0.
 func (p *Pool) Ratio() (*big.Rat, error) { return RatioFromSqrtPriceX96(p.SqrtPriceX96) }
 

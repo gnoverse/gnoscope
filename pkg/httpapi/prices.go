@@ -249,11 +249,17 @@ func (a *API) poolKeys(ctx context.Context, network string, eval price.Eval, sum
 		// Non-fungible assets ride the same Transfer event and carry no amount
 		// (GRC721 through grc20's shape), so they cannot be in a pool and
 		// probing them is pure cost.
-		if !t.Fungible || seen[t.Token] {
+		// Pool-token space, not event-key space: a pool path is built from
+		// `<realm path>.<name>` and the ledger's key appends a `.<id>`. Passing
+		// the ledger's key makes every probe answer false, which looks exactly
+		// like a chain with no pools (shipped, 2026-09-29). Several tokens of
+		// one realm collapse to distinct keys, so the dedupe still holds.
+		tok := price.PoolToken(t.Token)
+		if !t.Fungible || seen[tok] {
 			continue
 		}
-		seen[t.Token] = true
-		candidates = append(candidates, t.Token)
+		seen[tok] = true
+		candidates = append(candidates, tok)
 	}
 
 	discoverCtx, cancel := context.WithTimeout(ctx, poolDiscoveryTimeout)
