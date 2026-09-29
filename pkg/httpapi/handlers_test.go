@@ -40,7 +40,7 @@ func seedActivity(t *testing.T, db *store.DB, network string, calls, realms, sen
 	when := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	for i := 0; i < calls; i++ {
 		if err := db.InsertCall(network, fmt.Sprintf("%s-call-%d", network, i), 100+i, 0, when,
-			fmt.Sprintf("g1caller%d", i%3), "gno.land/r/demo/board", "Post", true); err != nil {
+			fmt.Sprintf("g1caller%d", i%3), "gno.land/r/demo/board", "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -570,7 +570,7 @@ func TestAccountsPagingAndSort(t *testing.T) {
 		// that is ignored cannot pass by coincidence.
 		for c := 0; c <= 12-i; c++ {
 			if err := db.InsertCall("alpha", fmt.Sprintf("c-%d-%d", i, c), 100+c, 0, when,
-				addr, "gno.land/r/demo/boards", "Post", true); err != nil {
+				addr, "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 				t.Fatalf("InsertCall: %v", err)
 			}
 		}
@@ -653,11 +653,11 @@ func TestWatchEndpoint(t *testing.T) {
 	if err := db.UpsertPackage("alpha", realm, "boards", "g1creator", "deploy", 100, when, true, 1); err != nil {
 		t.Fatalf("UpsertPackage: %v", err)
 	}
-	if err := db.InsertPackageSubmission("alpha", "deploy", 0, realm, "boards", "g1creator", 100, when, true, 1, true); err != nil {
+	if err := db.InsertPackageSubmission("alpha", "deploy", 0, realm, "boards", "g1creator", 100, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 	for i := 0; i < 10; i++ {
-		if err := db.InsertCall("alpha", fmt.Sprintf("c%d", i), 200+i, 0, when, "g1watched", realm, "Post", true); err != nil {
+		if err := db.InsertCall("alpha", fmt.Sprintf("c%d", i), 200+i, 0, when, "g1watched", realm, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -771,7 +771,7 @@ func TestFilteredTransactionsFromStorage(t *testing.T) {
 	const when = "2026-08-01T00:00:00Z"
 	for i := 0; i < 30; i++ {
 		if err := db.InsertCall("alpha", fmt.Sprintf("call-%d", i), 1000+i, 0, when,
-			"g1caller", "gno.land/r/demo/boards", "Post", i%5 != 0); err != nil {
+			"g1caller", "gno.land/r/demo/boards", "Post", "", "", i%5 != 0); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -781,7 +781,7 @@ func TestFilteredTransactionsFromStorage(t *testing.T) {
 		if err := db.UpsertPackage("alpha", path, "pkg", "g1deployer", txHash, 2000+i, when, true, 1); err != nil {
 			t.Fatalf("UpsertPackage: %v", err)
 		}
-		if err := db.InsertPackageSubmission("alpha", txHash, 0, path, "pkg", "g1deployer", 2000+i, when, true, 1, true); err != nil {
+		if err := db.InsertPackageSubmission("alpha", txHash, 0, path, "pkg", "g1deployer", 2000+i, when, true, 1, "", true); err != nil {
 			t.Fatalf("InsertPackageSubmission: %v", err)
 		}
 	}
@@ -883,16 +883,16 @@ func TestGovDAOFromStorage(t *testing.T) {
 
 	const when = "2026-08-01T00:00:00Z"
 	// Governance calls, including a versioned subpackage.
-	if err := db.InsertCall("alpha", "gov-1", 100, 0, when, "g1voter", "gno.land/r/gov/dao", "Propose", true); err != nil {
+	if err := db.InsertCall("alpha", "gov-1", 100, 0, when, "g1voter", "gno.land/r/gov/dao", "Propose", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
-	if err := db.InsertCall("alpha", "gov-2", 101, 0, when, "g1voter", "gno.land/r/gov/dao/v3/impl", "Vote", true); err != nil {
+	if err := db.InsertCall("alpha", "gov-2", 101, 0, when, "g1voter", "gno.land/r/gov/dao/v3/impl", "Vote", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	// Near-misses that must not be picked up: gnoswap ships these, and a bare
 	// "gov" match would take them.
 	for _, path := range []string{"gno.land/r/gnoswap/gov/staker", "gno.land/r/gnoswap/gov/governance"} {
-		if err := db.InsertCall("alpha", "swap-"+path, 102, 0, when, "g1trader", path, "Stake", true); err != nil {
+		if err := db.InsertCall("alpha", "swap-"+path, 102, 0, when, "g1trader", path, "Stake", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -946,14 +946,14 @@ func TestAddressFromStorage(t *testing.T) {
 	const me = "g1me"
 	for i := 0; i < 25; i++ {
 		if err := db.InsertCall("alpha", fmt.Sprintf("call-%d", i), 100+i, 0, when,
-			me, "gno.land/r/demo/boards", "Post", true); err != nil {
+			me, "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
 	if err := db.UpsertPackage("alpha", "gno.land/r/me/pkg", "pkg", me, "deploy", 300, when, true, 1); err != nil {
 		t.Fatalf("UpsertPackage: %v", err)
 	}
-	if err := db.InsertPackageSubmission("alpha", "deploy", 0, "gno.land/r/me/pkg", "pkg", me, 300, when, true, 1, true); err != nil {
+	if err := db.InsertPackageSubmission("alpha", "deploy", 0, "gno.land/r/me/pkg", "pkg", me, 300, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 	// Sent by me, and received by me: both are this address's activity.
@@ -964,7 +964,7 @@ func TestAddressFromStorage(t *testing.T) {
 		t.Fatalf("InsertBankSend: %v", err)
 	}
 	// Someone else's activity must not appear.
-	if err := db.InsertCall("alpha", "theirs", 500, 0, when, "g1other", "gno.land/r/demo/boards", "Post", true); err != nil {
+	if err := db.InsertCall("alpha", "theirs", 500, 0, when, "g1other", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 
@@ -1120,7 +1120,7 @@ func TestAddressPageSurvivesARefusedRPC(t *testing.T) {
 	nets := []config.NetworkConfig{{ID: "alpha", RPCURL: rpc.URL}}
 	db.SetConfiguredNetworks(nets)
 	if err := db.InsertCall("alpha", "c1", 100, 0, "2026-08-01T00:00:00Z",
-		"g1me", "gno.land/r/demo/boards", "Post", true); err != nil {
+		"g1me", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	api := NewAPI(db, map[string]*indexer.Client{"alpha": client}, nets, analyzer.NewAnalyzer(db))

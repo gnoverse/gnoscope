@@ -12,26 +12,67 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func (d *DB) InsertCall(network, txHash string, blockHeight, msgIndex int, blockTime, caller, pkgPath, funcName string, success bool) error {
+// InsertCall records one MsgCall. args is the already-truncated preview from
+// BuildArgsPreview, never the raw argument list; send is the message's coin
+// string, empty for the overwhelming majority. See the column comments in
+// schema.go for why one is capped and the other is not.
+func (d *DB) InsertCall(network, txHash string, blockHeight, msgIndex int, blockTime, caller, pkgPath, funcName, args, send string, success bool) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.db.Exec(`
-		INSERT OR IGNORE INTO calls (network, tx_hash, msg_index, block_height, block_time, caller, pkg_path, func_name, success)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, network, txHash, msgIndex, blockHeight, blockTime, caller, pkgPath, funcName, success)
+		INSERT OR IGNORE INTO calls (network, tx_hash, msg_index, block_height, block_time, caller, pkg_path, func_name, args, send, success)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, network, txHash, msgIndex, blockHeight, blockTime, caller, pkgPath, funcName, args, send, success)
+	return err
+}
+
+// UpdateCallArgsAndSend fills args and send on a row that already exists.
+//
+// Separate from InsertCall because the backfill must not resurrect a row the
+// sync has since deleted, and because INSERT OR IGNORE would silently do
+// nothing on the row it is meant to update. An UPDATE also leaves
+// block_height alone, which is what keeps the sync cursor (derived from
+// MAX(block_height)) where it was: see the invariant in AGENTS.md.
+func (d *DB) UpdateCallArgsAndSend(network, txHash string, msgIndex int, args, send string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.db.Exec(`
+		UPDATE calls SET args = ?, send = ?
+		WHERE network = ? AND tx_hash = ? AND msg_index = ?
+	`, args, send, network, txHash, msgIndex)
+	return err
+}
+
+// UpdateMsgRunSend and UpdatePackageSubmissionSend are the same, for the two
+// other message kinds that can carry coins.
+func (d *DB) UpdateMsgRunSend(network, txHash, caller, send string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.db.Exec(`
+		UPDATE msg_runs SET send = ? WHERE network = ? AND tx_hash = ? AND caller = ?
+	`, send, network, txHash, caller)
+	return err
+}
+
+func (d *DB) UpdatePackageSubmissionSend(network, txHash string, msgIndex int, send string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.db.Exec(`
+		UPDATE package_submissions SET send = ? WHERE network = ? AND tx_hash = ? AND msg_index = ?
+	`, send, network, txHash, msgIndex)
 	return err
 }
 
 // ValoperRegistration is one validator's registration call, flattened. The
 // moniker is the call's first argument.
 
-func (d *DB) InsertMsgRun(network, txHash string, blockHeight int, blockTime, caller, source string, success bool) error {
+func (d *DB) InsertMsgRun(network, txHash string, blockHeight int, blockTime, caller, source, send string, success bool) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.db.Exec(`
-		INSERT OR IGNORE INTO msg_runs (network, tx_hash, block_height, block_time, caller, source, success)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, network, txHash, blockHeight, blockTime, caller, source, success)
+		INSERT OR IGNORE INTO msg_runs (network, tx_hash, block_height, block_time, caller, source, send, success)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, network, txHash, blockHeight, blockTime, caller, source, send, success)
 	return err
 }
 
@@ -359,6 +400,14 @@ type StoredTx struct {
 	// the view needs them and left zero where it does not.
 	GasUsed int `json:"gas_used,omitempty"`
 	GasFee  int `json:"gas_fee,omitempty"`
+	// Args is the truncated argument preview for a MsgCall, empty for every
+	// other type and for any row written before the column existed. It carries
+	// its own ellipsis and must not be parsed: see BuildArgsPreview.
+	Args string `json:"args,omitempty"`
+	// Send is the coin string the message carried along, empty for the
+	// overwhelming majority. A call that moves money used to read exactly like
+	// one that does not.
+	Send string `json:"send,omitempty"`
 }
 
 // txSource maps a message type to the table that records it, and to the columns
@@ -369,6 +418,14 @@ type txSource struct {
 	caller  string
 	detail  string
 	success string
+	// args and send are SQL expressions, not column names, because only calls
+	// has an args column and bank_sends has neither: a table that cannot answer
+	// selects the empty string rather than the query branching per type.
+	// order is the within-transaction tiebreak, for the same reason: two of the
+	// four tables have a msg_index and two do not.
+	args  string
+	send  string
+	order string
 }
 
 // MsgAddPackage sources from package_submissions, not packages: packages is
@@ -381,10 +438,12 @@ type txSource struct {
 // COALESCE(t.success, 1) depended on.
 
 var TxSources = map[string]txSource{
-	"MsgCall":       {table: "calls", caller: "caller", detail: "pkg_path || '::' || func_name", success: "e.success"},
-	"MsgAddPackage": {table: "package_submissions", caller: "creator", detail: "path", success: "e.success"},
-	"MsgRun":        {table: "msg_runs", caller: "caller", detail: "''", success: "e.success"},
-	"BankMsgSend":   {table: "bank_sends", caller: "from_address", detail: "to_address || ' ' || amount", success: "e.success"},
+	"MsgCall":       {table: "calls", caller: "caller", detail: "pkg_path || '::' || func_name", success: "e.success", args: "COALESCE(e.args, '')", send: "COALESCE(e.send, '')", order: "e.msg_index ASC"},
+	"MsgAddPackage": {table: "package_submissions", caller: "creator", detail: "path", success: "e.success", args: "''", send: "COALESCE(e.send, '')", order: "e.msg_index ASC"},
+	"MsgRun":        {table: "msg_runs", caller: "caller", detail: "''", success: "e.success", args: "''", send: "COALESCE(e.send, '')", order: "e.caller ASC"},
+	// bank_sends needs neither: the amount it moved is already the whole of its
+	// detail, and repeating it as a send would draw the same coins twice.
+	"BankMsgSend": {table: "bank_sends", caller: "from_address", detail: "to_address || ' ' || amount", success: "e.success", args: "''", send: "''", order: "e.to_address ASC"},
 }
 
 // FilteredTransactions lists transactions of one message type from storage.
@@ -431,9 +490,13 @@ func (d *DB) FilteredTransactions(network, msgType string, success *bool, limit,
 
 	rows, err := d.db.Query(`
 		SELECT e.network, e.tx_hash, e.block_height, COALESCE(e.block_time, ''),
-		       COALESCE(e.`+src.caller+`, ''), `+src.detail+`, `+src.success+`
+		       COALESCE(e.`+src.caller+`, ''), `+src.detail+`, `+src.success+`,
+		       `+src.args+`, `+src.send+`
 		FROM `+src.table+` e`+join+where+`
-		ORDER BY e.block_height DESC, e.tx_hash ASC
+		-- Same reason as AddressTransactions' own ORDER BY: a multicall groups
+		-- into one row downstream, and its messages have to read in execution
+		-- order rather than in whatever order the index handed them back.
+		ORDER BY e.block_height DESC, e.tx_hash ASC, `+src.order+`
 		LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -444,7 +507,7 @@ func (d *DB) FilteredTransactions(network, msgType string, success *bool, limit,
 	for rows.Next() {
 		t := StoredTx{Type: msgType}
 		if err := rows.Scan(&t.Network, &t.Hash, &t.BlockHeight, &t.BlockTime,
-			&t.Caller, &t.Detail, &t.Success); err != nil {
+			&t.Caller, &t.Detail, &t.Success, &t.Args, &t.Send); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, t)

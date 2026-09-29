@@ -23,7 +23,7 @@ func seedDiscover(t *testing.T) *DB {
 	call := func(path, caller, at string) {
 		t.Helper()
 		n++
-		if err := db.InsertCall("alpha", "tx-"+caller+"-"+at, 20, n, at, caller, path, "Do", true); err != nil {
+		if err := db.InsertCall("alpha", "tx-"+caller+"-"+at, 20, n, at, caller, path, "Do", "", "", true); err != nil {
 			t.Fatal(err)
 		}
 	}

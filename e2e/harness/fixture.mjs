@@ -153,6 +153,13 @@ export const MULTICALL_MESSAGES = 6;
 export const MULTICALL_BATCH_MESSAGES = 5;
 // Of those five, the four that /txs?type=call can see.
 export const MULTICALL_CALLS_IN_BATCH = 4;
+// What the server actually stores for a call with long arguments: the value
+// BuildArgsPreview produces, ellipses included, capped at argsPreviewMax (96).
+// Written verbatim rather than computed, because the fixture writes straight
+// into SQLite and must hold the same shape the Go writer would have put there.
+// The row's job is to render that ellipsis, not to re-derive it.
+export const MULTICALL_LONG_ARGS = 'g1alice0000000000000000000000000\u2026, 9999999999999, some-very-long-flag-value\u2026';
+export const MULTICALL_SEND = '5000000ugnot';
 export const MULTICALL_GAS_USED = 2 * 70000;
 
 export const USAGE_MESSAGES = 8;
@@ -438,6 +445,13 @@ export function seed(dbPath) {
     const usageCall = db.prepare(`INSERT OR REPLACE INTO calls
       (network, tx_hash, msg_index, block_height, block_time, caller, pkg_path, func_name, success)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    // The same row plus the two preview columns, for the fixtures that assert
+    // on them. Separate because every existing caller writes neither, and an
+    // empty args is exactly what a pre-backfill row holds: the suite needs both
+    // shapes on screen at once to prove they render differently.
+    const argCall = db.prepare(`INSERT OR REPLACE INTO calls
+      (network, tx_hash, msg_index, block_height, block_time, caller, pkg_path, func_name, args, send, success)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`);
     addPackage('alpha', USAGE_REALM, USAGE_CREATOR, 5000, true, 'usage-deploy');
     // Overwrites the generic body addPackage writes: the exported set is the
     // point here, and Withdraw has to be in the source and in no call.
@@ -468,12 +482,20 @@ export function seed(dbPath) {
     // without it, which would quietly delete the thing being tested.
     addPackage('alpha', MULTICALL_REALM, MULTICALL_DEPLOYER, 6000, true, 'multi-deploy');
     for (let i = 0; i < 4; i++) {
-      usageCall.run('alpha', 'multi-batch', i, 6001, blockTime(6001), MULTICALL_SIGNER,
-        MULTICALL_REALM, `Step${i}`, 1);
+      // Step0 carries coins and a long argument, the rest carry short ones:
+      // the row has to show a call that moves money differently from one that
+      // does not, and a truncated argument differently from a whole one.
+      argCall.run('alpha', 'multi-batch', i, 6001, blockTime(6001), MULTICALL_SIGNER,
+        MULTICALL_REALM, `Step${i}`,
+        i === 0 ? MULTICALL_LONG_ARGS : `g1alice, ${i}`,
+        i === 0 ? '5000000ugnot' : '');
     }
     send.run('alpha', 'multi-batch', 6001, blockTime(6001), MULTICALL_SIGNER,
       'g1recipient00000000000000000000000000', '5000000ugnot', 5000000);
     tx.run('alpha', 'multi-batch', 6001, blockTime(6001), 70000, 100000, 700);
+    // Deliberately written through the old statement, so args and send are
+    // empty: this is what every historical row looks like until the backfill
+    // reaches it, and it must still render as a call rather than as a gap.
     usageCall.run('alpha', 'multi-solo', 0, 6002, blockTime(6002), MULTICALL_SIGNER,
       MULTICALL_REALM, 'Step0', 1);
     tx.run('alpha', 'multi-solo', 6002, blockTime(6002), 70000, 100000, 700);

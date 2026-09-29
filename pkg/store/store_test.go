@@ -317,7 +317,7 @@ func TestHeightsMissingTransactions(t *testing.T) {
 		t.Fatalf("seed orphan: %v", err)
 	}
 	// And one that is properly paired.
-	if err := db.InsertCall("gnoland1", "PAIRED", 600, 0, "", "g1c", "gno.land/r/x", "F", true); err != nil {
+	if err := db.InsertCall("gnoland1", "PAIRED", 600, 0, "", "g1c", "gno.land/r/x", "F", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 	if err := db.UpsertTransaction("gnoland1", "PAIRED", 600, "", 10, 20, 1, true); err != nil {
@@ -356,13 +356,13 @@ func TestGetGasStatsUsesStoredTransactions(t *testing.T) {
 	}
 	defer db.Close()
 
-	if err := db.InsertCall("topaz", "T1", 10, 0, "", "g1c", "gno.land/r/demo/hot", "Run", true); err != nil {
+	if err := db.InsertCall("topaz", "T1", 10, 0, "", "g1c", "gno.land/r/demo/hot", "Run", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 	if err := db.UpsertTransaction("topaz", "T1", 10, "", 1000, 2000, 30, true); err != nil {
 		t.Fatalf("seed tx: %v", err)
 	}
-	if err := db.InsertCall("topaz", "T2", 11, 0, "", "g1c", "gno.land/r/demo/hot", "Run", true); err != nil {
+	if err := db.InsertCall("topaz", "T2", 11, 0, "", "g1c", "gno.land/r/demo/hot", "Run", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 	if err := db.UpsertTransaction("topaz", "T2", 11, "", 500, 900, 10, false); err != nil {
@@ -422,7 +422,7 @@ func TestGasByCallerDoesNotDoubleCountMulticalls(t *testing.T) {
 		t.Fatalf("seed tx: %v", err)
 	}
 	for i, fn := range []string{"Post", "Post", "Post"} {
-		if err := db.InsertCall("topaz", "MULTI", 10, i, "", "g1caller", "gno.land/r/demo/boards", fn, true); err != nil {
+		if err := db.InsertCall("topaz", "MULTI", 10, i, "", "g1caller", "gno.land/r/demo/boards", fn, "", "", true); err != nil {
 			t.Fatalf("seed call %d: %v", i, err)
 		}
 	}
@@ -431,7 +431,7 @@ func TestGasByCallerDoesNotDoubleCountMulticalls(t *testing.T) {
 	if err := db.UpsertTransaction("topaz", "SOLO", 11, "", 100, 200, 3, true); err != nil {
 		t.Fatalf("seed tx: %v", err)
 	}
-	if err := db.InsertCall("topaz", "SOLO", 11, 0, "", "g1other", "gno.land/r/demo/boards", "Post", true); err != nil {
+	if err := db.InsertCall("topaz", "SOLO", 11, 0, "", "g1other", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 
@@ -481,7 +481,7 @@ func TestGasByRealmDoesNotDoubleCountMulticalls(t *testing.T) {
 		t.Fatalf("seed tx: %v", err)
 	}
 	for i, fn := range []string{"Post", "Post", "Post"} {
-		if err := db.InsertCall("topaz", "MULTI", 10, i, "", "g1caller", "gno.land/r/demo/boards", fn, true); err != nil {
+		if err := db.InsertCall("topaz", "MULTI", 10, i, "", "g1caller", "gno.land/r/demo/boards", fn, "", "", true); err != nil {
 			t.Fatalf("seed call %d: %v", i, err)
 		}
 	}
@@ -490,7 +490,7 @@ func TestGasByRealmDoesNotDoubleCountMulticalls(t *testing.T) {
 	if err := db.UpsertTransaction("topaz", "SOLO", 11, "", 100, 200, 3, true); err != nil {
 		t.Fatalf("seed tx: %v", err)
 	}
-	if err := db.InsertCall("topaz", "SOLO", 11, 0, "", "g1other", "gno.land/r/demo/elsewhere", "Post", true); err != nil {
+	if err := db.InsertCall("topaz", "SOLO", 11, 0, "", "g1other", "gno.land/r/demo/elsewhere", "Post", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 
@@ -664,7 +664,7 @@ func TestStatsAreScopedToConfiguredNetworks(t *testing.T) {
 		t.Helper()
 		for i := 0; i < calls; i++ {
 			if err := db.InsertCall(network, fmt.Sprintf("%s-tx-%d", network, i), 100+i, 0,
-				"2026-01-01T00:00:00Z", fmt.Sprintf("g1caller%d", i), "gno.land/r/demo/x", "Fn", true); err != nil {
+				"2026-01-01T00:00:00Z", fmt.Sprintf("g1caller%d", i), "gno.land/r/demo/x", "Fn", "", "", true); err != nil {
 				t.Fatalf("seed call: %v", err)
 			}
 		}
@@ -818,7 +818,7 @@ func TestValoperCallsMissingRegistration(t *testing.T) {
 	MustCall := func(hash, pkgPath string, height int) {
 		t.Helper()
 		if err := db.InsertCall("live", hash, height, 0, "2026-01-01T00:00:00Z",
-			"g1aaa", pkgPath, "Register", true); err != nil {
+			"g1aaa", pkgPath, "Register", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -938,7 +938,7 @@ func TestGasByRealmJoinStaysInTheIndex(t *testing.T) {
 			t.Fatalf("UpsertTransaction: %v", err)
 		}
 		if err := db.InsertCall("sapphire", hash, 100+i, 0, when, "g1caller",
-			fmt.Sprintf("gno.land/r/demo/pkg%d", i%20), "Post", true); err != nil {
+			fmt.Sprintf("gno.land/r/demo/pkg%d", i%20), "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -1081,7 +1081,7 @@ func TestActiveAccountsAreScopedPerNetwork(t *testing.T) {
 	call := func(network, hash string) {
 		t.Helper()
 		if err := db.InsertCall(network, hash, 1, 0, "2026-01-01T00:00:00Z",
-			shared, "gno.land/r/demo/x", "Fn", true); err != nil {
+			shared, "gno.land/r/demo/x", "Fn", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -1137,15 +1137,15 @@ func TestGetActiveAccountsCallTxCount(t *testing.T) {
 	// A 5-message multicall, all under one tx_hash.
 	for i, fn := range []string{"Post", "Post", "Post", "Post", "Post"} {
 		if err := db.InsertCall("gnoland1", "MULTI", 10, i, "", "g1multicaller",
-			"gno.land/r/demo/boards", fn, true); err != nil {
+			"gno.land/r/demo/boards", fn, "", "", true); err != nil {
 			t.Fatalf("seed call %d: %v", i, err)
 		}
 	}
 	// An address with 2 ordinary, separate calls.
-	if err := db.InsertCall("gnoland1", "T1", 11, 0, "", "g1ordinary", "gno.land/r/demo/boards", "Post", true); err != nil {
+	if err := db.InsertCall("gnoland1", "T1", 11, 0, "", "g1ordinary", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
-	if err := db.InsertCall("gnoland1", "T2", 12, 0, "", "g1ordinary", "gno.land/r/demo/boards", "Post", true); err != nil {
+	if err := db.InsertCall("gnoland1", "T2", 12, 0, "", "g1ordinary", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 
@@ -1464,7 +1464,7 @@ func TestGetActivityHeatmapShape(t *testing.T) {
 	wantDow := (int(ts.Weekday()) + 6) % 7
 
 	for i := range 3 {
-		if err := db.InsertCall("gnoland1", fmt.Sprintf("h%d", i), 1+i, 0, rfc3339(ts), "g1a", "gno.land/r/x", "F", true); err != nil {
+		if err := db.InsertCall("gnoland1", fmt.Sprintf("h%d", i), 1+i, 0, rfc3339(ts), "g1a", "gno.land/r/x", "F", "", "", true); err != nil {
 			t.Fatalf("insert call: %v", err)
 		}
 	}
@@ -1472,7 +1472,7 @@ func TestGetActivityHeatmapShape(t *testing.T) {
 		t.Fatalf("insert send: %v", err)
 	}
 	// Another network's rows must not appear in a network-scoped read.
-	if err := db.InsertCall("test12", "o1", 1, 0, rfc3339(ts), "g1z", "gno.land/r/x", "F", true); err != nil {
+	if err := db.InsertCall("test12", "o1", 1, 0, rfc3339(ts), "g1z", "gno.land/r/x", "F", "", "", true); err != nil {
 		t.Fatalf("insert other: %v", err)
 	}
 
@@ -1726,7 +1726,7 @@ func TestGetActivityHeatmapSkipsUnparseableBlockTime(t *testing.T) {
 	now := time.Now().UTC()
 
 	MustCall(t, db, "gnoland1", "good", 1, now.Add(-time.Hour), "g1a", "gno.land/r/x", "F")
-	if err := db.InsertCall("gnoland1", "bad", 2, 0, "not-a-timestamp", "g1b", "gno.land/r/x", "F", true); err != nil {
+	if err := db.InsertCall("gnoland1", "bad", 2, 0, "not-a-timestamp", "g1b", "gno.land/r/x", "F", "", "", true); err != nil {
 		t.Fatalf("insert bad row: %v", err)
 	}
 
@@ -1748,7 +1748,7 @@ func TestGetNewAddressTimeSeriesSkipsUnparseableBlockTime(t *testing.T) {
 	now := time.Now().UTC()
 
 	MustCall(t, db, "gnoland1", "good", 1, now.Add(-time.Hour), "g1good", "gno.land/r/x", "F")
-	if err := db.InsertCall("gnoland1", "bad", 2, 0, "not-a-timestamp", "g1bad", "gno.land/r/x", "F", true); err != nil {
+	if err := db.InsertCall("gnoland1", "bad", 2, 0, "not-a-timestamp", "g1bad", "gno.land/r/x", "F", "", "", true); err != nil {
 		t.Fatalf("insert bad row: %v", err)
 	}
 
@@ -1770,7 +1770,7 @@ func TestGetRollingActiveTimeSeriesSkipsUnparseableBlockTime(t *testing.T) {
 	now := time.Now().UTC()
 
 	MustCall(t, db, "gnoland1", "good", 1, now, "g1good", "gno.land/r/x", "F")
-	if err := db.InsertCall("gnoland1", "bad", 2, 0, "not-a-timestamp", "g1bad", "gno.land/r/x", "F", true); err != nil {
+	if err := db.InsertCall("gnoland1", "bad", 2, 0, "not-a-timestamp", "g1bad", "gno.land/r/x", "F", "", "", true); err != nil {
 		t.Fatalf("insert bad row: %v", err)
 	}
 
@@ -1789,7 +1789,7 @@ func TestGetFunctionCallHeatmapSkipsUnparseableBlockTime(t *testing.T) {
 	now := time.Now().UTC()
 
 	MustCall(t, db, "gnoland1", "good", 1, now.Add(-time.Hour), "g1a", "gno.land/r/x", "Good")
-	if err := db.InsertCall("gnoland1", "bad", 2, 0, "not-a-timestamp", "g1b", "gno.land/r/x", "Bad", true); err != nil {
+	if err := db.InsertCall("gnoland1", "bad", 2, 0, "not-a-timestamp", "g1b", "gno.land/r/x", "Bad", "", "", true); err != nil {
 		t.Fatalf("insert bad row: %v", err)
 	}
 
@@ -1829,7 +1829,7 @@ func TestGetActivityHeatmapSnapsWindowToWholeWeeks(t *testing.T) {
 	// deterministic while leaving the daily bucketing untouched.
 	for i := 0; i < 90; i++ {
 		ts := now.AddDate(0, 0, -i).Add(-time.Minute)
-		if err := db.InsertCall("gnoland1", fmt.Sprintf("d%d", i), i+1, 0, rfc3339(ts), "g1a", "gno.land/r/x", "F", true); err != nil {
+		if err := db.InsertCall("gnoland1", fmt.Sprintf("d%d", i), i+1, 0, rfc3339(ts), "g1a", "gno.land/r/x", "F", "", "", true); err != nil {
 			t.Fatalf("insert call %d: %v", i, err)
 		}
 	}
@@ -1871,7 +1871,7 @@ func TestActiveAddressAndActivityHeatmapAgreeOnMsgRuns(t *testing.T) {
 	db := NewTestDB(t)
 	now := time.Now().UTC()
 
-	if err := db.InsertMsgRun("gnoland1", "r1", 1, rfc3339(now.Add(-time.Hour)), "g1runner", "source", true); err != nil {
+	if err := db.InsertMsgRun("gnoland1", "r1", 1, rfc3339(now.Add(-time.Hour)), "g1runner", "source", "", true); err != nil {
 		t.Fatalf("insert msg run: %v", err)
 	}
 
@@ -2073,7 +2073,7 @@ func TestNetworkDataStart(t *testing.T) {
 
 	oldest := "2026-08-07T12:00:00Z"
 	newer := "2026-08-14T12:00:00Z"
-	if err := db.InsertCall("gnoland1", "TX1", 10, 0, newer, "g1a", "gno.land/r/demo/foo", "Bar", true); err != nil {
+	if err := db.InsertCall("gnoland1", "TX1", 10, 0, newer, "g1a", "gno.land/r/demo/foo", "Bar", "", "", true); err != nil {
 		t.Fatalf("insert call: %v", err)
 	}
 	// The earliest datum lives in a different table than the latest, so a
@@ -2082,7 +2082,7 @@ func TestNetworkDataStart(t *testing.T) {
 		t.Fatalf("upsert package: %v", err)
 	}
 	// Another network's earlier data must not move this network's start.
-	if err := db.InsertCall("test12", "TX2", 1, 0, "2020-01-01T00:00:00Z", "g1b", "gno.land/r/demo/bar", "Baz", true); err != nil {
+	if err := db.InsertCall("test12", "TX2", 1, 0, "2020-01-01T00:00:00Z", "g1b", "gno.land/r/demo/bar", "Baz", "", "", true); err != nil {
 		t.Fatalf("insert other network call: %v", err)
 	}
 
@@ -2106,10 +2106,10 @@ func TestNetworkDataStartAllNetworks(t *testing.T) {
 
 	earlier := "2020-01-01T00:00:00Z"
 	later := "2026-08-14T12:00:00Z"
-	if err := db.InsertCall("gnoland1", "TX1", 10, 0, later, "g1a", "gno.land/r/demo/foo", "Bar", true); err != nil {
+	if err := db.InsertCall("gnoland1", "TX1", 10, 0, later, "g1a", "gno.land/r/demo/foo", "Bar", "", "", true); err != nil {
 		t.Fatalf("insert call on gnoland1: %v", err)
 	}
-	if err := db.InsertCall("test12", "TX2", 1, 0, earlier, "g1b", "gno.land/r/demo/bar", "Baz", true); err != nil {
+	if err := db.InsertCall("test12", "TX2", 1, 0, earlier, "g1b", "gno.land/r/demo/bar", "Baz", "", "", true); err != nil {
 		t.Fatalf("insert call on test12: %v", err)
 	}
 
@@ -2134,7 +2134,7 @@ func TestNetworkDataStartPropagatesUnparseableTimestamp(t *testing.T) {
 	// surface that, not silently render a fixed multi-year window forever.
 	db := NewTestDB(t)
 
-	if err := db.InsertCall("gnoland1", "TX1", 1, 0, "not-a-timestamp", "g1a", "gno.land/r/demo/foo", "Bar", true); err != nil {
+	if err := db.InsertCall("gnoland1", "TX1", 1, 0, "not-a-timestamp", "g1a", "gno.land/r/demo/foo", "Bar", "", "", true); err != nil {
 		t.Fatalf("insert call: %v", err)
 	}
 
@@ -2163,12 +2163,12 @@ func TestBatch2bReadersScopeToConfiguredNetworks(t *testing.T) {
 	recent := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
 	old := time.Now().UTC().AddDate(0, 0, -20).Format(time.RFC3339)
 
-	if err := db.InsertCall("live", "L1", 10, 0, recent, "g1live", "gno.land/r/live/pkg", "F", true); err != nil {
+	if err := db.InsertCall("live", "L1", 10, 0, recent, "g1live", "gno.land/r/live/pkg", "F", "", "", true); err != nil {
 		t.Fatalf("seed live call: %v", err)
 	}
 	// The retired chain is deliberately older, so NetworkDataStart would report
 	// its start date if the filter let it through.
-	if err := db.InsertCall("retired", "R1", 10, 0, old, "g1retired", "gno.land/r/retired/pkg", "F", true); err != nil {
+	if err := db.InsertCall("retired", "R1", 10, 0, old, "g1retired", "gno.land/r/retired/pkg", "F", "", "", true); err != nil {
 		t.Fatalf("seed retired call: %v", err)
 	}
 	if err := db.UpsertTransaction("live", "L1", 10, recent, 100, 200, 1, true); err != nil {
@@ -2263,15 +2263,15 @@ func TestListPackagesUniqueUsers(t *testing.T) {
 	// "busy" gets one multicall (3 messages, same caller) plus a second caller:
 	// 4 calls total, but only 2 distinct users.
 	for i, fn := range []string{"Post", "Post", "Post"} {
-		if err := db.InsertCall("gnoland1", "MULTI", 20, i, "", "g1alice", "gno.land/r/demo/busy", fn, true); err != nil {
+		if err := db.InsertCall("gnoland1", "MULTI", 20, i, "", "g1alice", "gno.land/r/demo/busy", fn, "", "", true); err != nil {
 			t.Fatalf("seed call %d: %v", i, err)
 		}
 	}
-	if err := db.InsertCall("gnoland1", "SOLO", 21, 0, "", "g1bob", "gno.land/r/demo/busy", "Post", true); err != nil {
+	if err := db.InsertCall("gnoland1", "SOLO", 21, 0, "", "g1bob", "gno.land/r/demo/busy", "Post", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 	// "quiet" gets a single call from a single user.
-	if err := db.InsertCall("gnoland1", "Q1", 22, 0, "", "g1carol", "gno.land/r/demo/quiet", "Post", true); err != nil {
+	if err := db.InsertCall("gnoland1", "Q1", 22, 0, "", "g1carol", "gno.land/r/demo/quiet", "Post", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 
@@ -2308,7 +2308,7 @@ func TestListPackagesLastCallSort(t *testing.T) {
 	if err := db.UpsertPackage("gnoland1", "gno.land/r/demo/new-and-quiet", "new", "g1c", "TX2", 20, "", true, 1); err != nil {
 		t.Fatalf("seed package: %v", err)
 	}
-	if err := db.InsertCall("gnoland1", "TX3", 30, 0, "", "g1caller", "gno.land/r/demo/old-but-busy", "Post", true); err != nil {
+	if err := db.InsertCall("gnoland1", "TX3", 30, 0, "", "g1caller", "gno.land/r/demo/old-but-busy", "Post", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 
@@ -2346,13 +2346,13 @@ func TestAddressTransactionsIncludesEveryPackageResubmission(t *testing.T) {
 	// still parked, exactly the wrapped/v0 case that surfaced this. The
 	// second overwrites packages' current-state row for the path (proven
 	// below); package_submissions must keep both.
-	if err := db.InsertPackageSubmission("gnoland1", "TXFIRST", 0, path, "wrapped", creator, 100, "2026-01-01T00:00:00Z", true, 3, true); err != nil {
+	if err := db.InsertPackageSubmission("gnoland1", "TXFIRST", 0, path, "wrapped", creator, 100, "2026-01-01T00:00:00Z", true, 3, "", true); err != nil {
 		t.Fatalf("insert first submission: %v", err)
 	}
 	if err := db.UpsertPackage("gnoland1", path, "wrapped", creator, "TXFIRST", 100, "2026-01-01T00:00:00Z", true, 3); err != nil {
 		t.Fatalf("upsert package (first): %v", err)
 	}
-	if err := db.InsertPackageSubmission("gnoland1", "TXSECOND", 0, path, "wrapped", creator, 200, "2026-01-02T00:00:00Z", true, 3, true); err != nil {
+	if err := db.InsertPackageSubmission("gnoland1", "TXSECOND", 0, path, "wrapped", creator, 200, "2026-01-02T00:00:00Z", true, 3, "", true); err != nil {
 		t.Fatalf("insert second submission: %v", err)
 	}
 	if err := db.UpsertPackage("gnoland1", path, "wrapped", creator, "TXSECOND", 200, "2026-01-02T00:00:00Z", true, 3); err != nil {
@@ -2396,10 +2396,10 @@ func TestFilteredTransactionsIncludesEveryPackageResubmission(t *testing.T) {
 	db := NewTestDB(t)
 
 	const path = "gno.land/r/moul/x/daily/wrapped/v0"
-	if err := db.InsertPackageSubmission("gnoland1", "TXFIRST", 0, path, "wrapped", "g1manfred", 100, "2026-01-01T00:00:00Z", true, 3, true); err != nil {
+	if err := db.InsertPackageSubmission("gnoland1", "TXFIRST", 0, path, "wrapped", "g1manfred", 100, "2026-01-01T00:00:00Z", true, 3, "", true); err != nil {
 		t.Fatalf("insert first submission: %v", err)
 	}
-	if err := db.InsertPackageSubmission("gnoland1", "TXSECOND", 0, path, "wrapped", "g1manfred", 200, "2026-01-02T00:00:00Z", true, 3, true); err != nil {
+	if err := db.InsertPackageSubmission("gnoland1", "TXSECOND", 0, path, "wrapped", "g1manfred", 200, "2026-01-02T00:00:00Z", true, 3, "", true); err != nil {
 		t.Fatalf("insert second submission: %v", err)
 	}
 
@@ -2435,7 +2435,7 @@ func seedResubmission(t *testing.T, db *DB, network, path, creator string, first
 		{"TXTWO", 200, second},
 	} {
 		if err := db.InsertPackageSubmission(network, at.hash, 0, path, "pkg", creator,
-			at.height, at.when, true, 3, true); err != nil {
+			at.height, at.when, true, 3, "", true); err != nil {
 			t.Fatalf("submission %d: %v", i, err)
 		}
 		if err := db.UpsertPackage(network, path, "pkg", creator, at.hash,
@@ -2568,7 +2568,7 @@ func TestNewPackagesCountsFirstSubmissionNotLatest(t *testing.T) {
 
 	// Genuinely new this week, submitted once.
 	if err := db.InsertPackageSubmission("gnoland1", "TXNEW", 0, "gno.land/r/moul/new", "pkg",
-		"g1moul", 300, recent, true, 1, true); err != nil {
+		"g1moul", 300, recent, true, 1, "", true); err != nil {
 		t.Fatalf("insert new submission: %v", err)
 	}
 	if err := db.UpsertPackage("gnoland1", "gno.land/r/moul/new", "pkg", "g1moul", "TXNEW",

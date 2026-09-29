@@ -33,7 +33,7 @@ func TestRollupDoesNotBlockOnReaders(t *testing.T) {
 		if err := db.UpsertTransaction("alpha", hash, 100+i, when, 1000, 2000, 10, true); err != nil {
 			t.Fatalf("UpsertTransaction: %v", err)
 		}
-		if err := db.InsertCall("alpha", hash, 100+i, 0, when, "g1caller", "gno.land/r/demo/boards", "Post", true); err != nil {
+		if err := db.InsertCall("alpha", hash, 100+i, 0, when, "g1caller", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}

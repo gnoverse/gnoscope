@@ -28,7 +28,7 @@ func TestRealmActivitySeriesIsDense(t *testing.T) {
 	for i, ago := range []int{0, 0, 8} {
 		ts := time.Now().UTC().AddDate(0, 0, -ago).Format(time.RFC3339Nano)
 		if err := db.InsertCall("alpha", fmt.Sprintf("TX%d", i), 100+i, 0, ts,
-			fmt.Sprintf("g1c%d", i), path, "Post", true); err != nil {
+			fmt.Sprintf("g1c%d", i), path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -70,12 +70,12 @@ func TestRealmActivitySeriesIsNetworkScoped(t *testing.T) {
 
 	when := time.Now().UTC().Format(time.RFC3339Nano)
 	for i := 0; i < 5; i++ {
-		if err := db.InsertCall("alpha", fmt.Sprintf("A%d", i), 100+i, 0, when, "g1a", path, "Post", true); err != nil {
+		if err := db.InsertCall("alpha", fmt.Sprintf("A%d", i), 100+i, 0, when, "g1a", path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
 	for i := 0; i < 2; i++ {
-		if err := db.InsertCall("beta", fmt.Sprintf("B%d", i), 200+i, 0, when, "g1b", path, "Post", true); err != nil {
+		if err := db.InsertCall("beta", fmt.Sprintf("B%d", i), 200+i, 0, when, "g1b", path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -115,7 +115,7 @@ func TestRealmActivitySeriesCountsCallersPerBucket(t *testing.T) {
 	// One address calling on three consecutive days.
 	for i := 0; i < 3; i++ {
 		ts := time.Now().UTC().AddDate(0, 0, -i).Format(time.RFC3339Nano)
-		if err := db.InsertCall("alpha", fmt.Sprintf("R%d", i), 100+i, 0, ts, "g1regular", path, "Post", true); err != nil {
+		if err := db.InsertCall("alpha", fmt.Sprintf("R%d", i), 100+i, 0, ts, "g1regular", path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -148,11 +148,11 @@ func TestRealmActivitySeriesIncludesMsgRuns(t *testing.T) {
 	seedSeriesRealm(t, db, "alpha", path)
 
 	when := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := db.InsertCall("alpha", "C1", 100, 0, when, "g1a", path, "Do", true); err != nil {
+	if err := db.InsertCall("alpha", "C1", 100, 0, when, "g1a", path, "Do", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	if err := db.InsertMsgRun("alpha", "R1", 101, when, "g1b",
-		`package main; import "`+path+`"; func main() {}`, true); err != nil {
+		`package main; import "`+path+`"; func main() {}`, "", true); err != nil {
 		t.Fatalf("InsertMsgRun: %v", err)
 	}
 

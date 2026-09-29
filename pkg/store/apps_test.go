@@ -25,7 +25,7 @@ func appsFixture(t *testing.T) (*DB, string, string) {
 	}
 	call := func(network, hash string, idx int, when, caller, pkgPath string) {
 		t.Helper()
-		if err := db.InsertCall(network, hash, 11, idx, when, caller, pkgPath, "Post", true); err != nil {
+		if err := db.InsertCall(network, hash, 11, idx, when, caller, pkgPath, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}

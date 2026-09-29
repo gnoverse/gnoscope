@@ -40,7 +40,7 @@ func seedUsage(t TB, db *DB) {
 		{"TX4", 0, 140, "g1alice", "Claim", true},
 	}
 	for i, c := range calls {
-		if err := db.InsertCall("mainnet", c.tx, c.height, c.idx, day(2+i), c.caller, path, c.fn, c.ok); err != nil {
+		if err := db.InsertCall("mainnet", c.tx, c.height, c.idx, day(2+i), c.caller, path, c.fn, "", "", c.ok); err != nil {
 			t.Fatalf("insert call: %v", err)
 		}
 	}
@@ -53,14 +53,14 @@ func seedUsage(t TB, db *DB) {
 			t.Fatalf("upsert tx: %v", err)
 		}
 	}
-	if err := db.InsertMsgRun("mainnet", "TXRUN", 150, day(8), "g1carol", "import \""+path+"\"", true); err != nil {
+	if err := db.InsertMsgRun("mainnet", "TXRUN", 150, day(8), "g1carol", "import \""+path+"\"", "", true); err != nil {
 		t.Fatalf("insert msgrun: %v", err)
 	}
 	// Same path, other network, other caller.
 	if err := db.UpsertPackage("pearl", path, "rumble", "g1alice", "TXDEPLOY", 1, day(1), true, 1); err != nil {
 		t.Fatalf("upsert package (pearl): %v", err)
 	}
-	if err := db.InsertCall("pearl", "PTX1", 10, 0, day(1), "g1mallory", path, "Bid", true); err != nil {
+	if err := db.InsertCall("pearl", "PTX1", 10, 0, day(1), "g1mallory", path, "Bid", "", "", true); err != nil {
 		t.Fatalf("insert call (pearl): %v", err)
 	}
 }
@@ -234,7 +234,7 @@ func TestRealmUsageWindow(t *testing.T) {
 	recent := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
 	old := time.Now().UTC().AddDate(0, 0, -60).Format(time.RFC3339Nano)
 	for i, bt := range []string{recent, old, ""} {
-		if err := db.InsertCall("mainnet", fmt.Sprintf("TX%d", i), 10+i, 0, bt, "g1alice", path, "Ping", true); err != nil {
+		if err := db.InsertCall("mainnet", fmt.Sprintf("TX%d", i), 10+i, 0, bt, "g1alice", path, "Ping", "", "", true); err != nil {
 			t.Fatalf("insert call: %v", err)
 		}
 	}
@@ -301,7 +301,7 @@ func TestRealmUsageReturningSurvivesACapThatExcludesIt(t *testing.T) {
 	}{
 		{"T1", 10, "g1loud"}, {"T2", 11, "g1loud"}, {"T3", 12, "g1quiet"},
 	} {
-		if err := db.InsertCall("mainnet", c.tx, c.height, 0, "", c.caller, path, "Ping", true); err != nil {
+		if err := db.InsertCall("mainnet", c.tx, c.height, 0, "", c.caller, path, "Ping", "", "", true); err != nil {
 			t.Fatalf("insert call %d: %v", i, err)
 		}
 	}

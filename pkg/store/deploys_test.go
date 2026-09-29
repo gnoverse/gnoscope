@@ -29,7 +29,7 @@ func TestPackageDeploysReturnsEverySubmissionNewestFirst(t *testing.T) {
 	}
 	for _, r := range rows {
 		if err := db.InsertPackageSubmission("live", r.hash, 0, path, "retried",
-			"g1deployer", r.height, r.when, true, r.files, r.success); err != nil {
+			"g1deployer", r.height, r.when, true, r.files, "", r.success); err != nil {
 			t.Fatalf("InsertPackageSubmission(%s): %v", r.hash, err)
 		}
 		if err := db.UpsertPackage("live", path, "retried", "g1deployer", r.hash,
@@ -40,7 +40,7 @@ func TestPackageDeploysReturnsEverySubmissionNewestFirst(t *testing.T) {
 	// Same path on another chain: network scoping is the invariant every query
 	// here has to keep, and a path is the one key two chains genuinely share.
 	if err := db.InsertPackageSubmission("other", "elsewhere", 0, path, "retried",
-		"g1someone", 5, "2026-08-02T00:00:00Z", true, 1, true); err != nil {
+		"g1someone", 5, "2026-08-02T00:00:00Z", true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission(other): %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestPackageDeploysLimits(t *testing.T) {
 	const path = "gno.land/r/demo/busy"
 	for i := 0; i < 5; i++ {
 		if err := db.InsertPackageSubmission("live", "h"+string(rune('a'+i)), 0, path,
-			"busy", "g1deployer", 100+i, "2026-08-01T00:00:00Z", true, 1, true); err != nil {
+			"busy", "g1deployer", 100+i, "2026-08-01T00:00:00Z", true, 1, "", true); err != nil {
 			t.Fatalf("InsertPackageSubmission: %v", err)
 		}
 	}

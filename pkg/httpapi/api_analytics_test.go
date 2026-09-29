@@ -28,7 +28,7 @@ func seedGas(t *testing.T, db *store.DB, network string, realms int) {
 		// the first models a chain that cannot exist, and gas attribution
 		// reads the second.
 		if err := db.InsertPackageSubmission(network, hash, 0, path, "pkg",
-			"g1creator", 200+i, when, true, 2, true); err != nil {
+			"g1creator", 200+i, when, true, 2, "", true); err != nil {
 			t.Fatalf("InsertPackageSubmission: %v", err)
 		}
 		if err := db.UpsertTransaction(network, hash, 200+i, when, 1000*(i+1), 2000*(i+1), 100, true); err != nil {

@@ -21,7 +21,7 @@ func TestEdgeRollupsAreIncrementalAndPerChain(t *testing.T) {
 	}
 	call := func(network, hash string, height int, caller, pkg string) {
 		t.Helper()
-		if err := db.InsertCall(network, hash, height, 0, when, caller, pkg, "Post", true); err != nil {
+		if err := db.InsertCall(network, hash, height, 0, when, caller, pkg, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}

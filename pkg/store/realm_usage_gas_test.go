@@ -26,7 +26,7 @@ func gasFixture(t *testing.T) *DB {
 	// and the p90 differ and cannot both be an accident.
 	for i, gas := range []int{100, 200, 300, 1000} {
 		h := "single" + string(rune('A'+i))
-		if err := d.InsertCall(net, h, 10+i, 0, rfc3339(ts), "g1caller", pkg, "Cheap", true); err != nil {
+		if err := d.InsertCall(net, h, 10+i, 0, rfc3339(ts), "g1caller", pkg, "Cheap", "", "", true); err != nil {
 			t.Fatal(err)
 		}
 		if err := d.UpsertTransaction(net, h, 10+i, rfc3339(ts), gas, gas*2, 1, true); err != nil {
@@ -37,7 +37,7 @@ func gasFixture(t *testing.T) *DB {
 	// One transaction bundling three calls, billed 999,999 gas. If any of them
 	// is charged the whole amount, the figures above move.
 	for i, fn := range []string{"Cheap", "Bundled", "Bundled"} {
-		if err := d.InsertCall(net, "multi", 50, i, rfc3339(ts), "g1caller", pkg, fn, true); err != nil {
+		if err := d.InsertCall(net, "multi", 50, i, rfc3339(ts), "g1caller", pkg, fn, "", "", true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -109,12 +109,12 @@ func TestFunctionFailureCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if err := d.InsertCall(net, "ok"+string(rune('A'+i)), 10+i, 0, rfc3339(ts), "g1a", pkg, "Flaky", true); err != nil {
+		if err := d.InsertCall(net, "ok"+string(rune('A'+i)), 10+i, 0, rfc3339(ts), "g1a", pkg, "Flaky", "", "", true); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for i := 0; i < 2; i++ {
-		if err := d.InsertCall(net, "bad"+string(rune('A'+i)), 20+i, 0, rfc3339(ts), "g1a", pkg, "Flaky", false); err != nil {
+		if err := d.InsertCall(net, "bad"+string(rune('A'+i)), 20+i, 0, rfc3339(ts), "g1a", pkg, "Flaky", "", "", false); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -159,7 +159,7 @@ func TestAddressIdentityVerdicts(t *testing.T) {
 		t.Fatalf("UpsertSessionGrant: %v", err)
 	}
 	if err := db.InsertCall("alpha", "TX2", 30, 0, "2026-01-02T00:00:00Z",
-		"g1caller", realm, "Swap", true); err != nil {
+		"g1caller", realm, "Swap", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 

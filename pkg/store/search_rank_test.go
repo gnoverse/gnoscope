@@ -12,7 +12,7 @@ func seedPkg(t *testing.T, db *DB, network, path, name string, realm bool, heigh
 		t.Fatalf("upsert %s: %v", path, err)
 	}
 	for i := 0; i < calls; i++ {
-		if err := db.InsertCall(network, path+"-tx", height, i, "", "g1caller", path, "F", true); err != nil {
+		if err := db.InsertCall(network, path+"-tx", height, i, "", "g1caller", path, "F", "", "", true); err != nil {
 			t.Fatalf("call %s: %v", path, err)
 		}
 	}

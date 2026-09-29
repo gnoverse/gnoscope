@@ -683,6 +683,17 @@ tr.total-row td { font-weight: bold; color: var(--accent); }
 .msg-n { color: var(--fg2); font-size: 11px; font-family: var(--mono); min-width: 1.6em; text-align: right; flex: none; }
 .msg-list .msg-more { display: none; }
 .msg-list.open .msg-more { display: flex; }
+/* A type cell's badges. Only the gap between pairs may break: a badge and its
+   ×N count are one word, and splitting them left the count stranded under an
+   unrelated badge in a narrow column. */
+.type-cell { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.type-pair { display: inline-flex; gap: 3px; align-items: baseline; white-space: nowrap; }
+/* A call's arguments, dimmer than the function they belong to: the function is
+   what the row is about and the args are how you tell it from the next one. */
+.msg-args { color: var(--fg2); font-size: 12px; word-break: break-word; }
+/* Coins a message carried. A value, not context, so it does not read as the
+   same weight as the block number beside it. */
+.msg-send { color: var(--accent); font-size: 12px; white-space: nowrap; }
 .section-sub { color: var(--fg2); font-size: 12px; margin: -4px 0 10px; max-width: 70ch; }
 /* Achievements: the badge grid, the filter chips, and the strip of emoji that
    stands in for the grid inside a table row. Cards rather than a table because
@@ -2668,8 +2679,20 @@ function txLink(hash, blockHeight, network, opts) {
   a.title = hash;
   span.appendChild(a);
   if (showBlock) {
-    const ctx = blockHeight === 0 ? ' (genesis)' : ' (block ' + fmtNum(blockHeight) + ')';
-    span.appendChild(el('span', { className: 'block-ctx' }, ctx));
+    // The height is a link, not text. It was the one identifier on the row a
+    // reader could see and not reach: "which block was this in" was answerable
+    // only by opening the transaction and clicking through from there.
+    const ctx = el('span', { className: 'block-ctx' });
+    if (blockHeight === 0) {
+      ctx.append(' (');
+      ctx.appendChild(link('genesis', () => navigate('/block/0' + netSuffix(network))));
+      ctx.append(')');
+    } else {
+      ctx.append(' (block ');
+      ctx.appendChild(link(fmtNum(blockHeight), () => navigate('/block/' + blockHeight + netSuffix(network))));
+      ctx.append(')');
+    }
+    span.appendChild(ctx);
   }
   return span;
 }
@@ -2679,14 +2702,21 @@ function txDetailEl(msg) {
   switch (v.__typename) {
     case 'MsgAddPackage':
       if (v.package?.path) s.appendChild(realmPathEl(v.package.path));
+      appendSendEl(s, v.send);
       return s;
     case 'MsgCall':
+      // Same shape as storedTxDetail's: `path.Func(args)`. The indexer hands
+      // back the real argument list, so it is truncated here rather than
+      // server-side, to the same budget.
       s.appendChild(realmPathEl(v.pkg_path));
-      s.append('::');
+      s.append('.');
       s.appendChild(funcSpan(v.func));
+      s.appendChild(el('span', { className: 'msg-args' }, '(' + argsPreview(v.args) + ')'));
+      appendSendEl(s, v.send);
       return s;
     case 'MsgRun':
       s.append('run by '); s.appendChild(addrLink(v.caller));
+      appendSendEl(s, v.send);
       return s;
     case 'BankMsgSend': {
       s.appendChild(addrLink(v.from_address)); s.append(' > '); s.appendChild(addrLink(v.to_address));
@@ -3669,8 +3699,6 @@ async function loadWatchlist() {
         for (const g of groupTxMessages(data.transactions)) {
           const views = storedMsgViews(g.msgs);
           const hashTd = el('td', {}, txLink(g.hash, g.block_height, g.network, { showBlock: false }));
-          const count = txMsgCountEl(g.msgs.length);
-          if (count) hashTd.appendChild(count);
           body.appendChild(netRow(g.network,
             hashTd,
             el('td', {}, g.caller ? addrLink(g.caller, g.network) : ''),
@@ -5839,21 +5867,68 @@ function highlightBtn(group, activeBtn) {
 
 // storedTxDetail renders the detail cell for a row that came from storage,
 // matching what txDetailEl produces for the same message from the indexer.
+// argsPreview is the browser-side twin of store.BuildArgsPreview, for rows that
+// come from the indexer with their arguments intact. Same two budgets and the
+// same ellipsis, so a row drawn from the indexer and the same row drawn from
+// storage do not disagree about how much of an argument they show.
+//
+// Kept deliberately small and duplicated rather than shared: the server has to
+// truncate before writing (the column is bounded) and the client has to
+// truncate what it never wrote. One of the two will always exist.
+const ARGS_PREVIEW_MAX = 96;
+const ARG_PREVIEW_MAX = 32;
+function argsPreview(args) {
+  if (!args || !args.length) return '';
+  let out = '';
+  for (const a of args) {
+    if (out) out += ', ';
+    out += cutText(a, ARG_PREVIEW_MAX);
+    if (out.length >= ARGS_PREVIEW_MAX) break;
+  }
+  return cutText(out, ARGS_PREVIEW_MAX);
+}
+
+// cutText flattens whitespace and cuts to max *characters*, marking the cut.
+// Counted in code points rather than in string indices, so a multi-byte
+// character is never split into a replacement glyph.
+function cutText(v, max) {
+  const flat = String(v).split(/\s+/).filter(Boolean).join(' ');
+  const r = [...flat];
+  return r.length <= max ? flat : r.slice(0, max - 1).join('') + '\u2026';
+}
+
 function storedTxDetail(tx) {
   const span = el('span');
   switch (tx.type) {
     case 'MsgCall': {
+      // `path.Func(args)`, the way the call is written in gno, rather than the
+      // `path::func` the storage row happens to be keyed by. `::` is this
+      // explorer's own separator for gluing two columns into one string; it is
+      // not notation anybody writes, and printing it taught readers a syntax
+      // the language does not have.
       const [path, fn] = (tx.detail || '').split('::');
       if (path) span.appendChild(realmPathEl(path, tx.network));
-      if (fn) { span.append('::'); span.appendChild(funcSpan(fn)); }
+      if (fn) { span.append('.'); span.appendChild(funcSpan(fn)); }
+      // The arguments, already truncated server-side and carrying their own
+      // ellipsis (BuildArgsPreview). Drawn even when empty, because `Deposit()`
+      // and `Deposit` say different things and only the first is a call.
+      // Bounded again here, though the column is already bounded server-side.
+      // The cap is what keeps a row one line tall, and a row is not the right
+      // place to find out that some other writer put a 4 KB string in the
+      // column: cutText is idempotent on anything BuildArgsPreview produced.
+      span.appendChild(el('span', { className: 'msg-args' },
+        '(' + cutText(tx.args || '', ARGS_PREVIEW_MAX) + ')'));
+      appendSendEl(span, tx.send);
       return span;
     }
     case 'MsgAddPackage':
       if (tx.detail) span.appendChild(realmPathEl(tx.detail, tx.network));
+      appendSendEl(span, tx.send);
       return span;
     case 'MsgRun':
       span.append('run by ');
       span.appendChild(addrLink(tx.caller, tx.network));
+      appendSendEl(span, tx.send);
       return span;
     case 'BankMsgSend': {
       const [to, amount] = (tx.detail || '').split(' ');
@@ -5867,6 +5942,22 @@ function storedTxDetail(tx) {
   }
   span.append(tx.detail || '');
   return span;
+}
+
+// appendSendEl draws the coins a message carried alongside whatever else it
+// did, and draws nothing when it carried none.
+//
+// A MsgCall may move money, and until this the list said nothing about it: a
+// wugnot Deposit that sent 5 GNOT rendered identically to a Render that sent
+// nothing, so the one row on the page where money changed hands was the one row
+// that looked like every other. Styled as a value rather than as context
+// because that is what it is.
+function appendSendEl(into, send) {
+  if (!send) return;
+  const pretty = fmtCoins(send) || send;
+  const el_ = el('span', { className: 'msg-send' }, ' +' + pretty);
+  el_.title = 'coins sent with this message: ' + send;
+  into.appendChild(el_);
 }
 
 // --- A transaction is not a message -----------------------------------------
@@ -5953,21 +6044,28 @@ function indexerMsgViews(msgs) {
 // column a reader scans to see what a transaction *was*. Mixed kinds get one
 // badge each, capped, since a row listing six badges is not a summary.
 function txTypeCellEl(views) {
-  const span = el('span', { style: { display: 'inline-flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' } });
+  const span = el('span', { className: 'type-cell' });
   const kinds = [];
   for (const v of views) if (!kinds.includes(v.kind)) kinds.push(v.kind);
+  // A badge and its count are one word, never two.
+  //
+  // They used to be siblings under a wrapping flex, so in a narrow type column
+  // "call" and "×2" landed on separate lines and the count read as a stray
+  // number under an unrelated badge. Each pair is now its own nowrap box and
+  // only the gap *between* pairs is allowed to break.
+  const pair = (badgeEl, n) => {
+    const w = el('span', { className: 'type-pair' }, badgeEl);
+    if (n > 1) w.appendChild(el('span', { className: 'block-ctx' }, '\u00d7' + n));
+    return w;
+  };
   if (kinds.length <= 1) {
-    span.appendChild(views[0] ? views[0].badge() : typeBadge(''));
-    if (views.length > 1) span.appendChild(el('span', { className: 'block-ctx' }, '\u00d7' + views.length));
+    span.appendChild(pair(views[0] ? views[0].badge() : typeBadge(''), views.length));
     return span;
   }
   const shown = kinds.slice(0, 3);
   for (const k of shown) {
-    const first = views.find(v => v.kind === k);
-    const b = first.badge();
-    const n = views.filter(v => v.kind === k).length;
-    span.appendChild(b);
-    if (n > 1) span.appendChild(el('span', { className: 'block-ctx' }, '\u00d7' + n));
+    span.appendChild(pair(views.find(v => v.kind === k).badge(),
+      views.filter(v => v.kind === k).length));
   }
   if (kinds.length > shown.length) {
     span.appendChild(el('span', { className: 'block-ctx' }, '+' + (kinds.length - shown.length)));
@@ -6021,12 +6119,6 @@ function txStatusCellEl(rows) {
   return span;
 }
 
-// txMsgCountEl is the "×N messages" note beside a hash. Null for a single
-// message, so an ordinary transaction gains nothing.
-function txMsgCountEl(n) {
-  return n > 1 ? el('span', { className: 'block-ctx' }, ' \u00d7' + n + ' msgs') : null;
-}
-
 // renderTxRows draws the page the server returned. No local filtering: the rows
 // that arrived are already the rows that match.
 function renderTxRows(data) {
@@ -6067,8 +6159,6 @@ function renderTxRows(data) {
 
   for (const { tx, views } of groups) {
     const hashTd = el('td', {}, txLink(tx.hash, tx.block_height, tx.network, { showBlock: false }));
-    const count = txMsgCountEl(views.length);
-    if (count) hashTd.appendChild(count);
     list.appendChild(liveTagRow(netRow(tx.network,
       hashTd,
       el('td', {}, signerCell(tx, tx.network)),
@@ -6186,8 +6276,6 @@ async function loadBlockDetail(height) {
           // multicall actually did.
           const views = indexerMsgViews(tx.messages);
           const hashTd = el('td', {}, txLink(tx.hash, tx.block_height));
-          const count = txMsgCountEl(views.length);
-          if (count) hashTd.appendChild(count);
           txBody.appendChild(el('tr', {},
             hashTd,
             el('td', {}, txTypeCellEl(views)),
@@ -16325,8 +16413,6 @@ function renderAddressTxs(pane, txs, data, blockTime, d) {
         : (g.block_height === 0 ? 'genesis' : '');
       const txTd = el('td', {}, txLink(g.hash, g.block_height, g.network));
       if (g.network) txTd.appendChild(netBadgeEl(g.network));
-      const count = txMsgCountEl(g.msgs.length);
-      if (count) txTd.appendChild(count);
       const views = storedMsgViews(g.msgs);
       body.appendChild(el('tr', {},
         txTd,

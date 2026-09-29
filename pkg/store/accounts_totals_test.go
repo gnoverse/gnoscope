@@ -17,18 +17,18 @@ func TestAddressTransactionsCountsMessagesAndTxsApart(t *testing.T) {
 
 	// One transaction carrying three messages of two kinds — a deploy batch
 	// with a call riding along, which is the ordinary shape of a multicall.
-	if err := db.InsertPackageSubmission("gnoland1", "TXMULTI", 0, "gno.land/r/moul/a", "a", addr, 100, "2026-01-01T00:00:00Z", true, 1, true); err != nil {
+	if err := db.InsertPackageSubmission("gnoland1", "TXMULTI", 0, "gno.land/r/moul/a", "a", addr, 100, "2026-01-01T00:00:00Z", true, 1, "", true); err != nil {
 		t.Fatalf("insert submission 0: %v", err)
 	}
-	if err := db.InsertPackageSubmission("gnoland1", "TXMULTI", 1, "gno.land/r/moul/b", "b", addr, 100, "2026-01-01T00:00:00Z", true, 1, true); err != nil {
+	if err := db.InsertPackageSubmission("gnoland1", "TXMULTI", 1, "gno.land/r/moul/b", "b", addr, 100, "2026-01-01T00:00:00Z", true, 1, "", true); err != nil {
 		t.Fatalf("insert submission 1: %v", err)
 	}
-	if err := db.InsertCall("gnoland1", "TXMULTI", 100, 2, "2026-01-01T00:00:00Z", addr, "gno.land/r/moul/a", "Init", true); err != nil {
+	if err := db.InsertCall("gnoland1", "TXMULTI", 100, 2, "2026-01-01T00:00:00Z", addr, "gno.land/r/moul/a", "Init", "", "", true); err != nil {
 		t.Fatalf("insert call: %v", err)
 	}
 	// And one ordinary single-message transaction, so the two counts differ by
 	// the multicall alone rather than by everything on the page.
-	if err := db.InsertCall("gnoland1", "TXSOLO", 101, 0, "2026-01-02T00:00:00Z", addr, "gno.land/r/moul/a", "Ping", true); err != nil {
+	if err := db.InsertCall("gnoland1", "TXSOLO", 101, 0, "2026-01-02T00:00:00Z", addr, "gno.land/r/moul/a", "Ping", "", "", true); err != nil {
 		t.Fatalf("insert solo call: %v", err)
 	}
 
