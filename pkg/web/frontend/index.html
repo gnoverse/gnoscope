@@ -13516,7 +13516,6 @@ function renderUsageTreemap(mount, host, detail, usage, gen, filtered) {
 
   disposeUsageTreemap();
   mount.textContent = '';
-  if (typeof echarts === 'undefined') return;
 
   const funcs = (usage.functions || []).filter(f => f.calls > 0);
   const callers = (usage.callers || []).filter(c => c.messages > 0);
@@ -21205,9 +21204,20 @@ function loadDashboards() {
   // fetch is still pending) can detect they've been superseded and bail out.
   const gen = ++_dashGen;
   const root = clear('dashboards-content');
-  if (typeof echarts === 'undefined') {
-    root.appendChild(el('div', { className: 'dash-msg' },
-      'charts unavailable — the ECharts library failed to load'));
+  // ECharts is fetched on first use (#214), and this page is nothing without
+  // it, so the whole page waits rather than each of its ~20 cards waiting
+  // separately. This gate used to be `typeof echarts === 'undefined'`, which
+  // was true for every visit once the library stopped being loaded up front:
+  // /dashboards printed "charts unavailable" and never drew anything at all.
+  // Written out rather than through libRetry because the failure message has
+  // to survive, and libRetry swallows the rejection.
+  if (!libReady('echarts')) {
+    root.appendChild(el('div', { className: 'skeleton', style: { height: '260px' } }));
+    loadLib('echarts').then(loadDashboards, (err) => {
+      console.error('chart library unavailable', 'echarts', err);
+      clear('dashboards-content').appendChild(el('div', { className: 'dash-msg' },
+        'charts unavailable, the ECharts library failed to load'));
+    });
     return;
   }
   // A section appears only once it has at least one chart, so later batches
