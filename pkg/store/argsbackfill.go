@@ -6,52 +6,70 @@ func argsBackfillCursorKey(network string) string {
 	return "args_backfill_cursor:" + network
 }
 
-// ArgsBackfillRange returns the next block range whose messages still need
-// their args and send columns filled, walking **backwards** from the sync tip.
+// ArgsBackfillHeights returns the next batch of block heights whose messages
+// still need their args and send columns filled, newest first.
 //
-// Backwards, unlike TokenBackfillRange, and the direction is the whole design.
-// A ledger has to be complete before any of it is true, so the token walk goes
-// forwards until it meets the forward fill and only the finished state is worth
-// anything. This one fills a preview column: every batch it completes makes a
-// page better on its own, and the pages people open are the recent ones. Going
-// forwards would spend an hour on 2023 before the current tip gained a single
-// argument.
+// Heights, not a range, and that is the fix for two separate mistakes in the
+// first version of this.
 //
-// The cursor is the lowest height already done, so a restart resumes where it
-// stopped and a finished walk stays finished. `more` is false once the walk
-// has reached the oldest block stored for the network.
+// The first was fatal. That version took its bounds from the `blocks` table,
+// copying TokenBackfillRange, and `blocks` is *windowed*: `-block-history-days`
+// keeps 90 days of it, while calls and package_submissions go back to genesis.
+// So `MIN(height) FROM blocks` was around the sync tip, the walk decided it had
+// reached the oldest block stored after exactly one 100-block batch, and it
+// stopped. Observed on the live instance 2026-09-29: one pass at 430865..430964,
+// then silence, with every row below that still empty.
 //
-// Returns a half-open range [from, to).
-func (d *DB) ArgsBackfillRange(network string, batch int) (from, to int, more bool, err error) {
+// The second was waste. Walking every height in a range spends a round trip on
+// each one, and mainnet's 32,774 calls are spread across 430,000 blocks, so the
+// overwhelming majority of those fetches would find nothing to update. Asking
+// the source tables which heights actually hold candidate rows skips the rest
+// without a request.
+//
+// The emptiness test is a *skip filter*, never the stop condition. An empty
+// args is also the steady state of a call that took no arguments, so a walk
+// that stopped when nothing matched would revisit those heights forever. The
+// cursor is what guarantees termination: it only moves down, and every height
+// it passes is done whether or not anything was written there.
+func (d *DB) ArgsBackfillHeights(network string, batch int) ([]int, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	var lowest, tip *int
-	if err = d.db.QueryRow(
-		`SELECT MIN(height), MAX(height) FROM blocks WHERE `+
-			d.networkFilter("network", network)).Scan(&lowest, &tip); err != nil {
-		return 0, 0, false, err
-	}
-	if lowest == nil || tip == nil {
-		return 0, 0, false, nil // nothing stored yet, nothing to fill
-	}
-
-	// With no cursor the walk starts just above the tip, so the newest block is
-	// in the first batch rather than one short of it.
-	to = *tip + 1
-	if cur, cerr := d.getSyncStateLocked(argsBackfillCursorKey(network)); cerr == nil && cur != "" {
-		if n, perr := strconv.Atoi(cur); perr == nil && n < to {
-			to = n
+	// No cursor yet means start above every stored height, so the newest block
+	// is in the first batch rather than one short of it.
+	below := int(^uint(0) >> 1)
+	if cur, err := d.getSyncStateLocked(argsBackfillCursorKey(network)); err == nil && cur != "" {
+		if n, perr := strconv.Atoi(cur); perr == nil {
+			below = n
 		}
 	}
-	if to <= *lowest {
-		return 0, 0, false, nil // the walk has reached the oldest block stored
+
+	nf := d.networkFilter("network", network)
+	rows, err := d.db.Query(`
+		SELECT height FROM (
+			SELECT DISTINCT block_height height FROM calls
+			 WHERE block_height < ? AND args = '' AND send = '' AND `+nf+`
+			UNION
+			SELECT DISTINCT block_height FROM package_submissions
+			 WHERE block_height < ? AND send = '' AND `+nf+`
+			UNION
+			SELECT DISTINCT block_height FROM msg_runs
+			 WHERE block_height < ? AND send = '' AND `+nf+`
+		) ORDER BY height DESC LIMIT ?`, below, below, below, batch)
+	if err != nil {
+		return nil, err
 	}
-	from = to - batch
-	if from < *lowest {
-		from = *lowest
+	defer rows.Close()
+
+	out := []int{}
+	for rows.Next() {
+		var h int
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
 	}
-	return from, to, true, nil
+	return out, rows.Err()
 }
 
 // SetArgsBackfillCursor records the lowest height the walk has completed.
