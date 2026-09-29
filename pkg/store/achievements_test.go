@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"sort"
 	"testing"
 
@@ -93,6 +94,88 @@ func seedAchievementWorld(t *testing.T, db *DB) {
 		AllowPaths: []string{"vm/exec:gno.land/r/alice/shop"}, GrantedHeight: 31, GrantedTime: "2026-01-16T00:00:00Z", GrantedTx: "TX16"}))
 	must("revoke", db.RevokeSessionGrant(net, "g1carol", 32, "2026-01-17T00:00:00Z", "TX17"))
 
+	// carol actually signs something with the key she was granted. This is what
+	// separates session-used from session-created, and it is recorded nowhere
+	// else: the call it signed names ALICE as its caller, because a session
+	// signs as its master.
+	must("call", db.InsertCall(net, "TX21", 34, 0, "2026-01-21T00:00:00Z", "g1alice", "gno.land/r/alice/shop", "Buy", "", "", true))
+	must("session tx", db.RecordSessionTx(net, "TX21", "g1carol", 34))
+
+	// Tool memos. All four on bob's calls, so no other badge's expected set
+	// moves, plus one on a send of alice's: that leg of the union is a
+	// different table, and the LIKE that covers gnomi's two spellings has to
+	// match the second one too.
+	for i, m := range []struct{ hash, memo, fn string }{
+		{"TX22", "Executed through gnoswap.io", "Swap"},
+		{"TX23", "gnopublish", "Deploy"},
+		{"TX24", "Posted from gnoblog-cli", "Post"},
+		{"TX25", "Gnomi.fun", "Buy"},
+	} {
+		h := 35 + i
+		must("call", db.InsertCall(net, m.hash, h, 0, "2026-01-22T00:00:00Z", "g1bob", "gno.land/r/alice/shop", m.fn, "", "", true))
+		must("memo", db.UpsertTxMemos(net, []TxMemoRow{{Hash: m.hash, Memo: m.memo, BlockHeight: h, BlockTime: "2026-01-22T00:00:00Z"}}))
+	}
+	must("send", db.InsertBankSend(net, "TX27", 40, "2026-01-23T00:00:00Z", "g1alice", "g1bob", "1ugnot", true))
+	must("memo", db.UpsertTxMemos(net, []TxMemoRow{{Hash: "TX27", Memo: "gnomi", BlockHeight: 40, BlockTime: "2026-01-23T00:00:00Z"}}))
+
+	// whale is the volume control: the tiers are the only badges that need an
+	// account with more history than a hand-written fixture would otherwise
+	// have, and they are exactly the badges that would pass a small fixture
+	// with the wrong threshold compiled in.
+	//
+	// 1,000 calls, one per transaction. Every message is its own tx hash on
+	// purpose: nthSQL collapses a transaction carrying several messages to one
+	// event, and a fixture of one message per tx cannot tell a query that
+	// forgot to that a query that did.
+	for i := 0; i < 1000; i++ {
+		must("whale call", db.InsertCall(net, fmt.Sprintf("W%04d", i), 100+i, 0, "2026-02-01T00:00:00Z",
+			"g1whale", "gno.land/r/alice/shop", "Buy", "", "", true))
+	}
+	// Ten distinct paths, and one of them submitted twice. The redeploy is what
+	// makes package-10 worth its dedup key: counted by submission rather than
+	// by path, eleven rows would award the tenth-package badge to somebody who
+	// published nine.
+	for i := 1; i <= 10; i++ {
+		must("whale pkg", db.InsertPackageSubmission(net, fmt.Sprintf("WP%02d", i), 0,
+			fmt.Sprintf("gno.land/p/whale/lib%d", i), "lib", "g1whale", 1200+i, "2026-02-02T00:00:00Z", false, 1, "", true))
+	}
+	must("whale redeploy", db.InsertPackageSubmission(net, "WP01B", 0,
+		"gno.land/p/whale/lib1", "lib", "g1whale", 1300, "2026-02-03T00:00:00Z", false, 1, "", true))
+
+	// A v1 and then a v2 of the same path, which is the only way to change a
+	// package that is not private. lib10 above ends in a digit and is the
+	// control for the suffix trimming: it must not read as a version of lib1.
+	must("whale v1", db.InsertPackageSubmission(net, "WV1", 0,
+		"gno.land/p/whale/mod/v1", "mod", "g1whale", 1310, "2026-02-04T00:00:00Z", false, 1, "", true))
+	must("whale v2", db.InsertPackageSubmission(net, "WV2", 0,
+		"gno.land/p/whale/mod/v2", "mod", "g1whale", 1311, "2026-02-05T00:00:00Z", false, 1, "", true))
+
+	// nine is the control for package-10's dedup key: nine paths, each
+	// published twice. Counted by submission he clears ten and the badge is
+	// wrong; counted by path he is one short, which is the answer.
+	for i := 1; i <= 9; i++ {
+		must("nine pkg", db.InsertPackageSubmission(net, fmt.Sprintf("N%02d", i), 0,
+			fmt.Sprintf("gno.land/p/nine/lib%d", i), "lib", "g1nine", 1400+i, "2026-02-06T00:00:00Z", false, 1, "", true))
+		must("nine again", db.InsertPackageSubmission(net, fmt.Sprintf("N%02dB", i), 0,
+			fmt.Sprintf("gno.land/p/nine/lib%d", i), "lib", "g1nine", 1420+i, "2026-02-07T00:00:00Z", false, 1, "", true))
+	}
+
+	// dave is the control for version-bump's suffix trimming. lib1 and lib10
+	// share every character up to the digits, so a query that trims digits and
+	// compares numbers awards him a version bump he never shipped. The guard is
+	// that a real version segment ends in "/v".
+	//
+	// He is also the control for the tool badges, and that is why his memo is
+	// a sentence rather than a stamp: every other memo in this world names a
+	// tool, so without one that names none, each tool query passes with its
+	// predicate deleted. It sits on a package submission, which is also the
+	// only leg of memoBadgeSQL's union nothing else exercises.
+	must("dave lib1", db.InsertPackageSubmission(net, "D01", 0,
+		"gno.land/p/dave/lib1", "lib", "g1dave", 1500, "2026-02-08T00:00:00Z", false, 1, "", true))
+	must("memo", db.UpsertTxMemos(net, []TxMemoRow{{Hash: "D01", Memo: "just a note", BlockHeight: 1500, BlockTime: "2026-02-08T00:00:00Z"}}))
+	must("dave lib10", db.InsertPackageSubmission(net, "D10", 0,
+		"gno.land/p/dave/lib10", "lib", "g1dave", 1501, "2026-02-09T00:00:00Z", false, 1, "", true))
+
 	// A validator, which is nobody else in this world.
 	must("valoper", db.InsertValoperRegistration(net, "TX18", 33, "2026-01-18T00:00:00Z", "g1val", "Register", "g1val", "val-1", true))
 }
@@ -156,12 +239,12 @@ func TestAchievementsAwardTheRightAddresses(t *testing.T) {
 		want []string
 		why  string
 	}{
-		{"first-tx", []string{"g1alice", "g1bob"}, "both signed something; carol only ever received a grant"},
+		{"first-tx", []string{"g1alice", "g1bob", "g1dave", "g1nine", "g1whale"}, "everyone who signed something; carol only ever received a grant, and a session signs as its master"},
 		{"first-gnot-sent", []string{"g1alice"}, "only alice sent"},
 		{"first-gnot-received", []string{"g1bob"}, "only bob received"},
-		{"first-call", []string{"g1alice", "g1bob"}, "both called a realm"},
+		{"first-call", []string{"g1alice", "g1bob", "g1whale"}, "everyone but carol called a realm"},
 		{"first-run", []string{"g1alice"}, "only alice ran a script"},
-		{"first-package", []string{"g1alice"}, "bob deployed a realm, not a package"},
+		{"first-package", []string{"g1alice", "g1dave", "g1nine", "g1whale"}, "bob deployed a realm, not a package"},
 		{"first-realm", []string{"g1alice"}, "bob's realm has no submission row, only a package row"},
 		{"home-realm", []string{"g1alice"}, "only alice deployed …/home"},
 		{"first-import", []string{"g1alice", "g1bob"}, "alice imports p/demo/avl, bob imports alice's util; dave imports only his own lib"},
@@ -177,10 +260,27 @@ func TestAchievementsAwardTheRightAddresses(t *testing.T) {
 		{"token-issuer", []string{"g1alice"}, "the token's realm is alice's"},
 		{"session-created", []string{"g1alice"}, "alice is the master"},
 		{"session-revoked", []string{"g1alice"}, "alice revoked it"},
-		{"session-key", []string{"g1carol"}, "carol is the delegated address, not a master"},
+		{"session-used", []string{"g1alice"}, "carol signed TX21, and the badge belongs to the master who granted her"},
 		{"govdao-vote", []string{"g1alice"}, "only alice voted"},
 		{"govdao-execute", []string{"g1alice"}, "only alice executed"},
 		{"validator", []string{"g1val"}, "only g1val registered"},
+
+		// The tiers. alice signs 11 transactions in this world, which is what
+		// makes tx-10 a real set rather than whale alone: a query that counted
+		// messages instead of transactions, or that awarded on "has ever
+		// signed", would put bob in here too.
+		{"tx-10", []string{"g1alice", "g1nine", "g1whale"}, "alice signs 11 transactions, nine 18, whale 1,012; bob signs 6 and dave 2"},
+		{"tx-100", []string{"g1whale"}, "only whale gets past a hundred"},
+		{"tx-1000", []string{"g1whale"}, "only whale gets past a thousand"},
+		{"package-10", []string{"g1whale"}, "whale published twelve distinct paths; nine published eighteen times across nine paths and is one short"},
+		{"redeploy", []string{"g1nine", "g1whale"}, "both published twice to a path they had already published to"},
+		{"version-bump", []string{"g1whale"}, "whale shipped mod/v2 after mod/v1; dave's lib10 is not a version of his lib1"},
+
+		// The tool badges, which read a memo rather than a message.
+		{"tool-gnoswap", []string{"g1bob"}, "bob's TX22 carries gnoswap's stamp"},
+		{"tool-gnopublish", []string{"g1bob"}, "bob's TX23 carries gnopublish's"},
+		{"tool-gnoblog", []string{"g1bob"}, "bob's TX24 carries gnoblog-cli's"},
+		{"tool-gnomi", []string{"g1alice", "g1bob"}, "bob's call says Gnomi.fun and alice's send says gnomi; one LIKE covers both"},
 	}
 
 	// Every indexed definition must appear above. A badge added to the catalog

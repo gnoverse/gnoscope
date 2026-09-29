@@ -169,21 +169,25 @@ test('the achievements tab survives a reload, and the overview comes back', asyn
   await expect(page.locator('#address-detail-content canvas').first()).toBeVisible();
 });
 
-// A marker badge is not scored, on the page or in the payload.
+// Every badge drawn is a badge counted, on the page and in the payload.
 //
-// session-key describes what an address *is*, and a master account can never
-// become one. Counted, it put a badge in a denominator nobody reading their own
-// page can move: moul's read "21 of 26" against a real ceiling of 25.
-test('a marker badge is drawn but not scored', async ({ page }) => {
+// session-key used to break that: it described what an address *is*, and a
+// master account could never become one, so counting it put a badge in a
+// denominator nobody reading their own page could move (moul's read "21 of 26"
+// against a real ceiling of 25). It was removed from the catalog rather than
+// filtered out of the score, so a denominator smaller than the grid is now a
+// bug on either side.
+test('the score counts every badge in the catalog', async ({ page }) => {
   await waitForBadges(page);
 
   const cat = await (await page.request.get('/api/achievements')).json();
-  const markers = (cat.achievements || []).filter(a => a.marker);
-  expect(markers.length, 'no marker in the catalog, so this test proves nothing').toBeGreaterThan(0);
+  expect((cat.achievements || []).length, 'an empty catalog proves nothing').toBeGreaterThan(0);
+  expect((cat.achievements || []).filter(a => a.marker).length,
+    'a marker badge is back in the catalog; nothing scores it any more').toBe(0);
 
   const res = await (await page.request.get(`/api/address/${BUSY_CALLER}/achievements`)).json();
-  expect(res.total, 'the payload counted a badge nobody can earn')
-    .toBe(res.achievements.length - markers.length);
+  expect(res.total, 'the payload drew a badge it did not count')
+    .toBe(res.achievements.length);
 
   await page.goto(`/address/${BUSY_CALLER}?tab=achievements`);
   await settle(page);

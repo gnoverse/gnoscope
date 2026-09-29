@@ -1032,3 +1032,73 @@ func (d *DB) LastCallOrSendHeight(ctx context.Context, network string) (*int, er
 	}
 	return &lastHeight, nil
 }
+
+// TxMemoRow is one transaction that carried a memo. Rows with an empty memo are
+// not written: see the tx_memos table in schema.go for why the table holds only
+// the fifth of transactions that have one.
+type TxMemoRow struct {
+	Hash        string
+	Memo        string
+	BlockHeight int
+	BlockTime   string
+}
+
+// UpsertTxMemos records the memos of a batch of transactions.
+//
+// Batched under one lock and one SQLite transaction for the reason spelled out
+// on UpsertTransactions: the callers are sweeps of thousands of blocks, and a
+// per-row write makes every API read queue behind the sweep.
+//
+// INSERT OR REPLACE rather than OR IGNORE, so a re-sweep heals a row written
+// before the memo was selected from the indexer. A memo is immutable on chain,
+// so replacing one can only ever write the same value back.
+func (d *DB) UpsertTxMemos(network string, rows []TxMemoRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT OR REPLACE INTO tx_memos (network, tx_hash, memo, block_height, block_time)
+		VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range rows {
+		if r.Memo == "" || r.Hash == "" {
+			continue
+		}
+		if _, err := stmt.Exec(network, r.Hash, r.Memo, r.BlockHeight, r.BlockTime); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// TxMemo returns one transaction's memo, or "" when it carried none.
+//
+// Empty and absent are the same answer on purpose: tx_memos stores only the
+// transactions that have a memo, so "no row" and "no memo" are the same fact
+// and a caller that had to tell them apart would be asking a question the table
+// cannot answer.
+func (d *DB) TxMemo(network, txHash string) (string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	var memo string
+	err := d.db.QueryRow(
+		`SELECT memo FROM tx_memos WHERE `+d.networkFilter("network", network)+` AND tx_hash = ?`,
+		txHash).Scan(&memo)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return memo, err
+}

@@ -1,6 +1,7 @@
 package achievements
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -41,15 +42,12 @@ func TestCatalogInvariants(t *testing.T) {
 				t.Errorf("group %q has no label", d.Group)
 			}
 
-			// SQL and Live are the two ways a badge can be decided, and it has
-			// to be exactly one. Neither means a badge nobody can ever earn;
-			// both means the rollup and the live read would disagree about the
-			// same slug, and the one that wrote last would win.
-			switch {
-			case d.SQL == "" && !d.Live:
-				t.Error("no SQL and not marked Live: nothing can ever award this")
-			case d.SQL != "" && d.Live:
-				t.Error("both SQL and Live: two sources for one badge")
+			// Every badge has to be decidable by something. Live is a
+			// supplement rather than an alternative: it ORs a chain read into
+			// an answer the index already has, so a badge carrying both is
+			// fine and a badge carrying neither can never be awarded at all.
+			if d.SQL == "" {
+				t.Error("no SQL: nothing can ever award this")
 			}
 
 			if d.SQL != "" {
@@ -95,33 +93,100 @@ func TestNoHowLineQuotesAGasFigure(t *testing.T) {
 	}
 }
 
-// A marker is not earnable, and every consumer has to know which kind it is
-// looking at. moul's page read "21 of 26" against a real ceiling of 25 because
-// session-key sat in the denominator: a badge in a score that nobody reading
-// their own page can ever move.
-func TestMarkersAreNotEarnableAndSayNotToTry(t *testing.T) {
-	markers := 0
+// Nothing in the catalog is unearnable.
+//
+// session-key used to be: it marked a delegated signing address, which is
+// something an account *is* rather than something it did, and no master account
+// could ever become one. It still sat in the denominator, so moul's page read
+// "21 of 26" against a real ceiling of 25 with nothing saying which badge was
+// the impossible one. It was deleted rather than excluded, because nobody
+// browses a session address: a session is a signing key, and the page anyone
+// opens is the master it was granted by.
+func TestNothingInTheCatalogIsUnearnable(t *testing.T) {
+	if Lookup("session-key") != nil {
+		t.Error("session-key is back. It awards a badge to a delegated address nobody looks up, and it cannot be earned by the account that granted it")
+	}
+	// The three session badges all describe what the MASTER did, which is the
+	// thing a reader can go and do something about.
+	for _, slug := range []string{"session-created", "session-used", "session-revoked"} {
+		d := Lookup(slug)
+		if d == nil {
+			t.Fatalf("%s is missing; creating, using and revoking a session are the three deeds worth a badge", slug)
+		}
+		if strings.Contains(strings.ToLower(d.How), "not earned") {
+			t.Errorf("%s reads as a marker rather than an instruction: %q", slug, d.How)
+		}
+	}
+	// session-used is awarded to the master, not to the key. The query is the
+	// only place that can get this wrong, and getting it wrong means awarding
+	// a badge to an address with no page and no owner reading it.
+	if d := Lookup("session-used"); d != nil && !strings.Contains(d.SQL, "g.master AS address") {
+		t.Errorf("session-used does not award to the master: %s", d.SQL)
+	}
+}
+
+// A tier names the rung below it and raises the bar.
+//
+// Of is what lets a page draw "first transaction -> ten -> a hundred -> a
+// thousand" as one ladder instead of four unrelated badges, so a dangling Of is
+// a rung that renders detached, and a threshold that does not increase is a
+// ladder that reads as going backwards.
+func TestTiersFormALadder(t *testing.T) {
+	tiers := 0
 	for _, d := range Catalog {
-		if !d.Marker {
+		if d.Of == "" && d.Threshold == 0 {
 			continue
 		}
-		markers++
-		// A marker still has to be decidable, or it would draw on nobody's page
-		// including the addresses it describes.
-		if d.SQL == "" {
-			t.Errorf("%s is a marker with no SQL, so nothing can ever show it", d.Slug)
+		tiers++
+		if d.Of == "" || d.Threshold == 0 {
+			t.Errorf("%s sets one of Of/Threshold and not the other: %q / %d", d.Slug, d.Of, d.Threshold)
+			continue
 		}
-		// And it has to say it is not a thing to go and do, because the grid
-		// draws it next to badges that are.
-		if !strings.Contains(strings.ToLower(d.How), "not earned") {
-			t.Errorf("%s is a marker but its how line reads like an instruction: %q", d.Slug, d.How)
+		parent := Lookup(d.Of)
+		if parent == nil {
+			t.Errorf("%s is a tier of %q, which is not in the catalog", d.Slug, d.Of)
+			continue
+		}
+		if parent.Threshold >= d.Threshold {
+			t.Errorf("%s needs %d but its parent %s needs %d; a rung has to be higher than the one below it",
+				d.Slug, d.Threshold, parent.Slug, parent.Threshold)
+		}
+		// The rung's query has to actually count to its own threshold. A
+		// copy-pasted tier that still says 100 in its SQL is awarded to
+		// everybody the rung below already covers, and nothing else would
+		// notice.
+		if !strings.Contains(d.SQL, fmt.Sprintf("rn = %d", d.Threshold)) {
+			t.Errorf("%s claims a threshold of %d but its SQL does not select the %dth event: %s",
+				d.Slug, d.Threshold, d.Threshold, d.SQL)
 		}
 	}
-	if markers == 0 {
-		t.Error("no markers in the catalog, so this test proves nothing")
+	if tiers == 0 {
+		t.Error("no tiers in the catalog, so this test proves nothing")
 	}
-	if markers >= len(Catalog)/2 {
-		t.Errorf("%d of %d entries are markers; the score would be mostly unearnable", markers, len(Catalog))
+}
+
+// A tool badge reads a memo, and a memo is free text the signer chose.
+//
+// The What line is the only place that honesty is recorded, so it has to quote
+// the string being matched: "signed a transaction stamped X" is a claim about
+// the memo, and "used X" would be a claim about the client, which the chain
+// does not record and nobody can check.
+func TestToolBadgesReadTheMemoAndSaySo(t *testing.T) {
+	tools := 0
+	for _, d := range Catalog {
+		if d.Group != GroupTools {
+			continue
+		}
+		tools++
+		if !strings.Contains(d.SQL, "tx_memos") {
+			t.Errorf("%s is a tool badge that does not read tx_memos: %s", d.Slug, d.SQL)
+		}
+		if !strings.Contains(d.What, "memo") && !strings.Contains(d.What, "stamped") {
+			t.Errorf("%s: What claims the tool was used rather than that the memo says so: %q", d.Slug, d.What)
+		}
+	}
+	if tools == 0 {
+		t.Error("no tool badges in the catalog, so this test proves nothing")
 	}
 }
 
@@ -169,8 +234,8 @@ func TestLookupAndIndexed(t *testing.T) {
 		t.Error("Lookup invented a badge")
 	}
 	indexed := Indexed()
-	if len(indexed) == 0 || len(indexed) >= len(Catalog) {
-		t.Errorf("Indexed returned %d of %d definitions; it should be every one carrying SQL, and session-used carries none",
+	if len(indexed) != len(Catalog) {
+		t.Errorf("Indexed returned %d of %d definitions; every badge carries SQL now that session-used is indexed from session_txs",
 			len(indexed), len(Catalog))
 	}
 	for _, d := range indexed {
