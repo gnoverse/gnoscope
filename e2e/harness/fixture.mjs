@@ -154,11 +154,18 @@ export const MULTICALL_BATCH_MESSAGES = 5;
 // Of those five, the four that /txs?type=call can see.
 export const MULTICALL_CALLS_IN_BATCH = 4;
 // What the server actually stores for a call with long arguments: the value
-// BuildArgsPreview produces, ellipses included, capped at argsPreviewMax (96).
-// Written verbatim rather than computed, because the fixture writes straight
-// into SQLite and must hold the same shape the Go writer would have put there.
-// The row's job is to render that ellipsis, not to re-derive it.
-export const MULTICALL_LONG_ARGS = 'g1alice0000000000000000000000000\u2026, 9999999999999, some-very-long-flag-value\u2026';
+// BuildArgsPreview produces, capped at argsPreviewMax. Written verbatim rather
+// than computed, because the fixture writes straight into SQLite and must hold
+// the same shape the Go writer would have put there.
+//
+// The address and the realm path are whole on purpose: those are the two kinds
+// BuildArgsPreview refuses to cut, because the browser derives the short form
+// from the full one and a cut address is a dead string. The third argument is
+// free-form and carries the ellipsis, so one row proves both halves.
+export const MULTICALL_ARG_ADDR = 'g1vc883gshu5z7ytk5cdynhc8c2dhqnfhsmnhpaz';
+export const MULTICALL_ARG_PATH = 'gno.land/r/gnoswap/position';
+export const MULTICALL_LONG_ARGS =
+  MULTICALL_ARG_ADDR + ', ' + MULTICALL_ARG_PATH + ', some-very-long-flag-value\u2026';
 export const MULTICALL_SEND = '5000000ugnot';
 export const MULTICALL_GAS_USED = 2 * 70000;
 
