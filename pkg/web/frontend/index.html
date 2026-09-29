@@ -1207,6 +1207,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
         <div class="nav-kids">
           <a onclick="navigate('/analytics')" id="nav-analytics" title="analytics"><span class="rail-label">analytics</span></a>
           <a onclick="navigate('/dashboards')" id="nav-dashboards" title="dashboards"><span class="rail-label">dashboards</span></a>
+          <a onclick="navigate('/traffic')" id="nav-traffic" title="what readers of this explorer actually open"><span class="rail-label">traffic</span></a>
         </div>
       </div>
       <!-- Childless, so a bare link and not a .nav-group: every group is
@@ -1462,6 +1463,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-teams"><main><div id="teams-content"></div></main></div>
   <div class="view" id="view-glossary"><main><div id="glossary-content"></div></main></div>
   <div class="view" id="view-sanity"><main><div id="sanity-content"></div></main></div>
+  <div class="view" id="view-traffic"><main><div id="traffic-content"></div></main></div>
   <div class="view" id="view-contracts"><main><div id="contracts-content"></div></main></div>
   <div class="view" id="view-apps"><main><div id="apps-content"></div></main></div>
   <div class="view" id="view-developer"><main><div id="developer-content"></div></main></div>
@@ -3846,6 +3848,7 @@ const NAV = [
   { id: 'home', label: 'home', path: '/', own: 'overview', children: [
     { id: 'analytics', label: 'analytics', path: '/analytics' },
     { id: 'dashboards', label: 'dashboards', path: '/dashboards' },
+    { id: 'traffic', label: 'traffic', path: '/traffic' },
   ] },
   { id: 'discover', label: 'discover', path: '/discover' },
   { id: 'contracts', label: 'contracts', path: '/contracts', own: 'map', children: [
@@ -4058,6 +4061,7 @@ function route() {
   else if (path === '/discover') { view = 'discover'; }
   else if (path === '/analytics') { view = 'analytics'; }
   else if (path === '/dashboards') { view = 'dashboards'; }
+  else if (path === '/traffic') { view = 'traffic'; }
   // /params is where this page shipped and what is linked from elsewhere;
   // /govdao/params is where it now lives in the nav, because every value on
   // it is one only a gov/dao proposal can change. Both resolve, neither
@@ -4150,6 +4154,7 @@ function route() {
     case 'teams': loadTeams(); break;
     case 'glossary': loadGlossary(); break;
     case 'sanity': loadSanity(); break;
+    case 'traffic': loadTraffic(); break;
     case 'block-detail': loadBlockDetail(data); break;
     case 'realm-detail': loadRealmDetail(data, urlTab); break;
     case 'tx-detail': loadTxDetail(data); break;
@@ -10310,6 +10315,233 @@ function appsFooter(data) {
   return foot;
 }
 
+
+// --- /traffic: what readers of this explorer actually open -------------------
+//
+// The companion to /views, one level up. That page counts realm opens, from a
+// counter deliberately outside the response cache; this one is the whole
+// request log, and it answers the questions a chain index structurally cannot:
+// which pages people open, which networks they look at, which MCP tools agents
+// call, what 404s, and what is slow.
+//
+// Drawn with el() and CSS widths rather than a chart library. gnoverse/gnoscope#411
+// had just taken 676 KB of CDN JavaScript off the first paint, and a traffic
+// page is the last place to put it back: this one adds no dependency and no
+// bytes beyond its own markup.
+//
+// Every number here is this explorer's own measurement and is labelled as such.
+// It is not a popularity signal for gno.land: gnoweb, Gnoscan and every wallet
+// serve the same realms, and none of that is visible here.
+
+let _trafficWindow = '7d';
+let _trafficBots = false;
+
+async function loadTraffic() {
+  const container = clear('traffic-content');
+  skeletonBlock(container);
+
+  const controls = el('div', { style: { display: 'flex', gap: '4px', alignItems: 'center', margin: '0 0 12px', flexWrap: 'wrap' } });
+  for (const w of ['24h', '7d', '30d', '90d']) {
+    const btn = el('button', { className: 'pager-btn' + (_trafficWindow === w ? ' active' : ''), style: { padding: '3px 10px', fontSize: '12px' } }, w);
+    btn.addEventListener('click', () => { _trafficWindow = w; loadTraffic(); });
+    controls.appendChild(btn);
+  }
+  const botBtn = el('button', { className: 'pager-btn' + (_trafficBots ? ' active' : ''), style: { padding: '3px 10px', fontSize: '12px', marginLeft: '8px' } }, 'include crawlers');
+  botBtn.addEventListener('click', () => { _trafficBots = !_trafficBots; loadTraffic(); });
+  controls.appendChild(botBtn);
+
+  let rep;
+  try {
+    // 'all' explicitly, rather than letting api() inherit the network selector.
+    //
+    // Network is a facet on this page, not a filter: it is one of the panels
+    // below. Filtering by it as well silently deletes whole categories of
+    // traffic, because plenty of real requests carry no ?network= at all. An
+    // MCP tool call is the clearest case, since the network travels inside the
+    // JSON-RPC body: measured locally, selecting a network took mcp from 4 to
+    // 0 and total requests from 53 to 42, with nothing on the page saying so.
+    rep = await api('traffic?window=' + _trafficWindow + (_trafficBots ? '&bots=1' : ''), 'all');
+  } catch (e) {
+    container.textContent = '';
+    container.appendChild(controls);
+    container.appendChild(el('div', { className: 'section-sub' }, 'traffic is not being recorded on this instance: ' + e.message));
+    return;
+  }
+
+  container.textContent = '';
+  container.appendChild(controls);
+
+  if (rep.empty) {
+    // Said in words rather than drawn as a dozen convincing zeroes.
+    container.appendChild(el('div', { className: 'section-sub' },
+      'nothing recorded in this window yet. the request log is off unless the server was started '
+      + 'with -traffic-db, and a fresh one starts empty.'));
+    return;
+  }
+
+  const t = rep.totals;
+  const cards = el('div', { className: 'stats-bar' });
+  const stat = (label, value, title) => {
+    const c = el('div', { className: 'stat' }, el('span', { className: 'label' }, label), el('span', { className: 'value' }, value));
+    if (title) c.setAttribute('title', title);
+    return c;
+  };
+  cards.appendChild(stat('requests', fmtNum(t.requests)));
+  cards.appendChild(stat('visitors', fmtNum(t.visitors),
+    'distinct clients within a day. the id is a keyed hash whose key is regenerated at midnight UTC '
+    + 'and never stored, so somebody here on two days counts twice and cannot be linked across them.'));
+  cards.appendChild(stat('pages', fmtNum(t.pages)));
+  cards.appendChild(stat('api', fmtNum(t.api)));
+  cards.appendChild(stat('mcp', fmtNum(t.mcp), 'tool calls from agents'));
+  cards.appendChild(stat('errors', fmtNum(t.errors), '4xx and 5xx'));
+  const hitRate = t.requests > 0 ? (t.cache_hits / t.requests * 100).toFixed(0) + '%' : '-';
+  cards.appendChild(stat('cache hits', hitRate, 'served without recomputing the answer'));
+  cards.appendChild(stat('p50', t.p50_ms.toFixed(0) + 'ms'));
+  cards.appendChild(stat('p95', t.p95_ms.toFixed(0) + 'ms', 'streams excluded: an SSE connection measures how long a reader stayed, not how long they waited'));
+  cards.appendChild(stat('sent', fmtBytesish(t.bytes)));
+  container.appendChild(cards);
+
+  container.appendChild(trafficSeriesSection(rep));
+
+  const panels = [
+    ['pages', 'which pages readers opened', rep.top_pages, p => '/' !== p ? p : '/ (home)', p => p],
+    ['realms', 'which realms were read here. this explorer’s own readers, not gno.land’s', rep.top_realms, p => p, p => '/realm/' + p.replace(/^gno\.land\//, '')],
+    ['api routes', 'the route pattern, so pagination does not become a thousand rows', rep.top_api, p => p, null],
+    ['mcp tools', 'what agents asked for. a name that is not a tool is a tool worth writing', rep.tools, p => p, null],
+    ['networks', 'the query string carries this, which is exactly what a page-view script drops', rep.networks, p => p, null],
+    ['clients', 'browser, agent, bot, unknown. from the user agent, which is classified and then discarded', rep.clients, p => p, null],
+    ['referrers', 'host only, never the path. own-origin links are not counted', rep.referers, p => p, null],
+    ['statuses', null, rep.statuses, p => p, null],
+    ['cache', 'HIT served from cache, MISS computed, STALE served while refreshing behind the reader', rep.cache, p => p, null],
+    ['not found', 'what people ask for that this explorer does not serve', rep.not_found, p => p, null],
+  ];
+  const grid = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' } });
+  for (const [title, sub, rows, label, href] of panels) {
+    if (!rows || !rows.length) continue;
+    grid.appendChild(trafficBarPanel(title, sub, rows, label, href));
+  }
+  container.appendChild(grid);
+
+  if (rep.slowest && rep.slowest.length) container.appendChild(trafficSlowestSection(rep.slowest));
+
+  container.appendChild(el('div', { className: 'section-sub', style: { marginTop: '24px' } },
+    'recorded by this server, from requests it served. no address and no user-agent string is kept: '
+    + 'the visitor id is a keyed hash whose key is regenerated daily and never written down. crawlers '
+    + 'are stored and hidden by default; the cache warmer is never counted, because it is this server '
+    + 'replaying paths against itself.'));
+}
+
+// fmtBytesish keeps the unit readable without pulling in a formatter. Traffic
+// figures span kilobytes to gigabytes over a 90 day window.
+function fmtBytesish(n) {
+  if (!n) return '0';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(1)) + ' ' + units[i];
+}
+
+// trafficSeriesSection draws hits over time as bars, with the error share
+// stacked on top in the error colour rather than beside it: what matters is
+// whether a spike was traffic or breakage, and two adjacent bars make that a
+// comparison instead of a glance.
+function trafficSeriesSection(rep) {
+  const wrap = el('div', { className: 'section' });
+  wrap.appendChild(el('div', { className: 'section-title' }, 'over time'));
+  wrap.appendChild(el('div', { className: 'section-sub' },
+    (rep.window === '24h' ? 'one bar per hour, newest on the right' : 'one bar per day, newest on the right')
+    + '. red is the 4xx and 5xx share. this page covers every network, whatever the selector says: '
+    + 'network is one of the panels below rather than a filter.'));
+
+  const series = rep.series || [];
+  const max = series.reduce((m, b) => Math.max(m, b.hits), 0) || 1;
+  // maxWidth, not flex alone. A fresh instance has one bucket, and `flex: 1`
+  // stretches that single bar across the full width, which reads as a solid
+  // slab of colour rather than as "one day of data so far". Capping the bar
+  // makes a short series look short, which is the honest picture.
+  const strip = el('div', { style: { display: 'flex', alignItems: 'flex-end', gap: '2px', height: '120px', marginTop: '10px' } });
+  for (const b of series) {
+    const col = el('div', {
+      style: { flex: '1 1 0', maxWidth: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%', minWidth: '3px' },
+      title: b.at + ': ' + fmtNum(b.hits) + ' hits, ' + fmtNum(b.visitors) + ' visitors, ' + fmtNum(b.errors) + ' errors',
+    });
+    const errH = b.hits > 0 ? (b.errors / max) * 100 : 0;
+    const okH = ((b.hits - b.errors) / max) * 100;
+    if (errH > 0) col.appendChild(el('div', { style: { height: errH + '%', background: '#ff6b6b', borderRadius: '2px 2px 0 0' } }));
+    col.appendChild(el('div', { style: { height: okH + '%', background: 'var(--accent, #4dabf7)', borderRadius: errH > 0 ? '0' : '2px 2px 0 0' } }));
+    strip.appendChild(col);
+  }
+  wrap.appendChild(strip);
+  return wrap;
+}
+
+// trafficBarPanel is one ranked list. The bar is a width, not a chart: it makes
+// the shape of a distribution readable at a glance without a library, and the
+// exact number is still printed beside it because a bar cannot be read off.
+function trafficBarPanel(title, sub, rows, label, href) {
+  const wrap = el('div', { className: 'section' });
+  wrap.appendChild(el('div', { className: 'section-title' }, title));
+  if (sub) wrap.appendChild(el('div', { className: 'section-sub' }, sub));
+
+  const max = rows.reduce((m, r) => Math.max(m, r.hits), 0) || 1;
+  const list = el('div', { style: { marginTop: '8px' } });
+  for (const r of rows) {
+    const bar = el('div', {
+      style: {
+        position: 'absolute', left: '0', top: '0', bottom: '0',
+        width: (r.hits / max * 100) + '%',
+        background: 'var(--accent, #4dabf7)', opacity: '0.16', borderRadius: '3px',
+      },
+    });
+    const name = href
+      ? el('a', { onclick: () => navigate(href(r.label)), style: { cursor: 'pointer', position: 'relative', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, r.label)
+      : el('span', { style: { position: 'relative', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, r.label);
+    const count = el('span', { className: 'dim', style: { position: 'relative', flex: '0 0 auto', marginLeft: '10px', fontVariantNumeric: 'tabular-nums' } },
+      r.visitors ? fmtNum(r.hits) + ' · ' + fmtNum(r.visitors) + ' vis' : fmtNum(r.hits));
+    const row = el('div', {
+      style: { position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 6px', fontSize: '13px' },
+      title: r.label + ': ' + fmtNum(r.hits) + ' hits' + (r.visitors ? ', ' + fmtNum(r.visitors) + ' visitors' : ''),
+    }, bar, name, count);
+    list.appendChild(row);
+  }
+  wrap.appendChild(list);
+  return wrap;
+}
+
+// trafficSlowestSection ranks by p95 rather than by mean, because a mean hides
+// the shape that matters: a route answering in 40ms with a tail at 8s is a
+// worse experience than one answering in 300ms every time, and the mean can put
+// them in the same place.
+function trafficSlowestSection(rows) {
+  const wrap = el('div', { className: 'section', style: { marginTop: '18px' } });
+  wrap.appendChild(el('div', { className: 'section-title' }, 'slowest routes'));
+  wrap.appendChild(el('div', { className: 'section-sub' },
+    'by 95th percentile, over routes with at least 5 requests in the window. '
+    + '"app" is what the handler spent; a cache hit never reaches it, so a low app beside a high p95 '
+    + 'means the cost is being paid by whoever misses.'));
+
+  const table = el('table', { style: { width: '100%', marginTop: '8px', fontSize: '13px' } });
+  const head = el('tr', {},
+    el('th', { style: { textAlign: 'left' } }, 'route'),
+    el('th', { style: { textAlign: 'right' } }, 'hits'),
+    el('th', { style: { textAlign: 'right' } }, 'p50'),
+    el('th', { style: { textAlign: 'right' } }, 'p95'),
+    el('th', { style: { textAlign: 'right' } }, 'app avg'));
+  table.appendChild(el('thead', {}, head));
+  const body = el('tbody');
+  const num = v => el('td', { style: { textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, v);
+  for (const r of rows) {
+    body.appendChild(el('tr', {},
+      el('td', {}, r.route),
+      num(fmtNum(r.hits)),
+      num(r.p50_ms.toFixed(0) + 'ms'),
+      num(r.p95_ms.toFixed(0) + 'ms'),
+      num(r.app_avg_ms.toFixed(0) + 'ms')));
+  }
+  table.appendChild(body);
+  wrap.appendChild(table);
+  return wrap;
+}
 
 async function loadSanity() {
   const container = clear('sanity-content');
