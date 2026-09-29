@@ -229,6 +229,34 @@ func migrateAddColumns(db *sql.DB) error {
 		if _, err := db.Exec(`ALTER TABLE requests ADD COLUMN ` + c.ddl); err != nil {
 			return fmt.Errorf("add column %s: %w", c.name, err)
 		}
+		// Adding page_kind is the moment the meaning of kind='page' changes, so
+		// it is the moment to fix the rows written under the old meaning.
+		//
+		// Before the beacon existed, every non-API URL was classified 'page'
+		// and every one of those rows is a *document* load: the HTML that
+		// bootstraps the app. From here 'page' means a page view the app
+		// reported, which is a different and much larger number, because one
+		// document load carries every in-app navigation that follows it.
+		//
+		// Left alone, the headline figure would be document loads before this
+		// deploy and page views after it, on one continuous chart, with nothing
+		// saying where the meaning changed. That is the failure the schema note
+		// in the deploy checklist is about: "does the schema move" and "does
+		// stored data still mean what it did" are different questions, and this
+		// is a case where the second is yes and the first is no.
+		//
+		// Keyed on page_kind having just been added, so it runs exactly once
+		// and cannot touch a row the beacon wrote: every beacon row sets
+		// page_kind.
+		if c.name == "page_kind" {
+			res, err := db.Exec(`UPDATE requests SET kind = 'document' WHERE kind = 'page'`)
+			if err != nil {
+				return fmt.Errorf("reclassify pre-beacon page rows: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				log.Printf("traffic: reclassified %d pre-beacon rows from page to document", n)
+			}
+		}
 	}
 	return nil
 }
