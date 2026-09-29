@@ -2,6 +2,7 @@ package price
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"sort"
 	"time"
@@ -67,6 +68,12 @@ type Result struct {
 	// and mean opposite things: the first is a fact about the chain, the second
 	// is a fact about this server.
 	Unavailable string `json:"unavailable,omitempty"`
+
+	// PartialReads is how many known pools could not be read this pass. Any
+	// token priced only through one of them will say "no market", which is a
+	// fact about this server rather than about the chain, so the page has to be
+	// able to tell a reader that.
+	PartialReads int `json:"partial_reads,omitempty"`
 
 	// TWAPAvailable is false on gno.land and has never been true. Carried as a
 	// field rather than assumed, so the day somebody calls
@@ -195,6 +202,20 @@ func Build(in Inputs) *Result {
 		q.TierLabel = q.Tier.Label()
 		q.TierExplain = q.Tier.Explain()
 
+		// Depth this token actually sits in, over EVERY pool it touches rather
+		// than only the route that priced it. A token with one deep pool and
+		// one shallow one is a different asset from one with a single pool of
+		// the same total, and the route alone cannot say which it is.
+		for _, p := range in.Pools {
+			if p.Key.Token0 != pk && p.Key.Token1 != pk {
+				continue
+			}
+			if t := tvl[p.Key.Path()]; t > 0 {
+				q.TVLUSD += t
+				q.Pools++
+			}
+		}
+
 		if usdPerBase != nil {
 			q.USDPerBaseUnit = ratString(usdPerBase, 18)
 			scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(q.Decimals)), nil)
@@ -299,12 +320,38 @@ func routeSpread(routes []route) float64 {
 // handed to Build as data.
 func Refresh(ctx context.Context, eval Eval, anchor *Anchor, assets []Asset, keys []PoolKey, ledgerFrom string) *Result {
 	var pools []*Pool
+	var failed int
+	var lastErr error
 	for _, k := range keys {
 		p, err := LoadPool(ctx, eval, k)
 		if err != nil {
+			failed++
+			lastErr = err
 			continue
 		}
 		pools = append(pools, p)
+	}
+
+	// A pool that could not be READ is not a pool that does not exist, and the
+	// difference is the whole discipline of this package. Skipping a failed
+	// load and carrying on produced, live on 2026-09-29, a perfectly
+	// well-formed answer saying the chain has 0 pools and 1 priced asset: val1
+	// was getting 403 from rpc.gno.land while the pool set sat in cache, every
+	// LoadPool failed, and the empty result was published and then cached as
+	// though the liquidity had gone away.
+	//
+	// So: if there were pools to read and none of them could be, say so and
+	// price nothing. Anything else is this feature committing the exact error
+	// it exists to prevent.
+	if len(keys) > 0 && len(pools) == 0 {
+		res := &Result{
+			PoolCount:   0,
+			AssetCount:  len(assets),
+			ComputedAt:  time.Now().UTC(),
+			Anchor:      anchor,
+			Unavailable: fmt.Sprintf("none of the %d known pools could be read: %v", len(keys), lastErr),
+		}
+		return res
 	}
 	depth := map[string][]DepthPoint{}
 	if anchor != nil {
@@ -350,6 +397,12 @@ func Refresh(ctx context.Context, eval Eval, anchor *Anchor, assets []Asset, key
 		Assets: assets, Pools: pools, Anchor: anchor,
 		Depth: depth, ChainSupply: chainSupply, LedgerFrom: ledgerFrom,
 	})
+	// A partial read is not a failure, but it is not silence either: some
+	// tokens will be priced and others will say "no market" for a reason that
+	// has nothing to do with the chain.
+	if failed > 0 {
+		res.PartialReads = failed
+	}
 	for _, p := range pools {
 		if p.ObservationCardinality > 1 {
 			res.TWAPAvailable = true

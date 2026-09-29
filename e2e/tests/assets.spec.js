@@ -342,6 +342,62 @@ test('the kind filter narrows the unified list without hiding the total', async 
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
 });
 
+test('tvl is what separates a real price from a decorative one', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await page.route('**/api/prices*', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      network: 'alpha', pool_count: 2, priced_count: 2, asset_count: 4, twap_available: false,
+      anchor: { usd_per_gnot: 0.0711, spread_pct: 0.1, sources: [{ venue: 'Kraken', pair: 'GNOT/USD', usd: 0.0711, kind: 'vwap-24h' }] },
+      quotes: [
+        {
+          token: 'gno.land/r/gnoswap/gns.GNS.0000000', symbol: 'GNS', tier: 'market',
+          tier_label: 'market', tier_explain: 'settles within 2%',
+          usd_per_base_unit: '0.0000000176', usd_per_token: 0.0176, decimals: 6, decimals_known: true,
+          tvl_usd: 759104, pools: 2, route: [], route_count: 1, depth: [], warnings: [],
+        },
+        {
+          // Same price column, nothing else in common: a $47 pool.
+          token: 'COVID', symbol: 'COVID', tier: 'decorative',
+          tier_label: 'decorative', tier_explain: 'no market here',
+          usd_per_base_unit: '0.0000000277', usd_per_token: 0.0277, decimals: 6, decimals_known: false,
+          tvl_usd: 47, pools: 1, route: [], route_count: 1, depth: [], warnings: [],
+        },
+        {
+          // Priced, and pooled nowhere. Distinct from an asset the price read
+          // never reached, which shows a dash instead.
+          token: 'gno.land/r/gnoswap/gnft.GNFT.0000000', symbol: 'GNFT', tier: 'none',
+          tier_label: 'no market', tier_explain: 'No GnoSwap pool routes this token to wugnot.',
+          usd_per_base_unit: '', usd_per_token: 0, decimals: 6, decimals_known: false,
+          tvl_usd: 0, pools: 0, route: [], route_count: 0, depth: [], warnings: [],
+        },
+      ],
+    }),
+  }));
+
+  await page.goto('/defi');
+  await settle(page);
+
+  await expect(page.locator('#asset-list th', { hasText: 'tvl' })).toBeVisible();
+  const gns = page.locator('#asset-list tr', { hasText: 'GNS' }).first();
+  await expect(gns).toContainText('$759,104');
+  const covid = page.locator('#asset-list tr', { hasText: 'COVID' });
+  await expect(covid).toContainText('$47');
+
+  // A token the price pass reached, and which sits in no pool, says so rather
+  // than showing a zero: a zero would read as an empty pool.
+  const nft = page.locator('#asset-list tr', { hasText: 'GNFT' });
+  await expect(nft).toContainText('no pool');
+
+  // And an asset the price pass never reached shows a dash, which is a
+  // different statement: not known here, rather than known and absent.
+  const wugnotless = page.locator('#asset-list tr', { hasText: 'GNOT' }).first();
+  await expect(wugnotless).toContainText('\u2014');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
 test('the export buttons are gone', async ({ page }) => {
   const seen = watch(page);
   await stubAssets(page);

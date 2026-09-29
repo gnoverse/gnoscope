@@ -1477,6 +1477,21 @@ then asset count, then address) because with 23 of 28 assets unpriced most rows
 sit at exactly zero and would otherwise arrive in map order, which changes between
 requests and reads as data churning.
 
+### An unreadable chain is not a chain with no pools
+
+`/api/prices` distinguishes three states, because conflating the first two shipped a bug:
+
+- **`unavailable` set**: this server could not read. Either no verified RPC, or every known pool
+  failed to load. No prices are published.
+- **`partial_reads: N`**: some pools answered and N did not. Tokens priced only through a failed
+  one show "no market", which here is a fact about the server rather than about the chain.
+- **neither**: the read succeeded, and "no market" means what it says.
+
+Measured live 2026-09-29: val1 began getting **403 from rpc.gno.land** while the discovered pool
+set was still in cache, so every `LoadPool` failed and the endpoint answered a well-formed
+`pool_count: 0, priced_count: 1`. That got cached and the page said the chain had no liquidity.
+Skipping a failed load and carrying on is how a read failure becomes a claim about the world.
+
 ### Prices
 
 ```

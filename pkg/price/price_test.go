@@ -897,3 +897,124 @@ func warningCodes(q Quote) []string {
 	}
 	return out
 }
+
+// A chain that cannot be READ is not a chain with no pools, and publishing the
+// second when the first is true is this feature committing the error it exists
+// to prevent.
+//
+// Live on 2026-09-29: val1 started getting 403 from rpc.gno.land, every
+// LoadPool failed against a pool set that was still in cache, and the endpoint
+// answered a perfectly well-formed `pool_count: 0, priced_count: 1` that then
+// sat in the response cache. The page said the chain had no liquidity.
+func TestRefreshSaysWhenNoPoolCouldBeRead(t *testing.T) {
+	ctx := context.Background()
+	anchor := &Anchor{USDPerGNOT: gnotUSD, Sources: []AnchorSource{{Venue: "Kraken", USD: gnotUSD, Kind: "vwap-24h"}}}
+	keys := []PoolKey{
+		{Token0: WUGNOT, Token1: tokGNS, Fee: 3000},
+		{Token0: tokBubble, Token1: WUGNOT, Fee: 3000},
+	}
+	assets := []Asset{
+		{Token: keyGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns", Fungible: true, Decimals: 6, DecimalsKnown: true},
+	}
+	dead := func(_ context.Context, _ string) (string, error) {
+		return "", errors.New("Post \"https://rpc.gno.land\": 403 Forbidden")
+	}
+
+	res := Refresh(ctx, dead, anchor, assets, keys, "")
+	if res.Unavailable == "" {
+		t.Fatal("a refresh that read none of its pools reported no reason")
+	}
+	if !strings.Contains(res.Unavailable, "403") {
+		t.Errorf("unavailable = %q, want the underlying error in it", res.Unavailable)
+	}
+	// And it must not publish prices built on nothing.
+	if len(res.Quotes) != 0 {
+		t.Errorf("got %d quotes from a chain that could not be read", len(res.Quotes))
+	}
+	// The anchor still stands: it came from an exchange, not from the chain.
+	if res.Anchor == nil || res.Anchor.USDPerGNOT <= 0 {
+		t.Error("the off-chain anchor was dropped along with the chain reads")
+	}
+}
+
+// A partial read is not a failure, and must not be reported as one: some tokens
+// price and others do not, for a reason that is about this server.
+func TestRefreshReportsPartialReads(t *testing.T) {
+	ctx := context.Background()
+	anchor := &Anchor{USDPerGNOT: gnotUSD, Sources: []AnchorSource{{Venue: "Kraken", USD: gnotUSD, Kind: "vwap-24h"}}}
+	good := PoolKey{Token0: WUGNOT, Token1: tokGNS, Fee: 3000}
+	bad := PoolKey{Token0: tokBubble, Token1: WUGNOT, Fee: 3000}
+
+	eval := func(_ context.Context, expr string) (string, error) {
+		if strings.Contains(expr, bad.Path()) {
+			return "", errors.New("403 Forbidden")
+		}
+		switch {
+		case strings.Contains(expr, "GetSlot0SqrtPriceX96"):
+			return `("` + sqrtWugnotGNS + `" string)`, nil
+		case strings.Contains(expr, "GetSlot0Tick"):
+			return `(13902 int32)`, nil
+		case strings.Contains(expr, "GetBalances"):
+			return "(3571040328026 int64)\n(28769887840258 int64)\n(undefined)", nil
+		case strings.Contains(expr, "GetSlot0"):
+			return slot0WugnotGNS, nil
+		}
+		return "", errors.New("unexpected: " + expr)
+	}
+
+	res := Refresh(ctx, eval, anchor, []Asset{
+		{Token: keyGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns", Fungible: true, Decimals: 6, DecimalsKnown: true},
+	}, []PoolKey{good, bad}, "")
+
+	if res.Unavailable != "" {
+		t.Fatalf("one readable pool is not an outage: %q", res.Unavailable)
+	}
+	if res.PartialReads != 1 {
+		t.Errorf("partial_reads = %d, want 1", res.PartialReads)
+	}
+	if res.PoolCount != 1 {
+		t.Errorf("pool_count = %d, want the one that answered", res.PoolCount)
+	}
+}
+
+// TVL is over every pool a token sits in, not only the route that priced it.
+// A token with one deep pool and one shallow one is a different asset from one
+// with a single pool of the same total, and the route alone cannot say which.
+func TestQuoteTVLCoversEveryPoolTheTokenTouches(t *testing.T) {
+	res := Build(mainnetInputs())
+
+	// PERUN sits in two pools: PERUN/wugnot ($92) and PERUN/GNS ($78).
+	perun := quoteFor(t, res, keyPerun)
+	if perun.Pools != 2 {
+		t.Errorf("PERUN pools = %d, want 2", perun.Pools)
+	}
+	if perun.TVLUSD < 150 || perun.TVLUSD > 200 {
+		t.Errorf("PERUN tvl = %.2f, want about 170 (both its pools, not just the priced route)", perun.TVLUSD)
+	}
+
+	// GNS sits in wugnot/GNS ($759k) and PERUN/GNS ($78).
+	gns := quoteFor(t, res, keyGNS)
+	if gns.Pools != 2 {
+		t.Errorf("GNS pools = %d, want 2", gns.Pools)
+	}
+	if gns.TVLUSD < 700000 {
+		t.Errorf("GNS tvl = %.0f, want the deep pool's whole depth", gns.TVLUSD)
+	}
+
+	// GNOMIC sits in exactly one, and it is the $47 one the whole feature
+	// exists to flag.
+	gnomic := quoteFor(t, res, keyGnomic)
+	if gnomic.Pools != 1 {
+		t.Errorf("GNOMIC pools = %d, want 1", gnomic.Pools)
+	}
+	if gnomic.TVLUSD > 100 {
+		t.Errorf("GNOMIC tvl = %.2f, want the roughly $47 its one pool holds", gnomic.TVLUSD)
+	}
+
+	// An asset with no pool has no TVL, and that must be absent rather than a
+	// zero that reads as "this pool is empty".
+	gdog := quoteFor(t, res, "gno.land/r/x/y.GDOG.0000000")
+	if gdog.TVLUSD != 0 || gdog.Pools != 0 {
+		t.Errorf("GDOG has no pool but reports tvl %.2f over %d pools", gdog.TVLUSD, gdog.Pools)
+	}
+}
