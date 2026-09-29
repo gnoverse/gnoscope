@@ -85,3 +85,34 @@ test('the rail entry routes and lights up', async ({ page }) => {
   expect(w.jsErrors).toEqual([]);
   expect(unexpected(w.failedRequests)).toEqual([]);
 });
+
+// The state the probe on val1 found: a token that 401s on every request leaves
+// the section enabled, the tables empty and the stats bar showing eight zeros,
+// which reads as "gno has no contributors" rather than "this token is wrong".
+// The harness cannot produce that state (it runs the section off), so this
+// drives the render directly against a stubbed response.
+test('zero rows plus a reported problem leads with the cause, not the zeros', async ({ page }) => {
+  const w = watch(page);
+  await page.route('**/api/lab/github/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      enabled: true, repos: 0, tracked: 0, discovered: 0, contributors: 0, prs: 0,
+      by_kind: [], window: { days: 30 },
+      meta: { sync_finished: new Date().toISOString(), sync_seconds: '2.0', rate_core: '0/0',
+              sync_problems: 'seed gnolang/gno: github /repos/gnolang/gno: 401 Bad credentials' },
+      new: [], top: [], repos_: [], recent: [], queries: [],
+    }),
+  }));
+  await page.goto('/lab/github');
+  await settle(page);
+
+  const panel = page.locator('#labgithub-content .gh-off');
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('401');
+  await expect(panel).toContainText('not a measurement');
+  // The bar still draws, under the explanation rather than instead of it.
+  await expect(page.locator('#labgithub-content .stats-bar')).toHaveCount(1);
+
+  expect(w.jsErrors).toEqual([]);
+});

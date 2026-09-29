@@ -25067,6 +25067,20 @@ function ghgRender(into) {
           ' (or $GITHUB_TOKEN). The token needs no scopes, everything read is public.')));
       return;
     }
+    // Zero repositories with a pass that reported problems is not an empty
+    // ecosystem, it is a broken token, and the two look identical once the
+    // stats bar has drawn eight zeros. Seen for real: a wrong token 401s every
+    // request, the syncer notes each one and carries on, and the page then
+    // states that gno has no contributors. Lead with the cause instead.
+    const meta = ov.meta || {};
+    if (!ov.repos && meta.sync_problems) {
+      into.appendChild(el('div', { className: 'gh-off' },
+        el('div', {}, 'Nothing has been collected, and the last pass reported a problem.'),
+        el('div', { style: { marginTop: '6px' } }, meta.sync_problems),
+        el('div', { style: { marginTop: '6px' } },
+          'A run of 401s means the token is wrong or expired. The zeros below are ',
+          'the absence of data, not a measurement.')));
+    }
     into.appendChild(ghgStats(ov));
     into.appendChild(ghgSyncNote(ov));
     into.appendChild(ghgNewContributors(people));
