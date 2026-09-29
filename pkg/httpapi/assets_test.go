@@ -34,15 +34,43 @@ func TestHandleAssets(t *testing.T) {
 	var resp assetsResponse
 	getJSON(t, api.HandleAssets, "/api/assets?network=alpha", &resp)
 
-	if len(resp.Assets) != 2 {
-		t.Fatalf("got %d assets, want 2: %+v", len(resp.Assets), resp.Assets)
+	// Three: two GRC20s and the chain's own coin, which is a row here like any
+	// other asset. It appears even on a network where this indexer has seen no
+	// bank send at all, because ugnot exists whether or not the ledger has
+	// caught any of it moving.
+	if len(resp.Assets) != 3 {
+		t.Fatalf("got %d assets, want 3 (2 grc20 + native): %+v", len(resp.Assets), resp.Assets)
 	}
 	byToken := map[string]assetRow{}
 	for _, a := range resp.Assets {
 		byToken[a.Token] = a
 	}
 
+	// The native row comes first, and carries the two markers that stop a
+	// reader comparing its columns with a GRC20's.
+	if resp.Assets[0].Token != store.NativeKey {
+		t.Errorf("first row is %q, want the native coin", resp.Assets[0].Token)
+	}
+	native := byToken[store.NativeKey]
+	if native.Kind != store.KindNative {
+		t.Errorf("native kind = %q, want %q", native.Kind, store.KindNative)
+	}
+	if native.HoldersBasis != "swept" {
+		t.Errorf("native holders_basis = %q: its holders come from a sample of addresses this indexer read, not from a replay", native.HoldersBasis)
+	}
+	if native.TransfersBasis != "banksend" {
+		t.Errorf("native transfers_basis = %q: ugnot moved inside a realm call is not a bank send and is not counted", native.TransfersBasis)
+	}
+	// No indexer client in the test API, so the supply read cannot happen. That
+	// must read as "not known", never as a supply of zero on the chain's coin.
+	if native.SupplyKnown {
+		t.Error("supply_known is true with no indexer to ask")
+	}
+
 	gns := byToken["gno.land/r/gnoswap/gns.GNS.0000000"]
+	if gns.Kind != store.KindGRC20 || gns.HoldersBasis != "replayed" || gns.TransfersBasis != "events" {
+		t.Errorf("gns provenance = %s/%s/%s, want grc20/replayed/events", gns.Kind, gns.HoldersBasis, gns.TransfersBasis)
+	}
 	if gns.Supply != 1000 || gns.Holders != 2 {
 		t.Errorf("gns = %+v, want supply 1000 across 2 holders", gns)
 	}
@@ -135,8 +163,15 @@ func TestHandleAssetsFilterByRealm(t *testing.T) {
 
 	var all assetsResponse
 	getJSON(t, api.HandleAssets, "/api/assets?network=alpha", &all)
-	if len(all.Assets) != 4 {
-		t.Fatalf("got %d assets unfiltered, want 4: %+v", len(all.Assets), all.Assets)
+	if len(all.Assets) != 5 {
+		t.Fatalf("got %d assets unfiltered, want 5 (4 grc20 + native): %+v", len(all.Assets), all.Assets)
+	}
+
+	// include_native=0 gives a caller the old list back, unchanged.
+	var noNative assetsResponse
+	getJSON(t, api.HandleAssets, "/api/assets?network=alpha&include_native=0", &noNative)
+	if len(noNative.Assets) != 4 {
+		t.Fatalf("got %d assets with include_native=0, want 4: %+v", len(noNative.Assets), noNative.Assets)
 	}
 
 	var byRealm assetsResponse
@@ -150,6 +185,53 @@ func TestHandleAssetsFilterByRealm(t *testing.T) {
 		if a.PkgPath != "gno.land/r/demo/factory" {
 			t.Errorf("realm filter let through %q", a.Token)
 		}
+	}
+	// The native coin belongs to no realm, so a realm filter must drop it
+	// rather than pin it to the top of every realm's asset list.
+	for _, a := range byRealm.Assets {
+		if a.Token == store.NativeKey {
+			t.Error("the native coin survived a realm filter; it belongs to no realm")
+		}
+	}
+}
+
+// The three section pages each ask for one kind, so the filter has to be exact:
+// a GRC721 in the token list renders n/a in every numeric column, which is what
+// the split exists to stop.
+func TestHandleAssetsFilterByKind(t *testing.T) {
+	api, db := newTestAPI(t)
+	seedAssets(t, db)
+	now := time.Now().UTC().Format(time.RFC3339)
+	// A GRC721: it rides the same Transfer event and carries no amount, so
+	// every leg parses to zero.
+	nft := store.TokenTransfer{Token: "gno.land/r/demo/pics.PIC.0000000", PkgPath: "gno.land/r/demo/pics",
+		From: "", To: "g1a", Value: 0, BlockHeight: 20, BlockTime: now}
+	if err := db.InsertTokenTransfer("alpha", "TXNFT", 0, nft); err != nil {
+		t.Fatalf("seed nft: %v", err)
+	}
+
+	tests := []struct {
+		kind  string
+		want  int
+		token string
+	}{
+		{store.KindNative, 1, store.NativeKey},
+		{store.KindGRC20, 2, "gno.land/r/gnoswap/gns.GNS.0000000"},
+		{store.KindGRC721, 1, "gno.land/r/demo/pics.PIC.0000000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind, func(t *testing.T) {
+			var resp assetsResponse
+			getJSON(t, api.HandleAssets, "/api/assets?network=alpha&kind="+tt.kind, &resp)
+			if len(resp.Assets) != tt.want {
+				t.Fatalf("got %d rows for kind=%s, want %d: %+v", len(resp.Assets), tt.kind, tt.want, resp.Assets)
+			}
+			for _, a := range resp.Assets {
+				if a.Kind != tt.kind {
+					t.Errorf("kind filter %q let through a %q row (%s)", tt.kind, a.Kind, a.Token)
+				}
+			}
+		})
 	}
 }
 
