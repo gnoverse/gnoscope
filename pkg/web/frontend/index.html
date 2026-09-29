@@ -9702,10 +9702,11 @@ async function loadPeople() {
 function renderPeople(container, cat, data, f) {
   container.textContent = '';
   const byslug = catalogIndex(cat.achievements);
-  // The denominator counts only what can be earned. A marker badge says what an
-  // address *is* rather than what it did, so it belongs in nobody's score: with
-  // it in, every row read one short of its own ceiling.
-  const scorable = (cat.achievements || []).filter(a => !a.marker).length;
+  // Every badge in the catalog is earnable, so the ceiling is simply its size.
+  // It was not always: session-key marked what an address *is* rather than what
+  // it did, and with it in the denominator every row read one short of its own
+  // ceiling. It is gone from the catalog rather than filtered out here.
+  const scorable = (cat.achievements || []).length;
 
   container.appendChild(el('h1', {}, 'people'));
   container.appendChild(el('div', { className: 'section-sub' },
@@ -9795,7 +9796,7 @@ function renderPeople(container, cat, data, f) {
       el('td', { style: { color: 'var(--fg2)' } }, String(i + 1)),
       who,
       el('td', {}, badgeStrip(p.badges, byslug, 14)),
-      el('td', {}, fmtNum(p.badges.filter(b => !byslug[b]?.marker).length) + ' / ' + fmtNum(scorable)),
+      el('td', {}, fmtNum(p.badges.length) + ' / ' + fmtNum(scorable)),
       el('td', {}, blockWithAge(p.first_height, p.first_time, data.network)),
       el('td', {}, blockWithAge(p.last_height, p.last_time, data.network))));
   });
@@ -17258,24 +17259,16 @@ function renderAddressAchievements(pane, data) {
     byGroup[a.group].items.push(a);
   }
   for (const b of buckets) {
-    // A marker is not scored. It says what this address *is* (a delegated
-    // signing key), which a master account can never become, so counting it
-    // would put a badge in the denominator that nobody reading their own page
-    // can ever move. It is still drawn, last and unscored: on a session address
-    // it is the most useful thing here.
-    const scored = b.items.filter(x => !x.marker);
-    const markers = b.items.filter(x => x.marker && x.unlocked);
-    const n = scored.filter(x => x.unlocked).length;
+    // Unlocked first, then locked, because the locked half is the half that
+    // teaches and it reads better under what the reader already did than mixed
+    // through it. Every item counts: the catalog holds nothing an account
+    // cannot earn (see the note on scorable above).
+    const n = b.items.filter(x => x.unlocked).length;
     pane.appendChild(el('div', { className: 'section-title', style: { marginTop: '6px', fontSize: '12px' } },
-      b.label + ' (' + n + '/' + scored.length + ')'));
+      b.label + ' (' + n + '/' + b.items.length + ')'));
     const grid = el('div', { className: 'ach-grid' });
-    for (const a of scored.filter(x => x.unlocked).concat(scored.filter(x => !x.unlocked))) {
+    for (const a of b.items.filter(x => x.unlocked).concat(b.items.filter(x => !x.unlocked))) {
       grid.appendChild(achCard(a, a.unlocked ? 'unlocked' : 'locked', achEarnedMeta(a, data.network)));
-    }
-    // An unearned marker is drawn nowhere: "you are not a session key" is true
-    // of almost every address and is not a thing to be locked out of.
-    for (const a of markers) {
-      grid.appendChild(achCard(a, 'unlocked', el('span', { className: 'ach-got' }, 'what this address is')));
     }
     pane.appendChild(grid);
   }

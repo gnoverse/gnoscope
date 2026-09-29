@@ -910,15 +910,33 @@ so every response carries `computed_at` rather than implying a live read.
 | `GET /api/address/{addr}/achievements` | one address against the **whole** catalog: every entry, with `unlocked` and the block and transaction that first earned it. The locked entries are returned deliberately, because their `how` line is what the page is for |
 | `GET /api/directory/people` | every address holding at least one badge, ranked. `q` matches a registered name or an address prefix; `has` is repeatable and also accepts a comma-separated list, and is an **AND**; `named=1` restricts to addresses in the user registry; `sort` = `badges` (default), `recent`, `oldest`; `limit` (default 50, max 200), `offset`. An unknown slug in `has` is a `400`, not an empty list: those are different answers |
 
-One badge, `session-used`, carries no query and is marked `live` in the catalog.
-A session signs as its **master**, so `calls`, `msg_runs` and `bank_sends` all
-record the master's address and no index can say which key signed; the only
-surviving trace is the `Sequence` on a live grant, which
-`auth/accounts/{master}/sessions` returns. So it is awarded on
-`/api/address/{addr}/achievements` from that live read, only while the grant
-still exists, and it can neither be listed nor filtered on. Indexing it needs
-`MsgCreateSession` modelled in the tx-indexer, or the signer recorded alongside
-the caller.
+Every badge is earnable, and every badge is awarded to an address a reader can
+open. The three session badges (`session-created`, `session-used`,
+`session-revoked`) all describe what the **master** did, never what the
+delegated key is: a session is a signing key, nobody browses its address, and a
+badge on one could not be earned by the account that granted it.
+
+One badge, `session-used`, is also marked `live`, which means its query can
+under-report and `/api/address/{addr}/achievements` tops it up from a chain
+read. It is indexed from `session_txs`, the table holding the
+`signature.session_addr` the history sweep records, and only one of the two
+mainnet indexers models signatures at all, so a chain swept by the other has
+gaps. The page therefore also reads `auth/accounts/{master}/sessions` and
+awards the badge when a grant's `Sequence` has moved. A live read can only ever
+add a badge, never remove one, so the two cannot disagree; the directory does
+not do it, because that would be one RPC call per row.
+
+Four badges in the `tools` group are decided by the transaction **memo**, which
+is the only place the chain records which client composed a transaction.
+⚠️ A memo is free text the signer chose, so these are evidence of a claim and
+not proof of one: anyone can type `gnopublish` into a memo. The `what` line of
+each says so. Adena, gnoweb and `gnokey` stamp nothing (measured over 46,445
+mainnet transactions on 2026-09-29), which is why there is no badge for them.
+
+Badges in the `volume` group carry `of` and `threshold`: the slug of the rung
+below and the count it takes, so a page can draw `first-tx -> tx-10 -> tx-100 ->
+tx-1000` as one ladder. Each unlocks at the block of the **Nth** event, not the
+first.
 
 ## Validators
 

@@ -1332,6 +1332,37 @@ func initSchema(db *sql.DB) error {
 		-- so without this every such read scans the network's whole set.
 		CREATE INDEX IF NOT EXISTS idx_achievements_slug ON achievements(network, slug, block_height);
 
+		-- The transaction memo, for the transactions that carry one.
+		--
+		-- Its own table rather than a column on the transactions table, for two
+		-- reasons that both bite. That table is filled lazily: history synced by
+		-- an older build has calls with no transaction row at all, and
+		-- HeightsMissingTransactions repairs that from the *event* side, so an
+		-- UPDATE against it would silently drop the memo of any transaction
+		-- whose row does not exist yet, while the sweep's cursor moved on
+		-- claiming the block was covered. And only about a fifth of mainnet
+		-- transactions carry a memo (46,445 sampled 2026-09-29: 36,982 empty),
+		-- so storing only the non-empty ones keeps this an eighth the size of a
+		-- column that would be blank on four rows in five.
+		--
+		-- What makes it worth storing: the memo is the only place a transaction
+		-- says which *tool* composed it. gnoswap.io, gnopublish, gnoblog-cli and
+		-- Gnomi all stamp one; the chain records nothing else about the client.
+		-- ⚠️ It is a free-text field the signer controls, so it is evidence of a
+		-- claim, never proof of one. See the tool badges in pkg/achievements.
+		CREATE TABLE IF NOT EXISTS tx_memos (
+			network      TEXT NOT NULL,
+			tx_hash      TEXT NOT NULL,
+			memo         TEXT NOT NULL,
+			block_height INTEGER NOT NULL,
+			block_time   TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (network, tx_hash)
+		) WITHOUT ROWID;
+
+		-- "Which transactions were stamped by this tool" is the only question
+		-- asked of it, and the primary key leads with the hash.
+		CREATE INDEX IF NOT EXISTS idx_tx_memos_memo ON tx_memos(network, memo);
+
 		-- Both directions, because a leg is read from whichever end asked. Height
 		-- descending is in the index rather than left to a sort: the page reads
 		-- newest-first and the table is the largest one a busy realm has.

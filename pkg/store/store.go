@@ -88,6 +88,16 @@ var NetworkScopedTables = []string{
 	// surviving a reset would keep a feed republishing events for blocks that
 	// no longer exist, with ids no rebuild will ever produce again.
 	"discover_events",
+	// Transaction memos are keyed by (network, tx_hash), and a reset chain
+	// reissues hashes it has never seen alongside ones it has. Nothing here
+	// self-heals the way the achievements table does: that one is rebuilt
+	// wholesale every ten minutes, while a memo is written once by a sweep
+	// whose cursor is above the new chain's tip.
+	//
+	// ⚠️ session_grants and session_txs have exactly this problem and are NOT
+	// in this list. That is a pre-existing gap, not a decision this line
+	// endorses; it is called out here because the two sit in the same sweep.
+	"tx_memos",
 }
 
 // DeleteNetworkData removes every row belonging to a network, in one transaction.

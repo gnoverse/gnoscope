@@ -207,3 +207,39 @@ func TestNoSignaturesRecordsNothing(t *testing.T) {
 		t.Errorf("recorded %d signers from a transaction with no signatures", n)
 	}
 }
+
+// The memo is the only record of which tool composed a transaction, and this
+// sweep is the half that recovers it for history.
+//
+// It rides here rather than in a sweep of its own because this walk already
+// fetches whole transactions across every block, memo included, and spent every
+// pass throwing that field away. The test that matters is therefore not "a memo
+// can be stored" but "walking a block stores the memos in it", which is what
+// would silently stop being true if the field were dropped from the loop again.
+func TestSessionBackfillRecordsTxMemos(t *testing.T) {
+	s, fake, db := newTestSyncer(t, "mainnet")
+	fake.SeedChain(1, 40)
+	fake.Add(
+		indexer.Transaction{Hash: "c3RhbXBlZA==", Success: true, BlockHeight: 20, Memo: "gnopublish"},
+		indexer.Transaction{Hash: "cGxhaW4=", Success: true, BlockHeight: 21},
+	)
+
+	// The sweep needs blocks stored to know its floor and its boundary.
+	fake.SetBlockRange(1, 40)
+	s.syncBlocks(context.Background())
+	s.backfillSessions(context.Background())
+
+	got, err := db.TxMemo("mainnet", "c3RhbXBlZA==")
+	if err != nil {
+		t.Fatalf("TxMemo: %v", err)
+	}
+	if got != "gnopublish" {
+		t.Errorf("memo = %q, want %q: the sweep walked the block and dropped the field", got, "gnopublish")
+	}
+
+	// A transaction with no memo must leave no row. The table is a fifth the
+	// size of the transactions table only because of this.
+	if got, err := db.TxMemo("mainnet", "cGxhaW4="); err != nil || got != "" {
+		t.Errorf("memo for a transaction without one = %q (%v), want empty", got, err)
+	}
+}

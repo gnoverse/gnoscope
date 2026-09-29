@@ -151,27 +151,27 @@ func (a *API) HandleAddressAchievements(w http.ResponseWriter, r *http.Request) 
 		TxHash string `json:"tx_hash,omitempty"`
 	}
 
-	// earned and total count only what can be earned.
+	// Every badge in the catalog counts, because every badge in the catalog can
+	// be earned.
 	//
-	// A marker badge (session-key) describes what an address *is* and a master
-	// account can never become one, so counting it gave every human reader a
+	// That was not always true. session-key marked a delegated signing address:
+	// a thing an account *is*, which a master account can never become, so it
+	// sat in the denominator and gave every human reading their own page a
 	// ceiling one below the one printed, with nothing saying which badge was
-	// the impossible one. It is still returned, and still drawn: on a session
-	// address it is the most useful line on the page.
+	// the impossible one. moul's read "21 of 26" against a real ceiling of 25.
+	// It is gone rather than excluded, because nobody browses a session
+	// address: sessions are signing keys, and the account anyone looks up is
+	// the master they were granted by. The session badges now all describe what
+	// the *master* did, which is the thing a reader can go and do.
 	out := make([]entry, 0, len(achievements.Catalog))
-	earned, total := 0, 0
+	earned, total := 0, len(achievements.Catalog)
 	for _, def := range achievements.Catalog {
 		e := entry{achievementView: achievementView{
 			Def: def, Holders: counts[def.Slug], GroupLabel: achievements.GroupLabel[def.Group],
 		}}
-		if !def.Marker {
-			total++
-		}
 		if u, ok := byslug[def.Slug]; ok {
 			e.Unlocked, e.Height, e.Time, e.TxHash = true, u.Height, u.Time, u.TxHash
-			if !def.Marker {
-				earned++
-			}
+			earned++
 		}
 		out = append(out, e)
 	}

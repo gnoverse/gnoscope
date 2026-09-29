@@ -146,6 +146,17 @@ func (s *Syncer) upsertTx(tx indexer.Transaction, blockTime string) {
 		gasFee = tx.GasFee.Amount
 	}
 	s.db.UpsertTransaction(s.networkID, tx.Hash, tx.BlockHeight, blockTime, tx.GasUsed, tx.GasWanted, gasFee, tx.Success)
+	// The memo goes to its own table, and only when there is one. It has been
+	// selected from the indexer since long before anything read it (see
+	// txFieldsTemplate); this is the forward half of filling tx_memos, and
+	// backfillSessions' sweep is the half that covers history.
+	if tx.Memo != "" {
+		if err := s.db.UpsertTxMemos(s.networkID, []store.TxMemoRow{{
+			Hash: tx.Hash, Memo: tx.Memo, BlockHeight: tx.BlockHeight, BlockTime: blockTime,
+		}}); err != nil {
+			log.Printf("[%s] tx memo %s: %v", s.networkID, tx.Hash, err)
+		}
+	}
 }
 
 // fetchBlockTimes fetches block times from the indexer for all unique heights in txs.

@@ -81,13 +81,16 @@ func TestAddressHoldingsRefusesTheAllNetworksCase(t *testing.T) {
 	}
 }
 
-// The denominator counts only what can be earned.
+// Every badge the page draws is a badge the score counts.
 //
-// session-key marks a delegated signing address, which a master account can
-// never become. Counted, it gave every human reader a ceiling one below the one
-// printed with nothing saying which badge was impossible: moul's page read
-// "21 of 26" against a real 25.
-func TestAddressAchievementsExcludeMarkersFromTheScore(t *testing.T) {
+// session-key used to break that: it marked a delegated signing address, which
+// a master account can never become, and counting it gave every human reader a
+// ceiling one below the one printed with nothing saying which badge was the
+// impossible one (moul's page read "21 of 26" against a real 25). It is gone
+// from the catalog rather than merely excluded here, because nobody browses a
+// session address in the first place, so a denominator smaller than the grid is
+// now a bug rather than a design.
+func TestAddressAchievementScoreCountsEveryBadgeDrawn(t *testing.T) {
 	db := store.NewTestDB(t)
 	api := NewAPI(db, nil, nil, nil)
 
@@ -101,6 +104,7 @@ func TestAddressAchievementsExcludeMarkersFromTheScore(t *testing.T) {
 
 	var got struct {
 		Total        int `json:"total"`
+		Earned       int `json:"earned"`
 		Achievements []struct {
 			Slug   string `json:"slug"`
 			Marker bool   `json:"marker"`
@@ -109,20 +113,21 @@ func TestAddressAchievementsExcludeMarkersFromTheScore(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-
-	markers := 0
+	if len(got.Achievements) == 0 {
+		t.Fatal("no achievements came back, so this test proves nothing")
+	}
+	if got.Total != len(got.Achievements) {
+		t.Errorf("total %d over %d entries drawn; every badge in the catalog is earnable now",
+			got.Total, len(got.Achievements))
+	}
 	for _, a := range got.Achievements {
 		if a.Marker {
-			markers++
+			t.Errorf("%s still carries a marker flag, which nothing sets any more", a.Slug)
 		}
 	}
-	if markers == 0 {
-		t.Fatal("no marker came back, so this test proves nothing")
-	}
-	// Still served: on a session address the marker is the useful line. Just
-	// not counted.
-	if want := len(got.Achievements) - markers; got.Total != want {
-		t.Errorf("total %d over %d entries with %d markers, want %d",
-			got.Total, len(got.Achievements), markers, want)
+	// An address that has done nothing has earned nothing, which is what makes
+	// the denominator above the only number under test.
+	if got.Earned != 0 {
+		t.Errorf("earned %d for an address with no history", got.Earned)
 	}
 }

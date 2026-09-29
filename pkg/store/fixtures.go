@@ -117,6 +117,11 @@ func SeedNetwork(t TB, db *DB, network string, height int) {
 	); err != nil {
 		t.Fatalf("seed first_seen: %v", err)
 	}
+	if err := db.UpsertTxMemos(network, []TxMemoRow{{
+		Hash: "seed-memo-tx", Memo: "gnopublish", BlockHeight: height, BlockTime: "2026-01-01T00:00:00Z",
+	}}); err != nil {
+		t.Fatalf("seed tx_memos: %v", err)
+	}
 	// One Discover event, through the real write path so the row is shaped the
 	// way the feed writes it. Every table in NetworkScopedTables needs a row
 	// here: countNetworkRows in the syncer tests asserts the seeded total

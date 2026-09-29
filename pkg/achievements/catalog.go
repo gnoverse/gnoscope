@@ -27,6 +27,8 @@
 // qualified, because every query is over all of history rather than a window.
 package achievements
 
+import "fmt"
+
 // Group buckets the catalog for display. The order of the constants is the
 // order the groups are shown in, which is roughly the order a newcomer meets
 // them: you send coins before you deploy a realm, and you deploy a realm before
@@ -35,23 +37,30 @@ type Group string
 
 const (
 	GroupStart    Group = "start"
+	GroupVolume   Group = "volume"
 	GroupBuild    Group = "build"
 	GroupIdentity Group = "identity"
 	GroupMoney    Group = "money"
 	GroupKeys     Group = "keys"
+	GroupTools    Group = "tools"
 	GroupGovern   Group = "govern"
 )
 
 // GroupOrder is the display order, and the only place it is defined.
-var GroupOrder = []Group{GroupStart, GroupBuild, GroupIdentity, GroupMoney, GroupKeys, GroupGovern}
+var GroupOrder = []Group{
+	GroupStart, GroupVolume, GroupBuild, GroupIdentity,
+	GroupMoney, GroupKeys, GroupTools, GroupGovern,
+}
 
 // GroupLabel is what a reader sees above each bucket.
 var GroupLabel = map[Group]string{
 	GroupStart:    "getting started",
+	GroupVolume:   "going the distance",
 	GroupBuild:    "building",
 	GroupIdentity: "identity",
 	GroupMoney:    "money",
 	GroupKeys:     "keys and sessions",
+	GroupTools:    "tools of the trade",
 	GroupGovern:   "governance",
 }
 
@@ -112,28 +121,105 @@ type Def struct {
 	// implementation detail and putting it in the API would freeze it.
 	SQL string `json:"-"`
 
-	// Live marks a badge the index cannot decide, only a live chain read can.
-	// There is exactly one today (session-used) and the reason is in its
-	// comment. A live badge is awarded on an address's own page and is absent
-	// from the directory, which would otherwise have to make one RPC call per
-	// row; the API says which it is so the UI can explain itself rather than
-	// look broken.
+	// Live marks a badge whose SQL can UNDER-report, so an address's own page
+	// also asks the chain and ORs the answer in.
+	//
+	// It is a supplement, never a second source of truth: a live read can only
+	// ever add a badge the index missed, so the two cannot disagree about a
+	// badge somebody holds. There is one today (session-used) and the reason is
+	// in its comment. The directory does not do the live read, which would cost
+	// one RPC call per row; the API says which badges are Live so the UI can
+	// explain the difference rather than look inconsistent.
 	Live bool `json:"live,omitempty"`
 
-	// Marker says this badge describes what an address *is*, not something it
-	// did, so it is not earnable and must not be counted.
+	// Of names the badge this one is a bigger version of, and Threshold is how
+	// many it takes. Both empty on a standalone badge.
 	//
-	// There is one: session-key, which marks a delegated signing address. A
-	// master account cannot become one, by construction, and the entry's own
-	// How line says so. It was still inside the denominator, so every human
-	// reading their own page had a ceiling one lower than the page claimed with
-	// nothing saying which badge was the impossible one. moul's read "21 of 26"
-	// against a real ceiling of 25.
-	//
-	// Kept in the catalog rather than deleted: on a session address it is the
-	// most useful thing on the page, and it is what stops one reading as an
-	// account that never did anything.
-	Marker bool `json:"marker,omitempty"`
+	// The pair exists because "first transaction" and "a thousand
+	// transactions" are the same deed at two scales, and a reader who has the
+	// first wants to know the next rung is there rather than meeting it as an
+	// unrelated badge. Nothing in the rollup reads either field: a tier is an
+	// ordinary definition with an ordinary query, and these two are for
+	// display and for the test that keeps a ladder's rungs in order.
+	Of        string `json:"of,omitempty"`
+	Threshold int    `json:"threshold,omitempty"`
+}
+
+// signedMessages is every message this index attributes to a signer, as
+// (address, block_height, block_time, tx_hash), one row per MESSAGE.
+//
+// One definition rather than four copies, because three badges read it and a
+// fifth table would otherwise have to be added to each of them separately. It
+// is rows per message and not per transaction: a transaction carrying three
+// calls appears three times, which is right for "have you ever done this" and
+// wrong for "how many transactions have you signed". nthSQL is what collapses
+// it, and the reason it takes a dedup key.
+const signedMessages = `
+	SELECT caller AS address, block_height, block_time, tx_hash FROM calls WHERE network = @net AND success = 1
+	UNION ALL
+	SELECT from_address, block_height, block_time, tx_hash FROM bank_sends WHERE network = @net AND success = 1 AND from_address <> ''
+	UNION ALL
+	SELECT caller, block_height, block_time, tx_hash FROM msg_runs WHERE network = @net AND success = 1
+	UNION ALL
+	SELECT creator, block_height, block_time, tx_hash FROM package_submissions WHERE network = @net AND success = 1
+`
+
+// nthSQL turns a stream of events into the badge for having done n of them,
+// unlocked at the block of the nth.
+//
+// dedup names the column that makes two rows the same event: "tx_hash" so a
+// transaction carrying several messages counts once, "path" so a package
+// redeployed nine times counts once. inner has to select that column; it does
+// not have to be one of the four the rollup reads.
+//
+// The window function is what makes the unlock honest. The obvious query is a
+// HAVING COUNT(*) >= n with a MIN(block_height) beside it, and it awards the
+// badge at the block of the FIRST event, so a thousandth-transaction badge
+// would claim to have been earned on the day the account was created. Ordering
+// by (block_height, tx_hash) rather than height alone keeps the answer stable
+// when n events share a block.
+func nthSQL(inner, dedup string, n int) string {
+	return fmt.Sprintf(`SELECT address, block_height, block_time, tx_hash FROM (
+		SELECT address, block_height, block_time, tx_hash,
+		       ROW_NUMBER() OVER (PARTITION BY address ORDER BY block_height, tx_hash) AS rn
+		FROM (
+			SELECT address, MIN(block_height) AS block_height, block_time, tx_hash
+			FROM (%s) GROUP BY address, %s
+		)
+	) WHERE rn = %d`, inner, dedup, n)
+}
+
+// memoBadgeSQL awards a badge to the signer of any transaction whose memo
+// matches pred, which is a SQL predicate over the alias `m` (tx_memos).
+//
+// Written as a builder because the four tool badges differ only in that
+// predicate, and a hand-copied four-way union per badge is four chances to
+// forget one of the message tables. The join is driven from tx_memos, which is
+// both the small side (only transactions carrying a memo are stored) and the
+// indexed one (idx_tx_memos_memo), so the predicate narrows first and the
+// message tables are then hit by (network, tx_hash).
+//
+// pred is interpolated, not bound: every caller is a constant in this file, and
+// a bound parameter cannot express the LIKE one of them needs alongside the
+// three equalities. Nothing here may ever take a predicate from a request.
+func memoBadgeSQL(pred string) string {
+	return fmt.Sprintf(`SELECT address, MIN(block_height) AS block_height, block_time, tx_hash FROM (
+		SELECT c.caller AS address, m.block_height, m.block_time, m.tx_hash
+		  FROM tx_memos m JOIN calls c ON c.network = m.network AND c.tx_hash = m.tx_hash
+		 WHERE m.network = @net AND (%[1]s) AND c.success = 1
+		UNION ALL
+		SELECT r.caller, m.block_height, m.block_time, m.tx_hash
+		  FROM tx_memos m JOIN msg_runs r ON r.network = m.network AND r.tx_hash = m.tx_hash
+		 WHERE m.network = @net AND (%[1]s) AND r.success = 1
+		UNION ALL
+		SELECT b.from_address, m.block_height, m.block_time, m.tx_hash
+		  FROM tx_memos m JOIN bank_sends b ON b.network = m.network AND b.tx_hash = m.tx_hash
+		 WHERE m.network = @net AND (%[1]s) AND b.success = 1 AND b.from_address <> ''
+		UNION ALL
+		SELECT p.creator, m.block_height, m.block_time, m.tx_hash
+		  FROM tx_memos m JOIN package_submissions p ON p.network = m.network AND p.tx_hash = m.tx_hash
+		 WHERE m.network = @net AND (%[1]s) AND p.success = 1 AND p.creator <> ''
+	) GROUP BY address`, pred)
 }
 
 // Catalog is every achievement, in display order within its group.
@@ -147,15 +233,7 @@ var Catalog = []Def{
 		Slug: "first-tx", Name: "First transaction", Emoji: "🌱", Group: GroupStart,
 		What: "signed anything at all: a call, a send, a script or a deploy",
 		How:  "any transaction counts. `gnokey maketx send` to a friend is the shortest one.",
-		SQL: `SELECT address, MIN(block_height) AS block_height, block_time, tx_hash FROM (
-			SELECT caller AS address, block_height, block_time, tx_hash FROM calls WHERE network = @net AND success = 1
-			UNION ALL
-			SELECT from_address, block_height, block_time, tx_hash FROM bank_sends WHERE network = @net AND success = 1 AND from_address <> ''
-			UNION ALL
-			SELECT caller, block_height, block_time, tx_hash FROM msg_runs WHERE network = @net AND success = 1
-			UNION ALL
-			SELECT creator, block_height, block_time, tx_hash FROM package_submissions WHERE network = @net AND success = 1
-		) GROUP BY address`,
+		SQL:  `SELECT address, MIN(block_height) AS block_height, block_time, tx_hash FROM (` + signedMessages + `) GROUP BY address`,
 	},
 	{
 		Slug: "first-gnot-sent", Name: "Sent GNOT", Emoji: "💸", Group: GroupStart,
@@ -194,6 +272,46 @@ var Catalog = []Def{
 		How:  "write a `main()` that imports the realms you want, then `gnokey maketx run <key> script.gno`. One transaction, several realms, no deploy. Size it with `-simulate only` first: a script's gas is every realm it touches.",
 		SQL: `SELECT caller AS address, MIN(block_height) AS block_height, block_time, tx_hash
 			FROM msg_runs WHERE network = @net AND success = 1 GROUP BY caller`,
+	},
+
+	// --- going the distance ------------------------------------------------
+	//
+	// The same deeds as above, counted. A first transaction says somebody
+	// arrived; a thousand says they stayed, and the two are worth telling
+	// apart. Each rung names the rung below it in Of, so a page can draw a
+	// ladder instead of four unrelated badges, and each unlocks at the block of
+	// the Nth event rather than the first: a badge that claims to have been
+	// earned at the block where the *first* transaction landed is a badge
+	// lying about when.
+	{
+		Slug: "tx-10", Name: "Ten transactions", Emoji: "🔟", Group: GroupVolume,
+		Of: "first-tx", Threshold: 10,
+		What: "signed ten transactions, of any kind",
+		How:  "keep going. Ten is roughly one session of actually trying things.",
+		SQL:  nthSQL(signedMessages, "tx_hash", 10),
+	},
+	{
+		Slug: "tx-100", Name: "A hundred transactions", Emoji: "💯", Group: GroupVolume,
+		Of: "tx-10", Threshold: 100,
+		What: "signed a hundred transactions, of any kind",
+		How:  "a hundred is where a script starts paying for itself. `gnokey maketx run` batches a session's worth of calls into one signature.",
+		SQL:  nthSQL(signedMessages, "tx_hash", 100),
+	},
+	{
+		Slug: "tx-1000", Name: "A thousand transactions", Emoji: "🏆", Group: GroupVolume,
+		Of: "tx-100", Threshold: 1000,
+		What: "signed a thousand transactions, of any kind",
+		How:  "nobody types a thousand of these. Delegate a scoped session key and let something else sign them for you.",
+		SQL:  nthSQL(signedMessages, "tx_hash", 1000),
+	},
+	{
+		Slug: "package-10", Name: "Ten packages", Emoji: "🧱", Group: GroupVolume,
+		Of: "first-package", Threshold: 10,
+		What: "published ten distinct paths, counting each path once however often it was redeployed",
+		How:  "split what you are building into packages small enough to be worth importing on their own.",
+		SQL: nthSQL(`SELECT creator AS address, block_height, block_time, tx_hash, path
+			FROM package_submissions
+			WHERE network = @net AND success = 1 AND creator <> ''`, "path", 10),
 	},
 
 	// --- building ----------------------------------------------------------
@@ -267,6 +385,48 @@ var Catalog = []Def{
 			JOIN packages p ON p.network = c.network AND p.path = c.pkg_path
 			WHERE c.network = @net AND c.success = 1 AND p.creator <> '' AND p.creator <> c.caller
 			GROUP BY p.creator`,
+	},
+
+	{
+		Slug: "redeploy", Name: "Redeployed a package", Emoji: "🔁", Group: GroupBuild,
+		What: "published to a path you had already published to, so the second submission replaced the first",
+		How:  "deploy a realm with `private = true` in its gnomod.toml and the path stays yours to overwrite. It is the only way to fix a realm in place, and it wipes the realm's state, so read what you are about to lose first.",
+		// ⚠️ This counts submissions to a path, which is honest but wider than
+		// "edited and shipped again". Under the inert code-submission policy a
+		// parked package answers nothing to vm/qfile, so a deploy script that
+		// verifies by querying the path concludes it failed and submits the
+		// identical bytes again (see package_submissions in store/schema.go).
+		// Those resubmissions are real second submissions and are counted as
+		// such; the What line says "published to a path you had already
+		// published to" rather than "changed a package" for exactly that
+		// reason.
+		SQL: `SELECT address, MIN(block_height) AS block_height, block_time, tx_hash FROM (
+			SELECT creator AS address, block_height, block_time, tx_hash,
+			       ROW_NUMBER() OVER (PARTITION BY creator, path ORDER BY block_height, tx_hash) AS n
+			FROM package_submissions
+			WHERE network = @net AND success = 1 AND creator <> ''
+		) WHERE n = 2 GROUP BY address`,
+	},
+	{
+		Slug: "version-bump", Name: "Shipped a v2", Emoji: "⬆️", Group: GroupBuild,
+		What: "published <path>/vN after having published the same path at a lower version",
+		How:  "a published package is immutable unless it is private, so a fix ships as a new path: `gno.land/p/<ns>/<name>/v2` beside the v1 that other people already import. Leave the old one up; somebody depends on it.",
+		// The base is the path with its trailing digits trimmed, which for a
+		// versioned path leaves ".../v" and for every other path leaves
+		// something that does not end in "/v" and is excluded by the LIKE.
+		// rtrim with a character set is the closest SQLite has to a suffix
+		// regex, and it is exact here because a version segment is digits to
+		// the end of the string.
+		SQL: `SELECT later.creator AS address, MIN(later.block_height) AS block_height, later.block_time, later.tx_hash
+			FROM package_submissions later
+			JOIN package_submissions earlier
+			  ON earlier.network = later.network AND earlier.creator = later.creator
+			 AND rtrim(earlier.path, '0123456789') = rtrim(later.path, '0123456789')
+			 AND CAST(substr(earlier.path, length(rtrim(earlier.path, '0123456789')) + 1) AS INTEGER)
+			   < CAST(substr(later.path, length(rtrim(later.path, '0123456789')) + 1) AS INTEGER)
+			WHERE later.network = @net AND later.success = 1 AND earlier.success = 1
+			  AND later.creator <> '' AND rtrim(later.path, '0123456789') LIKE '%/v'
+			GROUP BY later.creator`,
 	},
 
 	// --- identity ----------------------------------------------------------
@@ -345,19 +505,33 @@ var Catalog = []Def{
 	},
 	{
 		Slug: "session-used", Name: "Signed with a session key", Emoji: "🖋", Group: GroupKeys, Live: true,
-		What: "one of this account's live session keys has signed at least one transaction",
+		What: "a session key granted by this account has signed at least one transaction",
 		How:  "use the delegated key instead of your master key for the realm you scoped it to. That is the whole point of granting one.",
-		// No SQL, and this is the one gap in the catalog rather than an
-		// oversight. A session signs *as its master*: the calls, msg_runs and
-		// bank_sends tables all record the master's address, and the chain
-		// offers no reverse lookup (auth/accounts/<session_addr> returns null,
-		// because a session is not a plain account). The only surviving trace
-		// of use is the Sequence on the live grant, which auth/accounts/
-		// <master>/sessions returns and nothing indexes. So this is awarded
-		// from that live read, on an address's own page, and only while the
-		// grant still exists: a key that was used and then revoked leaves no
-		// evidence anywhere. Indexing it needs MsgCreateSession modelled in the
-		// tx-indexer, or the signer recorded alongside the caller.
+		// Awarded to the MASTER, which is the only account a reader can act on.
+		// A session signs *as its master*: calls, msg_runs and bank_sends all
+		// record the master's address and the session address appears in none
+		// of them, so the link exists in exactly one place, the
+		// signature.session_addr the sweep writes into session_txs.
+		//
+		// Live as well as indexed, and the two cannot disagree. session_txs is
+		// filled only when the indexer that served the sweep models signatures,
+		// and one of the two mainnet indexers does not (gnoscope#433), so this
+		// query under-reports on a chain swept by the wrong one. The address
+		// page therefore also reads auth/accounts/<master>/sessions and ORs in
+		// a grant whose Sequence has moved. The live read can only ever add a
+		// badge, never take one away, which is what makes both safe.
+		//
+		// The live read alone was not enough, and that is why this query
+		// exists: it sees only grants that still exist, so a key that was used
+		// and then revoked left no evidence anywhere. session_txs outlives the
+		// grant.
+		SQL: `SELECT g.master AS address, MIN(t.block_height) AS block_height,
+			       COALESCE(x.block_time, '') AS block_time, t.tx_hash
+			FROM session_txs t
+			JOIN session_grants g ON g.network = t.network AND g.session_addr = t.session_addr
+			LEFT JOIN transactions x ON x.network = t.network AND x.tx_hash = t.tx_hash
+			WHERE t.network = @net AND g.master <> ''
+			GROUP BY g.master`,
 	},
 	{
 		Slug: "session-revoked", Name: "Revoked a session key", Emoji: "♻️", Group: GroupKeys,
@@ -366,12 +540,55 @@ var Catalog = []Def{
 		SQL: `SELECT master AS address, MIN(revoked_height) AS block_height, revoked_time AS block_time, revoked_tx AS tx_hash
 			FROM session_grants WHERE network = @net AND master <> '' AND revoked_height IS NOT NULL GROUP BY master`,
 	},
+
+	// --- tools of the trade ------------------------------------------------
+	//
+	// The transaction memo is the only place the chain records which *client*
+	// composed a transaction. Nothing else survives: the signature says who,
+	// the messages say what, and the tool that assembled them is gone by the
+	// time a block has it. Four tools stamp one, measured over 46,445 mainnet
+	// transactions sampled 2026-09-29 at five points across the chain.
+	//
+	// ⚠️ A memo is free text the signer chooses, so every badge here is
+	// evidence of a claim rather than proof of one: anyone can type
+	// "gnopublish" into a memo and earn the badge without ever running it.
+	// That is worth having anyway, because the honest reading of the badge is
+	// "this transaction says it came from X", which is exactly what the What
+	// lines say. Nothing downstream should treat it as attestation.
+	//
+	// Adena is the obvious absence, and it was looked for: not one of the
+	// 46,445 sampled transactions carries a memo naming it, so the wallet
+	// stamps nothing and there is no honest query to write. The same is true of
+	// gnoweb and of gnokey itself. If Adena ever starts stamping one, this is
+	// the group the badge belongs in.
 	{
-		Slug: "session-key", Name: "Is a session key", Emoji: "🗝", Group: GroupKeys, Marker: true,
-		What: "this address is itself a delegated key, granted by another account",
-		How:  "not earned by an account: this marks the delegated address, so a page that looks empty says why rather than reading as an unused account.",
-		SQL: `SELECT session_addr AS address, MIN(granted_height) AS block_height, granted_time AS block_time, granted_tx AS tx_hash
-			FROM session_grants WHERE network = @net AND session_addr <> '' GROUP BY session_addr`,
+		Slug: "tool-gnoswap", Name: "Traded on gnoswap.io", Emoji: "🔀", Group: GroupTools,
+		What: "signed a transaction stamped `Executed through gnoswap.io`, the memo the GnoSwap web app writes",
+		How:  "swap something on gnoswap.io. The app stamps the memo for you; the DEX itself is a set of realms you can also call directly.",
+		SQL:  memoBadgeSQL(`m.memo = 'Executed through gnoswap.io'`),
+	},
+	{
+		Slug: "tool-gnopublish", Name: "Deployed with gnopublish", Emoji: "🚀", Group: GroupTools,
+		What: "signed a transaction stamped `gnopublish`",
+		How:  "gnopublish wraps addpkg so publishing a package is one command rather than a path, a directory and a gas figure you had to measure first.",
+		SQL:  memoBadgeSQL(`m.memo = 'gnopublish'`),
+	},
+	{
+		Slug: "tool-gnoblog", Name: "Posted with gnoblog-cli", Emoji: "✍️", Group: GroupTools,
+		What: "signed a transaction stamped `Posted from gnoblog-cli`",
+		How:  "gnoblog-cli publishes a markdown file to a blog realm as one call, front matter and all, instead of hand-escaping a post into an argument.",
+		SQL:  memoBadgeSQL(`m.memo = 'Posted from gnoblog-cli'`),
+	},
+	{
+		Slug: "tool-gnomi", Name: "Used Gnomi", Emoji: "🎰", Group: GroupTools,
+		What: "signed a transaction whose memo starts with `gnomi`, which covers both stamps the app has used (`Gnomi.fun` and `gnomi`)",
+		How:  "gnomi.fun is a token launchpad on gno.land. Buying or selling through it stamps the memo.",
+		// A prefix rather than the two exact strings, because the app has
+		// changed its stamp once already ("Gnomi.fun" and "gnomi" both appear
+		// in the same sample) and a third spelling would silently stop
+		// awarding this. LIKE is case-insensitive for ASCII in SQLite, which is
+		// what makes one pattern cover both.
+		SQL: memoBadgeSQL(`m.memo LIKE 'gnomi%'`),
 	},
 
 	// --- governance --------------------------------------------------------
