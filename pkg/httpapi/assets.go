@@ -10,11 +10,17 @@ import (
 
 // The assets views, over the GRC20 transfer ledger.
 //
-// Deliberately without any of Mintscan's money columns. GNOT is not listed
-// anywhere and there is no oracle on chain, so price, market cap and "total
-// value" would each be a number this explorer invented. What is left is the
-// part that is actually knowable and actually wanted: supply, who holds it, and
-// how much of it moves.
+// This file used to say that money columns were impossible here: GNOT was not
+// listed anywhere, there is no oracle on chain, and price, market cap and
+// "total value" would each be a number this explorer invented. Half of that
+// stopped being true. GNOT trades on Kraken and KuCoin, which gives the chain a
+// USD anchor from outside it, and GnoSwap's five pools route tokens to it.
+//
+// The other half did not stop being true, and prices live in prices.go rather
+// than here because of it: four of those five pools hold less than $6,000, so
+// the figure is only worth printing beside a measurement of how little it means.
+// These endpoints stay what they were, the part that is exact: supply, who
+// holds it, and how much of it moves.
 
 // assetRow is one token, with whatever the registry knows about it merged in.
 type assetRow struct {

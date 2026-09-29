@@ -935,6 +935,37 @@ html:not(.has-shots) .shot-cell { display: none; }
 .detail-chart { margin: 4px 0 18px; }
 .detail-chart-box { position: relative; width: 100%; height: 220px; }
 .detail-chart-note { color: var(--fg2); font-size: 11px; margin-top: 6px; }
+
+/* Price provenance. Four tiers and a row of warning chips, all of them built
+   to be hovered: the badge is the summary and the title= is the argument.
+   Colour carries the same ordering as the text so the two cannot disagree, and
+   the text is never only colour: "decorative" says what red means for readers
+   who cannot see that it is red. */
+.px-tier { display: inline-block; font-size: 10px; line-height: 1; padding: 3px 6px;
+  border-radius: 3px; border: 1px solid; cursor: help; white-space: nowrap; vertical-align: middle; }
+.px-tier-market     { color: var(--green); border-color: rgba(81,207,102,.45); background: rgba(81,207,102,.08); }
+.px-tier-indicative { color: var(--accent); border-color: rgba(78,205,196,.45); background: rgba(78,205,196,.08); }
+.px-tier-thin       { color: var(--amber); border-color: rgba(255,217,61,.45); background: rgba(255,217,61,.08); }
+.px-tier-decorative { color: var(--red);   border-color: rgba(255,107,107,.5); background: rgba(255,107,107,.1); }
+.px-tier-none       { color: var(--fg2);   border-color: #333; }
+/* A price the tier has disowned is drawn as disowned. Striking it through would
+   claim it is wrong; it is not wrong, it is unactionable, so it dims instead. */
+.px-value-decorative { color: var(--fg2); }
+.px-warnings { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.px-warn { font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 3px;
+  cursor: help; border: 1px solid #333; color: var(--fg2); white-space: nowrap; }
+.px-warn-alarm   { color: var(--red);   border-color: rgba(255,107,107,.5); }
+.px-warn-caution { color: var(--amber); border-color: rgba(255,217,61,.4); }
+.px-warn::before { content: "\26A0\FE0E"; margin-right: 4px; opacity: .8; }
+.px-warn-info::before { content: "\2139\FE0E"; }
+.px-banner { border: 1px solid #333; border-left: 3px solid var(--amber); border-radius: 4px;
+  padding: 10px 12px; margin-bottom: 12px; font-size: 12px; color: var(--fg2); line-height: 1.6; }
+.px-banner b { color: var(--fg); font-weight: 600; }
+.px-banner .px-fact { cursor: help; border-bottom: 1px dotted #555; }
+.px-depth { border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+.px-depth th, .px-depth td { padding: 2px 10px 2px 0; text-align: left; color: var(--fg2); }
+.px-depth td.bad { color: var(--red); }
+.px-depth td.ok { color: var(--green); }
 .dash-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
 .dash-grp { display: inline-flex; align-items: center; gap: 6px; }
 .dash-bar .label { font-size: 11px; color: var(--fg2); text-transform: uppercase; letter-spacing: 1px; }
@@ -1461,8 +1492,9 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-grc20"><main>
     <div id="grc20-stats" class="stats-bar" style="display:none"></div>
     <div class="section"><div class="section-title">assets (grc20)</div>
-    <div class="section-sub">supply and holders are replayed from the Transfer events the chain emits, so both are exact rather than sampled. no price or market value: GNOT is not listed anywhere and there is no oracle on chain, so any figure in dollars would be one this explorer invented.</div>
-    <table><thead><tr><th>asset</th><th>realm</th><th>supply</th><th>holders</th><th>transfers</th><th>24h</th><th>first seen</th></tr></thead><tbody id="grc20-list"></tbody></table></div>
+    <div class="section-sub">supply and holders are replayed from the Transfer events the chain emits, so both are exact rather than sampled. prices are new here and every one of them is qualified: hover any badge or figure for what it is made of and why it might be wrong.</div>
+    <div id="grc20-price-banner"></div>
+    <table><thead><tr><th>asset</th><th>realm</th><th title="price per whole token in US dollars, routed through GnoSwap to wugnot and anchored on GNOT's price on Kraken and KuCoin. the badge beside it says how much weight the figure carries.">price</th><th>supply</th><th>holders</th><th>transfers</th><th>24h</th><th>first seen</th></tr></thead><tbody id="grc20-list"></tbody></table></div>
   </main></div>
   <div class="view" id="view-asset-detail"><main><div id="asset-detail-content"></div></main></div>
   <div class="view" id="view-validators"><main><div class="section"><div class="section-title">validators</div>
@@ -6512,6 +6544,301 @@ function fmtTokenUnits(v) {
 // and neither is a route separator.
 function assetPath(token) { return '/grc20/' + encodeURIComponent(token); }
 
+// --- prices, and the caveats that come with them -----------------------------
+//
+// Everything in this block exists because gno.land got a price before it got a
+// market. GNOT trades on Kraken and KuCoin, so dollars are computable; there
+// are five GnoSwap pools on the whole chain, so for most tokens the dollars
+// mean very little. Printing the figure without that second half would be the
+// worse of the two mistakes, which is why no number here is ever drawn alone.
+//
+// The rule followed throughout: the badge is the summary, the title= is the
+// argument, and the argument comes from the server rather than being restated
+// here. Two copies of a caveat is how one of them goes stale and gets shown.
+
+// _prices is the last /api/prices payload, indexed by event key. Null until the
+// first fetch lands, which is deliberately not awaited: a 15-second cold RPC
+// refresh must never hold up the asset list, so prices arrive and patch in.
+let _prices = null;
+let _pricesMeta = null;
+
+function priceFor(token) {
+  return (_prices && _prices[token]) || null;
+}
+
+// tierBadge is the one word a reader is most likely to act on, so it carries
+// the longest tooltip on the page.
+function tierBadge(q) {
+  if (!q) return null;
+  return el('span', {
+    className: 'px-tier px-tier-' + (q.tier || 'none'),
+    title: q.tier_explain || '',
+  }, q.tier_label || q.tier);
+}
+
+// fmtUSD prints a price at a precision the price deserves. A sub-cent token
+// shown as "$0.00" is not rounding, it is erasure.
+function fmtUSD(v) {
+  if (!(v > 0)) return '';
+  if (v >= 1000) return '$' + fmtNum(Math.round(v));
+  if (v >= 1) return '$' + v.toFixed(2);
+  if (v >= 0.01) return '$' + v.toFixed(4);
+  if (v >= 0.0001) return '$' + v.toFixed(6);
+  return '$' + v.toExponential(3);
+}
+
+// priceCell is the table cell: the figure, dimmed when its own tier disowns it,
+// with the badge beside it and the exact base-unit price behind a hover.
+//
+// The base-unit figure is in the tooltip rather than the cell because it is the
+// only exact number of the two: a pool's ratio needs no decimals, and the
+// per-token price divides it by a decimals value that, for most tokens on this
+// chain, nobody has ever confirmed.
+function priceCell(token) {
+  const q = priceFor(token);
+  if (!q) {
+    return el('span', {
+      style: { color: 'var(--fg2)', cursor: 'help' },
+      title: (_pricesMeta && _pricesMeta.unavailable)
+        ? 'not computed: ' + _pricesMeta.unavailable
+        : 'no price has been read for this token yet',
+    }, '\u2014');
+  }
+  if (q.tier === 'none' || !(q.usd_per_token > 0)) {
+    return el('span', { className: 'px-tier px-tier-none', title: q.tier_explain || '' }, 'no market');
+  }
+  const wrap = el('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } });
+  let tip = 'exactly ' + q.usd_per_base_unit + ' USD per base unit, which needs no decimals and is the figure to trust.';
+  tip += q.decimals_known
+    ? '\n\nscaled to a whole token using ' + q.decimals + ' decimals, which the token or the registry confirmed.'
+    : '\n\nscaled to a whole token by ASSUMING ' + q.decimals + ' decimals. nothing confirmed that.';
+  if (q.route && q.route.length) {
+    tip += '\n\nrouted ' + q.route.map(h => shortTok(h.from) + '/' + shortTok(h.to) + ' @' + (h.fee / 10000) + '%').join(' then ');
+  }
+  wrap.appendChild(el('span', {
+    className: q.tier === 'decorative' ? 'px-value-decorative' : '',
+    style: { cursor: 'help' }, title: tip,
+  }, fmtUSD(q.usd_per_token)));
+  wrap.appendChild(tierBadge(q));
+  return wrap;
+}
+
+// shortTok trims an event key to its symbol for use inside a tooltip, where a
+// 70-character realm path would push the sentence off the screen.
+function shortTok(token) {
+  if (!token) return '?';
+  const dot = token.lastIndexOf('.');
+  return dot > 0 ? token.slice(dot + 1) : token;
+}
+
+// warningsEl draws the caveat row. Every chip is hoverable and none of them is
+// dismissible: a caveat a reader can close is a caveat that stops being shown
+// on exactly the pages that need it most.
+function warningsEl(q) {
+  if (!q || !q.warnings || !q.warnings.length) return null;
+  const row = el('div', { className: 'px-warnings' });
+  for (const w of q.warnings) {
+    row.appendChild(el('span', {
+      className: 'px-warn px-warn-' + (w.severity || 'info'),
+      title: w.explain,
+    }, w.short));
+  }
+  return row;
+}
+
+// priceDepthTable turns the measured slippage ladder into the thing that
+// actually convinces somebody: not "this pool is thin" but "$100 of this costs
+// you 71%".
+function priceDepthTable(q) {
+  if (!q || !q.depth || !q.depth.length) return null;
+  const tbl = el('table', { className: 'px-depth' });
+  tbl.appendChild(el('thead', {}, el('tr', {},
+    el('th', { title: 'the size of the buy quoted, in US dollars' }, 'you buy'),
+    el('th', { title: 'how far the amount GnoSwap’s own router says you would receive sits below what the price above promises. the swap fee is included, because you cannot avoid paying it either.' }, 'you lose to slippage'))));
+  const body = el('tbody');
+  for (const d of q.depth) {
+    const cell = d.quoted
+      ? el('td', { className: d.slippage_pct >= 5 ? 'bad' : (d.slippage_pct < 1 ? 'ok' : '') }, d.slippage_pct.toFixed(2) + '%')
+      : el('td', { className: 'bad', title: 'the router refused to quote a trade this size: the route runs out of liquidity before it fills.' }, 'no quote');
+    body.appendChild(el('tr', {}, el('td', {}, fmtUSD(d.notional_usd)), cell));
+  }
+  tbl.appendChild(body);
+  return tbl;
+}
+
+// priceBanner is the page-level disclosure, above the table rather than under
+// it. Four facts, each one hoverable, and the two that are bad news come first.
+function priceBanner(meta) {
+  if (!meta) return null;
+  const box = el('div', { className: 'px-banner' });
+  const fact = (text, tip) => el('span', { className: 'px-fact', title: tip }, text);
+
+  // "This server could not find out" and "this chain has no market" are
+  // opposite statements that look identical as an empty column, so the reason
+  // is printed rather than left to be inferred from dashes.
+  if (meta.unavailable) {
+    box.appendChild(el('div', {},
+      el('b', {}, 'No prices on this network. '),
+      fact(meta.unavailable,
+        'This is why the price column is empty, and it is a fact about this explorer rather than about the chain. '
+        + 'Pricing needs a verified RPC endpoint to read GnoSwap pools through; without one nothing here can be computed.')));
+    return box;
+  }
+
+  const line1 = el('div');
+  line1.appendChild(document.createTextNode('These prices are computed, not quoted. '));
+  line1.appendChild(fact('There are ' + fmtNum(meta.pool_count) + ' liquidity pools on this entire chain',
+    'Every price here is routed through GnoSwap, which is the only decentralised exchange on gno.land. '
+    + 'With this few pools there is no second venue to cross-check against and no arbitrage pressure keeping any of these numbers honest.'));
+  line1.appendChild(document.createTextNode(', and '));
+  line1.appendChild(fact(fmtNum(meta.priced_count) + ' of ' + fmtNum(meta.asset_count) + ' assets reach one',
+    'A token with no route to wugnot has no market price at all. It is shown as "no market" rather than as zero, because zero would be a claim about its value and this is an absence of information.'));
+  line1.appendChild(document.createTextNode('.'));
+  box.appendChild(line1);
+
+  if (!meta.twap_available) {
+    const line2 = el('div', { style: { marginTop: '6px' } });
+    line2.appendChild(el('b', {}, 'No manipulation-resistant price exists on this chain. '));
+    line2.appendChild(fact('Every figure below is spot, and a single transaction can set it',
+      'GnoSwap implements the Uniswap V3 time-weighted average price and calling it returns a number, '
+      + 'but every pool stores exactly one observation (observationCardinality = 1), so there is no history to average and the "average" is the current tick. '
+      + 'Fixing it takes one permissionless IncreaseObservationCardinalityNext call per pool, which nobody has made.'));
+    line2.appendChild(document.createTextNode('.'));
+    box.appendChild(line2);
+  }
+
+  if (meta.anchor) {
+    const a = meta.anchor;
+    const line3 = el('div', { style: { marginTop: '6px' } });
+    line3.appendChild(document.createTextNode('The dollar comes from off the chain: '));
+    const srcs = (a.sources || []).map(x => x.venue + ' ' + x.pair + ' ' + (x.kind === 'vwap-24h' ? '24h VWAP' : 'last trade')).join(', ');
+    line3.appendChild(fact('GNOT at ' + fmtUSD(a.usd_per_gnot),
+      'Read from ' + (srcs || 'a public exchange ticker') + '. gno.land has no price oracle, so nothing on the chain knows what a dollar is. '
+      + 'Every token figure on this page is this one number multiplied by a pool ratio, and scales with it.'));
+    if (a.spread_pct > 0) {
+      line3.appendChild(document.createTextNode(' ('));
+      line3.appendChild(fact('venues ' + a.spread_pct.toFixed(2) + '% apart',
+        'The exchanges quoted disagree by this much. A volume-weighted average is preferred over a last trade where one is published, because a single small print cannot move it.'));
+      line3.appendChild(document.createTextNode(')'));
+    }
+    line3.appendChild(document.createTextNode('.'));
+    box.appendChild(line3);
+  }
+
+  if (meta.computed_at) {
+    const line4 = el('div', { style: { marginTop: '6px' } });
+    line4.appendChild(document.createTextNode('Read '));
+    line4.appendChild(timeEl(meta.computed_at));
+    line4.appendChild(document.createTextNode('.'));
+    box.appendChild(line4);
+  }
+  return box;
+}
+
+// assetPriceSection is the per-token panel: the figure, the route it came
+// through, the ladder that decided its tier, and every warning spelled out
+// rather than abbreviated into a chip.
+//
+// The list page compresses these into hoverable chips because it has 28 rows.
+// This page has one, so the caveats are printed at full length: a reader who
+// navigated to a single token has asked for the detail.
+async function assetPriceSection(container, token) {
+  if (!_prices) await loadPrices();
+  const q = priceFor(token);
+  if (!q) return;
+
+  const sec = el('div', { className: 'section' });
+  const title = el('div', { className: 'section-title' }, 'price');
+  sec.appendChild(title);
+
+  if (q.tier === 'none') {
+    sec.appendChild(el('div', { className: 'section-sub' }, q.tier_explain));
+    container.appendChild(sec);
+    return;
+  }
+
+  const head = el('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } });
+  head.appendChild(el('span', {
+    className: q.tier === 'decorative' ? 'px-value-decorative' : '',
+    style: { fontSize: '22px', fontWeight: '600' },
+  }, fmtUSD(q.usd_per_token)));
+  head.appendChild(el('span', { style: { color: 'var(--fg2)' } }, 'per ' + (q.symbol || shortTok(token))));
+  head.appendChild(tierBadge(q));
+  sec.appendChild(head);
+  sec.appendChild(el('div', { className: 'section-sub', style: { marginTop: '4px' } }, q.tier_explain));
+
+  const facts = el('table', { style: { marginTop: '10px' } });
+  const factRow = (label, value, tip) => {
+    const td = el('td');
+    if (typeof value === 'string') td.textContent = value; else if (value) td.appendChild(value);
+    facts.appendChild(el('tr', {},
+      el('td', { style: { color: 'var(--fg2)', width: '200px', cursor: tip ? 'help' : '' }, title: tip || '' }, label), td));
+  };
+  factRow('per base unit', q.usd_per_base_unit,
+    'The exact figure. A pool encodes a ratio between base units, so this needs no decimals and cannot be wrong about them. Everything else on this panel is derived from it.');
+  factRow('decimals used', String(q.decimals) + (q.decimals_known ? '' : '  (assumed)'),
+    q.decimals_known
+      ? 'Confirmed, either by the token realm answering Decimals() or by a curated registry entry.'
+      : 'NOT confirmed. This token exposes no Decimals() and the registry has no entry, so 6 was assumed. If the real figure differs, the per-token price above is wrong by a factor of ten per digit. The per-base-unit figure is unaffected.');
+  if (q.fdv_usd > 0) {
+    factRow('supply x price', fmtUSD(q.fdv_usd),
+      'Deliberately not labelled "market cap". It is the whole supply valued at a price that only a tiny fraction of it could actually be sold at, and the supply half is itself replayed from the transfer events this indexer walked.');
+  }
+  if (q.route && q.route.length) {
+    const r = el('span', {}, q.route.map(h => shortTok(h.from) + ' / ' + shortTok(h.to) + ' @ ' + (h.fee / 10000) + '%  (' + fmtUSD(h.tvl_usd) + ' deep)').join('  then  '));
+    factRow('routed through', r,
+      'The GnoSwap pools this price was computed across, ending at wugnot, whose dollar value comes from GNOT’s price on real exchanges. The depth shown for each hop is both of its reserves valued: the shallowest one is what limits the whole route.');
+  }
+  if (q.route_count > 1) {
+    factRow('independent routes', String(q.route_count) + ', pricing it ' + q.route_spread_pct.toFixed(2) + '% apart',
+      'This token reaches wugnot more than one way, which is the only cross-check this chain offers for free. The figure above is from the deepest route. A gap under about 1% is ordinary arbitrage lag.');
+  }
+  sec.appendChild(facts);
+
+  const depth = priceDepthTable(q);
+  if (depth) {
+    sec.appendChild(el('div', { className: 'section-sub', style: { marginTop: '12px' } },
+      'what it would actually cost you'));
+    sec.appendChild(depth);
+    sec.appendChild(el('div', { className: 'detail-chart-note' },
+      'measured by asking GnoSwap’s own router for a quote at each size, not by modelling the curve. this is the number the tier above is derived from.'));
+  }
+
+  if (q.warnings && q.warnings.length) {
+    sec.appendChild(el('div', { className: 'section-sub', style: { marginTop: '14px' } }, 'what could be wrong with this'));
+    const list = el('div');
+    for (const w of q.warnings) {
+      const item = el('div', { style: { marginTop: '8px', paddingLeft: '10px', borderLeft: '2px solid ' + (w.severity === 'alarm' ? 'var(--red)' : w.severity === 'caution' ? 'var(--amber)' : '#333') } });
+      item.appendChild(el('div', { style: { fontSize: '12px', color: w.severity === 'alarm' ? 'var(--red)' : 'var(--fg)' } }, w.short));
+      item.appendChild(el('div', { style: { fontSize: '11px', color: 'var(--fg2)', lineHeight: '1.6' } }, w.explain));
+      list.appendChild(item);
+    }
+    sec.appendChild(list);
+  }
+  container.appendChild(sec);
+}
+
+// loadPrices fetches and patches. Never awaited by a caller that has something
+// to draw: the refresh behind it is dozens of RPC reads and measured 15 seconds
+// cold, which is a long time to stare at a skeleton for a column that is
+// supplementary to every other one on the row.
+async function loadPrices(onDone) {
+  try {
+    const data = await api('prices');
+    _prices = {};
+    for (const q of (data.quotes || [])) _prices[q.token] = q;
+    _pricesMeta = data;
+  } catch (err) {
+    // A failed price read leaves the rest of the page exactly as it was. The
+    // column shows an em dash, which is honest: it means "not known here",
+    // where "no market" would mean "known, and there is none".
+    console.warn('prices unavailable', err);
+    _prices = _prices || {};
+    _pricesMeta = _pricesMeta || null;
+  }
+  if (onDone) onDone();
+}
+
 function renderAssetRows(assets) {
   const tbody = clear('grc20-list');
   for (const t of assets) {
@@ -6534,6 +6861,7 @@ function renderAssetRows(assets) {
       symbolCell,
       el('td', {}, t.pkg_path ? realmPathEl(t.pkg_path, t.network)
         : el('span', { style: { color: 'var(--fg2)' }, title: 'this token emits a bare symbol rather than its realm path, so the realm is not known from the event' }, 'unknown')),
+      el('td', {}, priceCell(t.token)),
       el('td', {}, supplyCell),
       el('td', {}, holdersCell),
       el('td', {}, fmtNum(t.transfers || 0)),
@@ -6542,7 +6870,7 @@ function renderAssetRows(assets) {
     tbody.appendChild(row);
   }
   if (!assets.length) {
-    tbody.appendChild(el('tr', {}, el('td', { colspan: '7', style: { color: 'var(--fg2)' } },
+    tbody.appendChild(el('tr', {}, el('td', { colspan: '8', style: { color: 'var(--fg2)' } },
       'no GRC20 transfers synced yet')));
   }
 }
@@ -6704,6 +7032,14 @@ function renderAssetPage(container, data, token) {
 
   const note = ledgerNoteEl(data);
   if (note) container.appendChild(note);
+
+  // The price panel, and it is a panel rather than a stat because a price on
+  // this chain needs more room to be qualified than it does to be stated.
+  // Appended empty and filled asynchronously: the rest of this page is served
+  // from the local index and must not wait on an RPC round of GnoSwap reads.
+  const priceSection = el('div');
+  container.appendChild(priceSection);
+  assetPriceSection(priceSection, a.token || token);
 
   // What it is, and who made it.
   const info = el('div', { className: 'section' });
@@ -7159,6 +7495,16 @@ async function loadGRC20() {
       // times. Named "holdings" rather than "holders" for exactly that reason.
       stat('holdings', holders);
       renderAssetRows(assets);
+      // Prices arrive after the list rather than with it. The list is complete
+      // and correct without them; waiting on a cold RPC refresh to show a
+      // supply figure that was already in the database would be a strictly
+      // worse page for the 15 seconds it takes.
+      loadPrices(() => {
+        const banner = clear('grc20-price-banner');
+        const b = priceBanner(_pricesMeta);
+        if (b) banner.appendChild(b);
+        renderAssetRows(assets);
+      });
     });
   } catch (err) {
     console.error(err);
