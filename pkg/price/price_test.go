@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -587,6 +588,8 @@ func TestQuoteOutRejectsRouterError(t *testing.T) {
 }
 
 func TestDiscoverPoolsProbesBothOrders(t *testing.T) {
+	// The pool stores wugnot first; a probe that only tried the other order
+	// would see a chain with no liquidity at all.
 	live := PoolKey{Token0: WUGNOT, Token1: tokGNS, Fee: 3000}
 	eval := func(_ context.Context, expr string) (string, error) {
 		if strings.Contains(expr, live.Path()) {
@@ -594,12 +597,117 @@ func TestDiscoverPoolsProbesBothOrders(t *testing.T) {
 		}
 		return `(false bool)`, nil
 	}
-	found, err := DiscoverPools(context.Background(), eval, []string{tokGNS, WUGNOT}, 0, 4)
+	found, err := DiscoverPools(context.Background(), eval, WUGNOT, []string{tokGNS, WUGNOT}, 3, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(found) != 1 || found[0].Path() != live.Path() {
 		t.Fatalf("found %v, want exactly %s", found, live.Path())
+	}
+}
+
+// The walk has to reach a token that does not touch the anchor directly, or
+// PERUN (which reaches wugnot through GNS as well as directly) would lose half
+// its routes and the only cross-check the chain offers for free.
+func TestDiscoverPoolsWalksPastTheFirstLayer(t *testing.T) {
+	direct := PoolKey{Token0: WUGNOT, Token1: tokGNS, Fee: 3000}
+	secondHop := PoolKey{Token0: tokPerun, Token1: tokGNS, Fee: 10000}
+	live := map[string]bool{direct.Path(): true, secondHop.Path(): true}
+	var probes int
+	var mu sync.Mutex
+	eval := func(_ context.Context, expr string) (string, error) {
+		mu.Lock()
+		probes++
+		mu.Unlock()
+		for p := range live {
+			if strings.Contains(expr, p) {
+				return `(true bool)`, nil
+			}
+		}
+		return `(false bool)`, nil
+	}
+	found, err := DiscoverPools(context.Background(), eval, WUGNOT,
+		[]string{WUGNOT, tokGNS, tokPerun, tokBubble, tokGnomic}, 3, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 2 {
+		t.Fatalf("found %d pools, want 2: %v", len(found), found)
+	}
+	// The whole point of walking rather than gridding: the full grid over five
+	// tokens at four tiers in both orders is 80 probes, and the walk must do
+	// materially fewer while finding everything reachable.
+	if probes >= 80 {
+		t.Errorf("walk made %d probes, no cheaper than the full grid (80)", probes)
+	}
+}
+
+// The mainnet topology, which is the case an obvious walk gets wrong.
+//
+// wugnot reaches BUBBLE, GNOMIC, GNS and PERUN in one layer. PERUN/GNS joins
+// two tokens the anchor has ALREADY reached separately, so a walk that skips a
+// token once it is reached never probes that pair and finds 4 of the 5 pools.
+// Measured against mainnet on 2026-09-29, where the first version of
+// DiscoverPools did exactly that and silently cost PERUN and GNS their second
+// route, which is the only price cross-check this chain offers.
+func TestDiscoverPoolsFindsPoolsBetweenAlreadyReachedTokens(t *testing.T) {
+	live := map[string]bool{}
+	for _, p := range mainnetPools() {
+		live[p.Key.Path()] = true
+	}
+	eval := func(_ context.Context, expr string) (string, error) {
+		for p := range live {
+			if strings.Contains(expr, p) {
+				return `(true bool)`, nil
+			}
+		}
+		return `(false bool)`, nil
+	}
+	found, err := DiscoverPools(context.Background(), eval, WUGNOT,
+		[]string{WUGNOT, tokGNS, tokBubble, tokGnomic, tokPerun}, 3, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != len(live) {
+		var paths []string
+		for _, k := range found {
+			paths = append(paths, k.Path())
+		}
+		t.Fatalf("found %d of %d pools: %v", len(found), len(live), paths)
+	}
+	// Name the one that goes missing, so a failure says which case broke.
+	perunGNS := PoolKey{Token0: tokPerun, Token1: tokGNS, Fee: 10000}.Path()
+	var got bool
+	for _, k := range found {
+		if k.Path() == perunGNS {
+			got = true
+		}
+	}
+	if !got {
+		t.Errorf("missing %s, the pool joining two tokens the anchor already reached", perunGNS)
+	}
+}
+
+// A discovery that runs out of time keeps what it found. Returning nothing
+// would silently reprice every token on the chain to "no market", which reads
+// as a fact about the chain rather than about the clock.
+func TestDiscoverPoolsKeepsPartialResultsOnCancel(t *testing.T) {
+	live := PoolKey{Token0: WUGNOT, Token1: tokGNS, Fee: 3000}
+	ctx, cancel := context.WithCancel(context.Background())
+	eval := func(_ context.Context, expr string) (string, error) {
+		if strings.Contains(expr, live.Path()) {
+			return `(true bool)`, nil
+		}
+		return `(false bool)`, nil
+	}
+	found, err := DiscoverPools(ctx, eval, WUGNOT, []string{WUGNOT, tokGNS, tokPerun}, 3, 4)
+	if err != nil || len(found) != 1 {
+		t.Fatalf("baseline: found %v err %v", found, err)
+	}
+	cancel()
+	found, err = DiscoverPools(ctx, eval, WUGNOT, []string{WUGNOT, tokGNS, tokPerun}, 3, 4)
+	if len(found) != 0 || err == nil {
+		t.Fatalf("a cancelled walk with nothing found must report the cancellation: %v %v", found, err)
 	}
 }
 

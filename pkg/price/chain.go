@@ -80,83 +80,156 @@ type Pool struct {
 // Ratio is base units of Token1 per base unit of Token0.
 func (p *Pool) Ratio() (*big.Rat, error) { return RatioFromSqrtPriceX96(p.SqrtPriceX96) }
 
-// DiscoverPools finds which of the candidate pairs actually have a pool.
+// DiscoverPools finds the pools that can price something, by walking outward
+// from the anchor.
 //
 // There is no enumeration endpoint. `pool.GetPools()` returns a read-only tree
 // whose contents vm/qeval cannot iterate (it can only print the tree's own
 // debug repr), CreatePool arguments are not kept by this indexer, and the pool
 // realm's Render prints a count and not a list. So discovery is a probe:
-// ExistsPoolPath over every unordered pair at every fee tier.
+// ExistsPoolPath, one read per candidate.
 //
-// That is O(n^2 * 4) reads, which is why this is a background refresh and never
-// runs on a request. With the 7 tokens that have ever touched a pool it is 84
-// calls; with all 15 fungible assets on mainnet it is 420, about 30 seconds at
-// this concurrency. It is also why `want` exists: the pool realm knows how many
-// pools it holds, so the scan can stop as soon as it has found them all rather
-// than finishing the grid. Pass 0 to disable that and scan everything.
+// The first version probed the full grid, every unordered pair at every fee
+// tier. That is O(n^2 * 8) reads, and it does not survive contact with a real
+// host: 15 fungible assets is 840 probes, which took **the entire 60-second
+// refresh budget** on val1 on 2026-09-29 and left nothing for the anchor, so
+// the endpoint answered "no GNOT/USD venue answered" when the truth was "the
+// deadline expired before anyone asked one".
 //
-// Order matters to the chain and not to us: a pool stores its tokens in one
-// specific order and ExistsPoolPath is false for the other, so both are probed.
-func DiscoverPools(ctx context.Context, eval Eval, tokens []string, want int, concurrency int) ([]PoolKey, error) {
+// This walks outward from `seed` instead. Layer 1 probes seed against every
+// candidate; each token found becomes a frontier for the next layer. Two things
+// fall out of that:
+//
+//   - **It is much cheaper.** The first layer is O(n * 8), 120 reads rather than
+//     840, and on a chain with five pools it converges in two layers.
+//   - **It finds exactly the pools that matter.** A price is a route to wugnot,
+//     so a pool between two tokens that neither connects to the anchor cannot
+//     price anything. The grid version paid for those and then ignored them.
+//
+// maxLayers bounds the walk; 3 matches the route solver's hop limit, past which
+// a price is more pool depth than signal anyway. Order matters to the chain and
+// not to us: a pool stores its tokens in one specific order and ExistsPoolPath
+// is false for the other, so both are probed.
+//
+// Measured on mainnet 2026-09-29: finds all five pools, and the walk stops
+// after the layer that reaches nothing new.
+func DiscoverPools(ctx context.Context, eval Eval, seed string, tokens []string, maxLayers, concurrency int) ([]PoolKey, error) {
 	if concurrency <= 0 {
 		concurrency = 8
 	}
-	var candidates []PoolKey
-	for i := 0; i < len(tokens); i++ {
-		for j := i + 1; j < len(tokens); j++ {
-			for _, fee := range feeTiers {
-				candidates = append(candidates,
-					PoolKey{Token0: tokens[i], Token1: tokens[j], Fee: fee},
-					PoolKey{Token0: tokens[j], Token1: tokens[i], Fee: fee})
-			}
+	if maxLayers <= 0 {
+		maxLayers = 3
+	}
+
+	rest := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if t != seed {
+			rest = append(rest, t)
 		}
 	}
 
 	var (
-		mu    sync.Mutex
-		found []PoolKey
-		wg    sync.WaitGroup
+		mu       sync.Mutex
+		found    []PoolKey
+		seenPool = map[string]bool{}
+		probed   = map[string]bool{}
+		reached  = map[string]bool{seed: true}
+		frontier = []string{seed}
 	)
-	sem := make(chan struct{}, concurrency)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
-	for _, k := range candidates {
-		select {
-		case <-ctx.Done():
-		default:
+	for layer := 0; layer < maxLayers && len(frontier) > 0; layer++ {
+		var candidates []PoolKey
+		for _, from := range frontier {
+			for _, to := range rest {
+				if from == to {
+					continue
+				}
+				// Deliberately NOT skipping a token already reached. That skip
+				// was the first version of this walk and it silently lost a
+				// pool: on mainnet 2026-09-29 it found 4 of 5, because
+				// PERUN/GNS joins two tokens the anchor had already reached
+				// separately. Those are precisely the pools that give a token a
+				// second independent route, which is the only price
+				// cross-check this chain offers for free. The pair ledger below
+				// is what stops the duplicate work instead.
+				for _, fee := range feeTiers {
+					for _, k := range []PoolKey{
+						{Token0: from, Token1: to, Fee: fee},
+						{Token0: to, Token1: from, Fee: fee},
+					} {
+						if probed[k.Path()] {
+							continue
+						}
+						probed[k.Path()] = true
+						candidates = append(candidates, k)
+					}
+				}
+			}
 		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(k PoolKey) {
-			defer wg.Done()
-			defer func() { <-sem }()
+		if len(candidates) == 0 {
+			break
+		}
+
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, concurrency)
+		for _, k := range candidates {
 			if ctx.Err() != nil {
-				return
+				break
 			}
-			out, err := eval(ctx, fmt.Sprintf(`%s.ExistsPoolPath("%s")`, poolRealm, k.Path()))
-			if err != nil {
-				return
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(k PoolKey) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				if ctx.Err() != nil {
+					return
+				}
+				out, err := eval(ctx, fmt.Sprintf(`%s.ExistsPoolPath("%s")`, poolRealm, k.Path()))
+				if err != nil {
+					return
+				}
+				lines := ReprLines(out)
+				if len(lines) == 0 {
+					return
+				}
+				if ok, parsed := ReprBool(lines[0]); !parsed || !ok {
+					return
+				}
+				mu.Lock()
+				if !seenPool[k.Path()] {
+					seenPool[k.Path()] = true
+					found = append(found, k)
+				}
+				mu.Unlock()
+			}(k)
+		}
+		wg.Wait()
+
+		// A cancelled walk keeps what it found. A partial pool set prices fewer
+		// tokens, which the response already knows how to say; returning
+		// nothing would reprice every token on the chain to "no market".
+		if ctx.Err() != nil {
+			break
+		}
+
+		var next []string
+		mu.Lock()
+		for _, k := range found {
+			for _, t := range []string{k.Token0, k.Token1} {
+				if !reached[t] {
+					reached[t] = true
+					next = append(next, t)
+				}
 			}
-			lines := ReprLines(out)
-			if len(lines) == 0 {
-				return
-			}
-			if ok, parsed := ReprBool(lines[0]); !parsed || !ok {
-				return
-			}
-			mu.Lock()
-			found = append(found, k)
-			done := want > 0 && len(found) >= want
-			mu.Unlock()
-			if done {
-				cancel()
-			}
-		}(k)
+		}
+		mu.Unlock()
+		frontier = next
 	}
-	wg.Wait()
 
 	sort.Slice(found, func(i, j int) bool { return found[i].Path() < found[j].Path() })
+	if len(found) == 0 && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	return found, nil
 }
 

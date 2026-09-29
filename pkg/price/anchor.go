@@ -59,6 +59,14 @@ func FetchAnchor(ctx context.Context, hc *http.Client) (*Anchor, error) {
 		}
 	}
 	if len(a.Sources) == 0 {
+		// Say which failure this was. "No venue answered" was reported once
+		// (2026-09-29, val1) when every venue was reachable and the caller had
+		// simply handed over an already-expired context, which sent everyone
+		// looking at exchange connectivity for an hour. A deadline that was
+		// spent elsewhere is not an exchange outage.
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("GNOT/USD not read: %w", err)
+		}
 		return nil, fmt.Errorf("no GNOT/USD venue answered")
 	}
 	sort.Slice(a.Sources, func(i, j int) bool {

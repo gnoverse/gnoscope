@@ -39,11 +39,22 @@ const (
 	// refresh is dozens of sequential-ish RPC reads, and because the failure
 	// mode of being too tight is serving no prices at all rather than serving
 	// slow ones.
-	priceReadTimeout = 60 * time.Second
+	priceReadTimeout = 90 * time.Second
+	// anchorReadTimeout is the USD leg's own budget, carved out of the total
+	// rather than shared with it. Two public tickers answered in 80 ms and 300
+	// ms when measured from val1, so this is generous by two orders of
+	// magnitude and still cannot be eaten by a slow chain.
+	anchorReadTimeout = 12 * time.Second
+	// poolDiscoveryTimeout bounds the probe walk so it cannot spend the whole
+	// refresh. A walk that runs out keeps whatever it found and the next
+	// refresh continues from there, which prices fewer tokens rather than none.
+	poolDiscoveryTimeout = 40 * time.Second
 	// priceConcurrency is the fan-out for the discovery probe. The same shape
-	// and the same reasoning as inert.go's: these are lightweight local-state
-	// abci_query reads, not writes.
-	priceConcurrency = 32
+	// and the same reasoning as inert.go's 60: these are lightweight
+	// local-state abci_query reads, not writes, and the walk is several hundred
+	// of them. At 32 the pass took longer than its own budget on val1
+	// (2026-09-29), which is how the anchor came to be starved.
+	priceConcurrency = 64
 )
 
 type assetPriceCache struct {
@@ -145,6 +156,21 @@ func (a *API) refreshPrices(ctx context.Context, network string) (*price.Result,
 		return fetchABCIQuery(ctx, rpcURL, "vm/qeval", expr)
 	}
 
+	// The anchor comes FIRST, on its own clock, and this ordering is the whole
+	// fix for a bug that shipped: with the chain scan in front of it, a slow
+	// discovery pass spent the entire 60-second budget and the anchor fetch
+	// then failed on an expired context, reporting "no GNOT/USD venue
+	// answered" from a host that could reach both venues in 80 milliseconds
+	// (val1, 2026-09-29). Two cheap HTTP calls must not be starved by dozens of
+	// RPC reads, and if they fail there is nothing to compute anyway, so
+	// failing here is also the fastest way to fail.
+	anchorCtx, cancelAnchor := context.WithTimeout(ctx, anchorReadTimeout)
+	anchor, anchorErr := price.FetchAnchor(anchorCtx, sharedClient(anchorReadTimeout))
+	cancelAnchor()
+	if anchorErr != nil {
+		return nil, anchorErr
+	}
+
 	summaries, err := a.db.TokenSummaries(network)
 	if err != nil {
 		return nil, err
@@ -154,14 +180,6 @@ func (a *API) refreshPrices(ctx context.Context, network string) (*price.Result,
 	keys, err := a.poolKeys(ctx, network, eval, summaries)
 	if err != nil {
 		return nil, err
-	}
-
-	// The anchor is fetched even when there are no pools: a reader still wants
-	// to know what GNOT is worth, and the empty state reads very differently
-	// with a dollar figure on it than without one.
-	anchor, anchorErr := price.FetchAnchor(ctx, sharedClient(10*time.Second))
-	if anchorErr != nil {
-		return nil, anchorErr
 	}
 
 	res := price.Refresh(ctx, eval, anchor, assets, keys, a.db.EarliestTokenTransfer(network))
@@ -221,6 +239,10 @@ func (a *API) poolKeys(ctx context.Context, network string, eval price.Eval, sum
 		return cached, nil
 	}
 
+	// The walk starts at wugnot, so the candidate list is everything it might
+	// reach. A price is a route to the anchor: a pool between two tokens that
+	// reaches neither cannot price either of them, and probing for it is pure
+	// cost.
 	candidates := []string{price.WUGNOT}
 	seen := map[string]bool{price.WUGNOT: true}
 	for _, t := range summaries {
@@ -234,7 +256,9 @@ func (a *API) poolKeys(ctx context.Context, network string, eval price.Eval, sum
 		candidates = append(candidates, t.Token)
 	}
 
-	found, err := price.DiscoverPools(ctx, eval, candidates, 0, priceConcurrency)
+	discoverCtx, cancel := context.WithTimeout(ctx, poolDiscoveryTimeout)
+	defer cancel()
+	found, err := price.DiscoverPools(discoverCtx, eval, price.WUGNOT, candidates, 3, priceConcurrency)
 	if err != nil || len(found) == 0 {
 		if ok {
 			return cached, nil
