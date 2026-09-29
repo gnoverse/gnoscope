@@ -137,6 +137,24 @@ export const USAGE_CALLERS = {
   'g1rumble300000000000000000000000000000': [1, 1],
   'g1rumblerun000000000000000000000000000': [1, 1],
 };
+// The multicall account: what a transaction listing has to draw as one row.
+//
+// Two transactions, six messages. `multi-batch` carries five of them (four
+// calls and a send), which is past TX_MSG_PREVIEW, so it exercises the fold as
+// well as the grouping. Its gas is one figure and must be counted once, not six
+// times: that is the whole point of the fixture being uneven.
+export const MULTICALL_SIGNER = 'g1multicall000000000000000000000000000';
+// Deployed by somebody else on purpose: the signer must have exactly the two
+// transactions below, and a deploy would be a third.
+export const MULTICALL_DEPLOYER = 'g1multideploy00000000000000000000000';
+export const MULTICALL_REALM = 'gno.land/r/multi/batch';
+export const MULTICALL_TXS = 2;
+export const MULTICALL_MESSAGES = 6;
+export const MULTICALL_BATCH_MESSAGES = 5;
+// Of those five, the four that /txs?type=call can see.
+export const MULTICALL_CALLS_IN_BATCH = 4;
+export const MULTICALL_GAS_USED = 2 * 70000;
+
 export const USAGE_MESSAGES = 8;
 export const USAGE_TXS = 7;
 export const USAGE_FAILED = 1;
@@ -442,6 +460,23 @@ export function seed(dbPath) {
     }
     run.run('alpha', 'usage-run', 5007, blockTime(5007), RRUN, `import "${USAGE_REALM}"\n`);
     tx.run('alpha', 'usage-run', 5007, blockTime(5007), 70000, 100000, 700);
+
+    // The multicall account. One transaction of five messages, one of one.
+    //
+    // Written with the msg_index-aware statement because `calls` uniques on
+    // (network, tx_hash, msg_index): four rows under one hash collapse to one
+    // without it, which would quietly delete the thing being tested.
+    addPackage('alpha', MULTICALL_REALM, MULTICALL_DEPLOYER, 6000, true, 'multi-deploy');
+    for (let i = 0; i < 4; i++) {
+      usageCall.run('alpha', 'multi-batch', i, 6001, blockTime(6001), MULTICALL_SIGNER,
+        MULTICALL_REALM, `Step${i}`, 1);
+    }
+    send.run('alpha', 'multi-batch', 6001, blockTime(6001), MULTICALL_SIGNER,
+      'g1recipient00000000000000000000000000', '5000000ugnot', 5000000);
+    tx.run('alpha', 'multi-batch', 6001, blockTime(6001), 70000, 100000, 700);
+    usageCall.run('alpha', 'multi-solo', 0, 6002, blockTime(6002), MULTICALL_SIGNER,
+      MULTICALL_REALM, 'Step0', 1);
+    tx.run('alpha', 'multi-solo', 6002, blockTime(6002), 70000, 100000, 700);
 
     // Storage events, the rows /storage is built on. Signed: an unlock
     // subtracts, so r/hub/core nets out below what it deposited.

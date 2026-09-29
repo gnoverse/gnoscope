@@ -67,9 +67,14 @@ func (a *API) HandleAddress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSONResponse(w, map[string]any{
-		"address":        addr,
-		"transactions":   txs,
-		"total":          total,
+		"address":      addr,
+		"transactions": txs,
+		// `total` is the message count and always was; it is what the pager
+		// pages over and what every older client reads, so it keeps its name
+		// and its meaning. `total_txs` is the number the header wants, because
+		// the rows above are messages and a multicall is several of them.
+		"total":          total.Messages,
+		"total_txs":      total.Txs,
 		"packages":       pkgs,
 		"oldest_on_page": oldestOnPage,
 		// Paired with the height rather than derived from row order: the age

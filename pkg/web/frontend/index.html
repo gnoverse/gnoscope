@@ -667,6 +667,17 @@ th.sort-desc::after { content: ' \2193'; opacity: 1; }
 tr.total-row { border-top: 2px solid var(--border); }
 tr.total-row td { font-weight: bold; color: var(--accent); }
 .block-ctx { color: var(--fg2); font-size: 12px; }
+/* A transaction's messages, listed inside that transaction's own detail cell.
+   One <tr> per transaction and never a rowspan: makeSortable reorders rows by
+   children[colIdx], so a rowspan stops lining up on the first header click and
+   the filter would hide half of a group. Overflow lines stay in the DOM and are
+   hidden by class, so the filter box and the CSV export still see every message
+   in the row whether or not the reader expanded it. */
+.msg-list { display: flex; flex-direction: column; gap: 3px; }
+.msg-line { display: flex; align-items: baseline; gap: 6px; }
+.msg-n { color: var(--fg2); font-size: 11px; font-family: var(--mono); min-width: 1.6em; text-align: right; flex: none; }
+.msg-list .msg-more { display: none; }
+.msg-list.open .msg-more { display: flex; }
 .section-sub { color: var(--fg2); font-size: 12px; margin: -4px 0 10px; max-width: 70ch; }
 /* Achievements: the badge grid, the filter chips, and the strip of emoji that
    stands in for the grid inside a table row. Cards rather than a table because
@@ -3491,14 +3502,20 @@ async function loadWatchlist() {
           el('th', {}, 'hash'), el('th', {}, 'signer'),
           el('th', {}, 'type'), el('th', {}, 'detail'), el('th', {}, 'status'), el('th', {}, 'block'))));
         const body = el('tbody');
-        for (const tx of data.transactions) {
-          body.appendChild(netRow(tx.network,
-            el('td', {}, txLink(tx.hash, tx.block_height, tx.network, { showBlock: false })),
-            el('td', {}, tx.caller ? addrLink(tx.caller, tx.network) : ''),
-            el('td', {}, typeBadge(tx.type)),
-            el('td', {}, storedTxDetail(tx)),
-            el('td', {}, statusBadge(tx.success)),
-            el('td', {}, blockWithAge(tx.block_height, tx.block_time, tx.network))
+        // Per transaction: these rows come from the same per-message tables the
+        // address page reads, so a multicall arrives as several of them.
+        for (const g of groupTxMessages(data.transactions)) {
+          const views = storedMsgViews(g.msgs);
+          const hashTd = el('td', {}, txLink(g.hash, g.block_height, g.network, { showBlock: false }));
+          const count = txMsgCountEl(g.msgs.length);
+          if (count) hashTd.appendChild(count);
+          body.appendChild(netRow(g.network,
+            hashTd,
+            el('td', {}, g.caller ? addrLink(g.caller, g.network) : ''),
+            el('td', {}, txTypeCellEl(views)),
+            el('td', {}, txDetailCellEl(views)),
+            el('td', {}, txStatusCellEl(g.msgs)),
+            el('td', {}, blockWithAge(g.block_height, g.block_time, g.network))
           ));
         }
         tbl.appendChild(body);
@@ -5669,6 +5686,164 @@ function storedTxDetail(tx) {
   return span;
 }
 
+// --- A transaction is not a message -----------------------------------------
+//
+// Every table below draws one row per *transaction*, and a transaction can
+// carry several messages. The two shapes that reach these tables disagree about
+// which one they hold, so both are normalised here and nowhere else:
+//
+//   storage rows  one row per message, flat {type, detail}, several sharing one
+//                 hash. AddressTransactions unions four per-message tables, so
+//                 a fourteen-deploy multicall arrives as fourteen rows carrying
+//                 one hash, one block, one timestamp and one gas figure.
+//   indexer rows  one row per transaction, nested messages[]. These used to
+//                 render messages[0] and drop the rest, so the same multicall
+//                 was fourteen rows on the address page and one row showing a
+//                 fourteenth of itself on /txs.
+//
+// Neither read was right. Drawn straight, the first says the address did
+// fourteen things four milliseconds apart; summed, its gas counts one fee
+// fourteen times. The second silently hides thirteen messages.
+//
+// The fix is one <tr> per transaction with the messages nested in its detail
+// cell. Not a rowspan, which makeSortable would scramble on the first header
+// click (it reorders <tr> by children[colIdx]) and addTableFilter would tear in
+// half.
+
+// How many of a transaction's messages are drawn before the rest fold away.
+// Three is the largest number that still leaves a busy page scannable: the
+// address that prompted this has a 14-message and a 13-message transaction
+// three rows apart.
+const TX_MSG_PREVIEW = 3;
+
+// groupTxMessages folds a flat per-message list into one entry per transaction,
+// in the order the transactions first appear.
+//
+// Keyed on (network, hash) rather than hash alone, because in all-networks mode
+// the rows come from several chains and nothing stops two of them holding the
+// same hash, the same reason every query in pkg/store carries its network.
+function groupTxMessages(rows) {
+  const byHash = new Map();
+  const out = [];
+  for (const r of rows) {
+    const key = (r.network || '') + '\u0000' + r.hash;
+    let g = byHash.get(key);
+    if (!g) {
+      // Gas is read off the first row and never summed: the LEFT JOIN behind
+      // these rows copies the transaction's one gas figure onto every message
+      // it carried, so adding them up multiplies a single fee by the message
+      // count.
+      g = {
+        hash: r.hash, network: r.network, block_height: r.block_height,
+        block_time: r.block_time, caller: r.caller,
+        gas_used: r.gas_used || 0, gas_fee: r.gas_fee || 0, msgs: [],
+      };
+      byHash.set(key, g);
+      out.push(g);
+    }
+    g.msgs.push(r);
+  }
+  return out;
+}
+
+// storedMsgViews and indexerMsgViews are the two adapters. A view is
+// {kind, badge(), detail()} and is all the cells below know about.
+function storedMsgViews(rows) {
+  return rows.map(r => ({
+    kind: r.type,
+    badge: () => typeBadge(r.type),
+    detail: () => storedTxDetail(r),
+  }));
+}
+function indexerMsgViews(msgs) {
+  return (msgs || []).map(m => ({
+    kind: m?.value?.__typename,
+    badge: () => typeBadge(m?.value?.__typename, m),
+    detail: () => txDetailEl(m),
+  }));
+}
+
+// txTypeCellEl: the type column for a whole transaction.
+//
+// All one kind is the common multicall, and it reads as "deploy ×14". The
+// count belongs here rather than only beside the hash, because "type" is the
+// column a reader scans to see what a transaction *was*. Mixed kinds get one
+// badge each, capped, since a row listing six badges is not a summary.
+function txTypeCellEl(views) {
+  const span = el('span', { style: { display: 'inline-flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' } });
+  const kinds = [];
+  for (const v of views) if (!kinds.includes(v.kind)) kinds.push(v.kind);
+  if (kinds.length <= 1) {
+    span.appendChild(views[0] ? views[0].badge() : typeBadge(''));
+    if (views.length > 1) span.appendChild(el('span', { className: 'block-ctx' }, '\u00d7' + views.length));
+    return span;
+  }
+  const shown = kinds.slice(0, 3);
+  for (const k of shown) {
+    const first = views.find(v => v.kind === k);
+    const b = first.badge();
+    const n = views.filter(v => v.kind === k).length;
+    span.appendChild(b);
+    if (n > 1) span.appendChild(el('span', { className: 'block-ctx' }, '\u00d7' + n));
+  }
+  if (kinds.length > shown.length) {
+    span.appendChild(el('span', { className: 'block-ctx' }, '+' + (kinds.length - shown.length)));
+  }
+  return span;
+}
+
+// txDetailCellEl: the detail column for a whole transaction.
+//
+// A single message renders exactly as it always did: the overwhelmingly common
+// case must not grow a number and an indent it does not need. Several render as
+// a numbered list, the first TX_MSG_PREVIEW visible and the rest one click away.
+// The per-line type badge is drawn only when the kinds differ; when they are
+// all the same the type column two to the left already said so.
+function txDetailCellEl(views) {
+  if (views.length <= 1) return views[0] ? views[0].detail() : el('span');
+  const kinds = new Set(views.map(v => v.kind));
+  const list = el('div', { className: 'msg-list' });
+  views.forEach((v, i) => {
+    const line = el('div', { className: 'msg-line' + (i >= TX_MSG_PREVIEW ? ' msg-more' : '') });
+    line.appendChild(el('span', { className: 'msg-n' }, String(i + 1)));
+    if (kinds.size > 1) line.appendChild(v.badge());
+    line.appendChild(v.detail());
+    list.appendChild(line);
+  });
+  if (views.length > TX_MSG_PREVIEW) {
+    const hidden = views.length - TX_MSG_PREVIEW;
+    const toggle = el('span', { className: 'clamp-toggle' }, '+' + hidden + ' more');
+    toggle.addEventListener('click', () => {
+      const open = list.classList.toggle('open');
+      toggle.textContent = open ? 'show less' : '+' + hidden + ' more';
+    });
+    list.appendChild(toggle);
+  }
+  return list;
+}
+
+// txStatusCellEl: one badge when the whole transaction agrees, which it almost
+// always does, because a failed message aborts the transaction. It does not always:
+// MsgAddPackage rows carry the submission's own outcome, and the inert
+// submission policy makes a partly-failed deploy batch a real shape. Saying
+// "ok" over a row that holds a failure would be the explorer's own claim, not
+// the chain's.
+function txStatusCellEl(rows) {
+  const ok = rows.filter(r => r.success).length;
+  if (ok === rows.length) return statusBadge(true);
+  if (ok === 0) return statusBadge(false);
+  const span = el('span', { style: { display: 'inline-flex', gap: '4px', alignItems: 'center' } });
+  span.appendChild(statusBadge(false));
+  span.appendChild(el('span', { className: 'block-ctx' }, ok + '/' + rows.length + ' ok'));
+  return span;
+}
+
+// txMsgCountEl is the "×N messages" note beside a hash. Null for a single
+// message, so an ordinary transaction gains nothing.
+function txMsgCountEl(n) {
+  return n > 1 ? el('span', { className: 'block-ctx' }, ' \u00d7' + n + ' msgs') : null;
+}
+
 // renderTxRows draws the page the server returned. No local filtering: the rows
 // that arrived are already the rows that match.
 function renderTxRows(data) {
@@ -5686,20 +5861,38 @@ function renderTxRows(data) {
       colspan: '6', style: { color: 'var(--fg2)', textAlign: 'center', padding: '20px' } }, what)));
   }
 
-  for (const tx of rows) {
-    // Two shapes reach here: indexer rows carry messages[], storage rows carry a
-    // flat type/detail. Rendering both keeps the filtered view — which must come
-    // from storage to be fast — looking identical to the unfiltered one.
-    const msg = tx.messages?.[0];
-    const type = msg ? typeBadge(msg?.value?.__typename, msg) : typeBadge(tx.type);
-    const detail = msg ? txDetailEl(msg) : storedTxDetail(tx);
+  // Two shapes reach here, and they carry the same mistake from opposite ends.
+  //
+  //   indexer rows  one per transaction, with messages[]. These used to draw
+  //                 messages[0] and silently drop the rest, so a multicall
+  //                 showed as a row claiming to be a deploy when it was also
+  //                 two calls and a send.
+  //   storage rows  one per *message*, flat {type, detail}. FilteredTransactions
+  //                 reads the same per-message tables the address page does, so
+  //                 a filtered view repeated one hash across several rows.
+  //
+  // Both are normalised to one entry per transaction before anything is drawn,
+  // which is also what keeps the filtered view looking like the unfiltered one.
+  //
+  // The storage side pages on the server, over messages, so a transaction whose
+  // messages straddle a page boundary still draws twice. That is the pager's
+  // unit, not this function's, and half a multicall labelled as half a
+  // multicall beats fourteen rows that each claim to be the whole thing.
+  const groups = rows.length && rows[0].messages
+    ? rows.map(tx => ({ tx, views: indexerMsgViews(tx.messages) }))
+    : groupTxMessages(rows).map(g => ({ tx: g, views: storedMsgViews(g.msgs) }));
+
+  for (const { tx, views } of groups) {
+    const hashTd = el('td', {}, txLink(tx.hash, tx.block_height, tx.network, { showBlock: false }));
+    const count = txMsgCountEl(views.length);
+    if (count) hashTd.appendChild(count);
     list.appendChild(liveTagRow(netRow(tx.network,
-      el('td', {}, txLink(tx.hash, tx.block_height, tx.network, { showBlock: false })),
+      hashTd,
       el('td', {}, signerCell(tx, tx.network)),
       el('td', {}, blockWithAge(tx.block_height, tx.block_time, tx.network)),
-      el('td', {}, type),
-      el('td', {}, detail),
-      el('td', {}, statusBadge(tx.success))
+      el('td', {}, txTypeCellEl(views)),
+      el('td', {}, txDetailCellEl(views)),
+      el('td', {}, tx.msgs ? txStatusCellEl(tx.msgs) : statusBadge(tx.success))
     ), liveRowKey(tx.network, tx.hash), Date.parse(tx.block_time) || 0));
   }
 
@@ -5805,11 +5998,17 @@ async function loadBlockDetail(height) {
         txTbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'tx'), el('th', {}, 'type'), el('th', {}, 'detail'), el('th', {}, 'status'))));
         const txBody = el('tbody');
         for (const tx of txs) {
-          const msg = tx.messages?.[0];
+          // Every message, not messages[0]. See renderTxRows' own note on the
+          // same drop. A block is exactly where somebody goes to see what a
+          // multicall actually did.
+          const views = indexerMsgViews(tx.messages);
+          const hashTd = el('td', {}, txLink(tx.hash, tx.block_height));
+          const count = txMsgCountEl(views.length);
+          if (count) hashTd.appendChild(count);
           txBody.appendChild(el('tr', {},
-            el('td', {}, txLink(tx.hash, tx.block_height)),
-            el('td', {}, typeBadge(msg?.value?.__typename, msg)),
-            el('td', {}, txDetailEl(msg)),
+            hashTd,
+            el('td', {}, txTypeCellEl(views)),
+            el('td', {}, txDetailCellEl(views)),
             el('td', {}, statusBadge(tx.success))
           ));
         }
@@ -15260,9 +15459,18 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
     if (title) cell.title = title;
     statsBar.appendChild(cell);
   };
-  // The address's whole history, not this page: data.total counts every row
-  // storage holds for it, and paging must not make the headline wander.
-  stat('transactions', fmtNum(data.total ?? txs.length));
+  // The address's whole history, not this page: these count every row storage
+  // holds for it, and paging must not make the headline wander.
+  //
+  // total_txs, not total. `total` is the message count, it always was, and the
+  // pager still pages over it, so this tile used to read 902 on an account the
+  // chain has verified 372 signatures for, with the identity panel four lines
+  // above saying exactly that. The message figure is worth having and rides
+  // along in the tooltip rather than taking a second headline slot.
+  const totalMsgs = data.total ?? txs.length;
+  const totalTxs = data.total_txs ?? totalMsgs;
+  stat('transactions', fmtNum(totalTxs),
+    totalMsgs > totalTxs ? fmtNum(totalMsgs) + ' messages: some of these transactions carried several' : null);
   stat('deploys', fmtNum(pkgs.length));
   if (data.oldest_on_page >= 0) {
     // "oldest here", not "first seen": this is the oldest block on the page
@@ -15293,10 +15501,22 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
   // The one thing lost with the message internals is the storage-deposit
   // breakdown, which lives in transaction events and is not recorded per
   // address. The transaction detail page still shows it in full.
-  const d = { sentTo: {}, recvFrom: {}, calledRealms: {}, sentAmount: 0, recvAmount: 0, sends: 0, recvs: 0, gasUsed: 0, gasFee: 0 };
+  const d = { sentTo: {}, recvFrom: {}, calledRealms: {}, sentAmount: 0, recvAmount: 0, sends: 0, recvs: 0, gasUsed: 0, gasFee: 0, txs: 0 };
+  // Gas is charged once per transaction, and the rows are per message: the
+  // LEFT JOIN behind them copies one gas figure onto every message a
+  // transaction carried, so adding them up billed the 14-deploy multicall
+  // fourteen times. Counted once per hash instead. Everything below it stays
+  // per message, because "sent 4 times" and "called this realm 4 times" are
+  // facts about messages and always were.
+  const gasSeen = new Set();
   for (const tx of txs) {
-    d.gasUsed += tx.gas_used || 0;
-    d.gasFee += tx.gas_fee || 0;
+    const txKey = (tx.network || '') + '\u0000' + tx.hash;
+    if (!gasSeen.has(txKey)) {
+      gasSeen.add(txKey);
+      d.txs++;
+      d.gasUsed += tx.gas_used || 0;
+      d.gasFee += tx.gas_fee || 0;
+    }
     if (tx.type === 'BankMsgSend') {
       // detail is "<to> <amount>", the shape FilteredTransactions builds.
       const [to, amount] = (tx.detail || '').split(' ');
@@ -15311,7 +15531,10 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
   // --- the strip ---
   const spec = [
     { id: 'overview', build: (pane) => renderAddressOverview(pane, addr, data, txs, d) },
-    { id: 'transactions', count: data.total ?? txs.length, build: (pane) => renderAddressTxs(pane, txs, data, blockTime, d) },
+    // Transactions, matching the headline tile and the rows below: the tab
+    // draws one per transaction, so counting messages here would promise a
+    // number the pane cannot reach.
+    { id: 'transactions', count: totalTxs, build: (pane) => renderAddressTxs(pane, txs, data, blockTime, d) },
     // Deliberately uncounted, like the realm page's defi tab and for the same
     // reason: the number would need the fetch that opening the tab is what
     // pays for, so counting it here would undo the deferral.
@@ -15400,9 +15623,16 @@ function renderAddressOverview(pane, addr, data, txs, d) {
   if (any) {
     pane.appendChild(derived);
     if ((data.total ?? txs.length) > txs.length) {
+      // d.txs, not txs.length: the rows are messages and these figures are
+      // over transactions. Saying "over the 200 most recent transactions" when
+      // 200 messages came from 96 of them is the same mislabel the headline
+      // above had.
+      const scope = d.txs < txs.length
+        ? fmtNum(d.txs) + ' transactions (' + fmtNum(txs.length) + ' messages)'
+        : fmtNum(d.txs) + ' transactions';
       pane.appendChild(el('div', { className: 'section-sub', style: { marginTop: '6px' } },
-        'over the ' + fmtNum(txs.length) + ' most recent transactions, of '
-        + fmtNum(data.total) + ' in all. the headline above counts every one.'));
+        'over the most recent ' + scope + ', of '
+        + fmtNum(data.total_txs ?? data.total) + ' in all. the headline above counts every one.'));
     }
   }
 
@@ -15478,10 +15708,22 @@ function renderAddressTxs(pane, txs, data, blockTime, d) {
       'no transactions found for this address'));
     return;
   }
+  // One row per transaction, not per message. See groupTxMessages: the rows
+  // arrive per message and a multicall is several of them under one hash.
+  const groups = groupTxMessages(txs);
+  const multi = txs.length > groups.length;
+
   const head = el('div', { className: 'section-sub' });
+  // Both numbers, and only when they differ: "902 transactions" over a list
+  // that holds 372 of them is the bug this tab had, and "372 transactions
+  // (372 messages)" on an account that never batched anything is noise.
+  const allTxs = data.total_txs ?? data.total ?? txs.length;
+  const window_ = multi
+    ? fmtNum(groups.length) + ' transactions (' + fmtNum(txs.length) + ' messages)'
+    : fmtNum(groups.length) + ' transactions';
   head.append((data.total ?? txs.length) > txs.length
-    ? 'the ' + fmtNum(txs.length) + ' most recent, of ' + fmtNum(data.total) + ' in all.'
-    : 'every transaction this index holds for the address.');
+    ? 'the most recent ' + window_ + ', of ' + fmtNum(allTxs) + ' transactions in all.'
+    : 'every transaction this index holds for the address: ' + window_ + '.');
   pane.appendChild(head);
 
   // The table element is built once and only its rows are swapped.
@@ -15511,24 +15753,27 @@ function renderAddressTxs(pane, txs, data, blockTime, d) {
   let page = 0;
   const draw = () => {
     body.textContent = '';
-    for (const tx of txs.slice(page * ADDRESS_TX_ROWS, (page + 1) * ADDRESS_TX_ROWS)) {
-      const when = tx.block_time ? timeEl(tx.block_time)
-        : blockTime[tx.block_height] ? timeEl(blockTime[tx.block_height])
-        : (tx.block_height === 0 ? 'genesis' : '');
-      const txTd = el('td', {}, txLink(tx.hash, tx.block_height, tx.network));
-      if (tx.network) txTd.appendChild(netBadgeEl(tx.network));
+    for (const g of groups.slice(page * ADDRESS_TX_ROWS, (page + 1) * ADDRESS_TX_ROWS)) {
+      const when = g.block_time ? timeEl(g.block_time)
+        : blockTime[g.block_height] ? timeEl(blockTime[g.block_height])
+        : (g.block_height === 0 ? 'genesis' : '');
+      const txTd = el('td', {}, txLink(g.hash, g.block_height, g.network));
+      if (g.network) txTd.appendChild(netBadgeEl(g.network));
+      const count = txMsgCountEl(g.msgs.length);
+      if (count) txTd.appendChild(count);
+      const views = storedMsgViews(g.msgs);
       body.appendChild(el('tr', {},
         txTd,
-        el('td', {}, typeBadge(tx.type)),
-        el('td', {}, storedTxDetail(tx)),
-        el('td', {}, statusBadge(tx.success)),
+        el('td', {}, txTypeCellEl(views)),
+        el('td', {}, txDetailCellEl(views)),
+        el('td', {}, txStatusCellEl(g.msgs)),
         el('td', { style: { color: 'var(--fg2)', fontSize: '12px' } }, when)));
     }
     pagerHost.textContent = '';
     // Over the loaded window, not over data.total: the pager can only reach
     // rows the page already has, and offering a page number it cannot fill
     // would be a control that does nothing.
-    pager(pagerHost, page, txs.length, (n) => { page = n; draw(); });
+    pager(pagerHost, page, groups.length, (n) => { page = n; draw(); });
   };
   draw();
 }

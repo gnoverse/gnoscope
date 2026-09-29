@@ -519,12 +519,12 @@ func TestAddressTransactionsIncludeWhatASessionSigned(t *testing.T) {
 	}
 
 	// The session's own page lists what it signed, and nothing else.
-	got, total, err := db.AddressTransactions("mainnet", session, 50, 0)
+	got, totals, err := db.AddressTransactions("mainnet", session, 50, 0)
 	if err != nil {
 		t.Fatalf("AddressTransactions(session): %v", err)
 	}
-	if total != 1 || len(got) != 1 {
-		t.Fatalf("session page has %d rows (total %d), want 1: the key signed one call", len(got), total)
+	if totals.Messages != 1 || len(got) != 1 {
+		t.Fatalf("session page has %d rows (totals %+v), want 1: the key signed one call", len(got), totals)
 	}
 	if got[0].Hash != "TXSIGNED" {
 		t.Errorf("row = %s, want TXSIGNED", got[0].Hash)
@@ -540,13 +540,13 @@ func TestAddressTransactionsIncludeWhatASessionSigned(t *testing.T) {
 	}
 
 	// A key that signed nothing still has an empty page.
-	if _, n, err := db.AddressTransactions("mainnet", other, 50, 0); err != nil || n != 0 {
-		t.Errorf("unrelated key has %d rows (err %v), want 0", n, err)
+	if _, n, err := db.AddressTransactions("mainnet", other, 50, 0); err != nil || n.Messages != 0 {
+		t.Errorf("unrelated key has %+v (err %v), want 0 messages", n, err)
 	}
 
 	// And the master keeps both of its transactions: being signed by a key does
 	// not move a transaction off the account that made it.
-	if _, n, err := db.AddressTransactions("mainnet", master, 50, 0); err != nil || n != 2 {
-		t.Errorf("master has %d rows (err %v), want 2", n, err)
+	if _, n, err := db.AddressTransactions("mainnet", master, 50, 0); err != nil || n.Messages != 2 {
+		t.Errorf("master has %+v (err %v), want 2 messages", n, err)
 	}
 }
