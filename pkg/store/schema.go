@@ -299,11 +299,12 @@ func migrateAddPackageDoc(db *sql.DB) error {
 // arguments and sent nothing", because for most rows that is exactly what it
 // means.
 func migrateAddMessageArgsAndSend(db *sql.DB) error {
-	for _, c := range []struct{ table, column string }{
-		{"calls", "args"},
-		{"calls", "send"},
-		{"msg_runs", "send"},
-		{"package_submissions", "send"},
+	for _, c := range []struct{ table, column, decl string }{
+		{"calls", "args", "TEXT NOT NULL DEFAULT ''"},
+		{"calls", "send", "TEXT NOT NULL DEFAULT ''"},
+		{"calls", "args_pass", "INTEGER NOT NULL DEFAULT 0"},
+		{"msg_runs", "send", "TEXT NOT NULL DEFAULT ''"},
+		{"package_submissions", "send", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		exists, err := tableExists(db, c.table)
 		if err != nil {
@@ -320,7 +321,7 @@ func migrateAddMessageArgsAndSend(db *sql.DB) error {
 			continue
 		}
 		if _, err := db.Exec(fmt.Sprintf(
-			`ALTER TABLE %s ADD COLUMN %s TEXT NOT NULL DEFAULT ''`, c.table, c.column)); err != nil {
+			`ALTER TABLE %s ADD COLUMN %s %s`, c.table, c.column, c.decl)); err != nil {
 			return fmt.Errorf("add %s to %s: %w", c.column, c.table, err)
 		}
 	}
@@ -702,6 +703,13 @@ func initSchema(db *sql.DB) error {
 			-- argument list is wrong. The transaction detail page reads the
 			-- indexer and shows them in full.
 			args TEXT NOT NULL DEFAULT '',
+			-- Which version of the truncation rules wrote args. Bumped by
+			-- argsPass when those rules change, which is what offers an
+			-- already-filled row back to the backfill: v1 cut every argument at
+			-- 32 bytes and so destroyed every address it touched, and without
+			-- this there would be no way to tell those rows from correct ones.
+			-- Same mechanism as symbol_index.doc_pass.
+			args_pass INTEGER NOT NULL DEFAULT 0,
 			-- The coins the message sent along with the call, verbatim, as the
 			-- chain's coin-list string ("100ugnot,5foo"). Empty for the
 			-- overwhelming majority. A MsgCall may move money and the list said

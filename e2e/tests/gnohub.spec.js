@@ -16,7 +16,7 @@ test('the lab index offers gnohub and nothing else claims to be finished', async
   await settle(page);
 
   // The index carries more than one card now, so the assertions are scoped to
-  // gnohub's — except the badge, which is the half of this test's name that is
+  // gnohub's, except the badge, which is the half of this test's name that is
   // about the whole page: every card here has to say experimental, and a new
   // surface that forgot to is exactly what this should catch.
   const cards = page.locator('.gh-lab-card');

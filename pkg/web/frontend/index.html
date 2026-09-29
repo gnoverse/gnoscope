@@ -576,6 +576,28 @@ pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4p
 .gh-lab-card p { color: var(--fg2); font-size: 13px; margin-bottom: 12px; }
 .gh-lab-card-foot { font-size: 13px; }
 
+/* /lab/github. Same gh- scope: it is a lab surface, so reverting it is one
+   block. Everything below is either a pill row, a chip or a table cell, and
+   the tables themselves use the site's shared rules deliberately: this page
+   is read the same way /realms is, and a second table idiom would be a second
+   thing to keep in step. */
+.gh-pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 4px 0 16px; }
+.gh-pill { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg2);
+  color: var(--fg2); font-size: 12px; cursor: pointer; }
+.gh-pill:hover { color: var(--fg); border-color: var(--fg2); }
+.gh-pill.on { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: bold; }
+.gh-pills-label { color: var(--fg2); font-size: 12px; margin-right: 2px; }
+/* The evidence cell. A discovered row makes a claim and has to carry why, and
+   the why is a whole sentence: it wraps rather than being cut to one line. */
+.gh-why { color: var(--fg2); font-size: 12px; max-width: 46ch; }
+.gh-why code { font-size: 11px; }
+.gh-note { color: var(--fg2); font-size: 12px; margin: 6px 0 10px; max-width: 80ch; }
+.gh-warn { color: var(--amber); }
+.gh-off { background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--amber);
+  border-radius: 6px; padding: 14px 16px; color: var(--fg2); font-size: 13px; max-width: 80ch; }
+.gh-off code { color: var(--fg); }
+.gh-q { font-family: var(--mono, monospace); font-size: 11px; color: var(--fg2); word-break: break-all; }
+
 .gh-crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; margin-bottom: 14px; }
 .gh-crumb-sep { color: var(--fg2); }
 .gh-crumb-here { font-weight: bold; }
@@ -705,6 +727,11 @@ tr.total-row td { font-weight: bold; color: var(--accent); }
 /* A call's arguments, dimmer than the function they belong to: the function is
    what the row is about and the args are how you tell it from the next one. */
 .msg-args { color: var(--fg2); font-size: 12px; word-break: break-word; }
+/* An address or realm path inside an argument list reads as an argument, not as
+   the row's subject: same links, one step quieter than the function they are
+   being passed to. */
+.msg-args a { color: var(--fg2); }
+.msg-args a:hover { color: var(--accent); }
 /* Coins a message carried. A value, not context, so it does not read as the
    same weight as the block number beside it. */
 .msg-send { color: var(--accent); font-size: 12px; white-space: nowrap; }
@@ -1090,6 +1117,28 @@ footer a:hover { color: var(--accent); }
    the shape of the last minute of the chain is visible from any page. Empty
    blocks stay as stubs on purpose: a chain ticking over with nothing in it is a
    fact worth seeing, not one to hide. */
+/* The block strip on /blocks: the live train's idiom at page scale.
+   Two channels, because a reader of this page has two questions and they are
+   not the same one. Height is how busy the block was (log, so one 40-tx deploy
+   block does not flatten every ordinary one to a stub); colour is who proposed
+   it, which is what makes a rotation visible as a rotation and a validator
+   that stopped taking its turn visible as a missing stripe. */
+.bstrip { display: flex; align-items: flex-end; gap: 1px; height: 64px; width: 100%;
+  padding: 6px 0 0; overflow: hidden; }
+.bstrip a { flex: 1 1 0; min-width: 2px; display: block; min-height: 3px; border-radius: 1px;
+  background: currentColor; opacity: .55; }
+.bstrip a:hover { opacity: 1; outline: 1px solid var(--fg); outline-offset: 1px; }
+.bstrip a.has-txs { opacity: .9; }
+/* A block that took more than twice the median to arrive. The chain stalling
+   for nine seconds is the single most interesting thing this strip can show,
+   and it is invisible in a picture whose only axes are txs and proposer. */
+.bstrip a.slow { box-shadow: inset 0 0 0 1px var(--amber); }
+.bstrip-axis { display: flex; justify-content: space-between; color: var(--fg2);
+  font-size: 11px; padding-top: 4px; }
+.bstrip-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-top: 10px; font-size: 12px; }
+.bstrip-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.bstrip-legend i { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 9px; }
+.bstrip-legend .bl-n { color: var(--fg2); }
 .live-train { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; flex-shrink: 0; }
 .live-train i { display: block; width: 3px; min-height: 3px; border-radius: 1px; background: currentColor; opacity: 0.3; }
 .live-train i.txs { opacity: 0.85; }
@@ -1337,6 +1386,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
         <a onclick="navigate('/lab')" id="nav-lab" title="surfaces being tried out"><svg aria-hidden="true"><use href="#i-flask"/></svg><span class="rail-label">lab</span></a>
         <div class="nav-kids">
           <a onclick="navigate('/gnohub')" id="nav-gnohub" title="a realm read as a repository: owners, files, deploys"><span class="rail-label">gnohub</span></a>
+          <a onclick="navigate('/lab/github')" id="nav-labgithub" title="the ecosystem on github: contributors, pull requests, and projects that depend on gno"><span class="rail-label">github</span></a>
         </div>
       </div>
       <a onclick="navigate('/glossary')" id="nav-glossary" title="what the words on this site mean"><svg aria-hidden="true"><use href="#i-info"/></svg><span class="rail-label">glossary</span></a>
@@ -1501,6 +1551,15 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-blocks"><main>
     <div id="blocks-stats" class="stats-bar" style="display:none"></div>
     <div id="blocks-filter" style="display:none; padding: 8px 0; margin-bottom: 4px"></div>
+    <div class="section" id="blocks-strip-section" style="display:none">
+      <div class="section-title" id="blocks-strip-title">the last blocks, drawn</div>
+      <div class="section-sub">one bar per block, oldest left. height is how many transactions it
+        carried (log, so a deploy burst does not flatten everything beside it) and colour is which
+        validator proposed it. an amber edge is a block that took more than twice the median to
+        arrive. the filter below does not apply here: an empty block is most of what this picture
+        is about.</div>
+      <div id="blocks-strip"></div>
+    </div>
     <div class="section"><div class="section-title">recent blocks</div>
     <table><thead><tr><th>height</th><th>time</th><th>txs</th><th>proposer</th><th>hash</th></tr></thead><tbody id="blocks-list"></tbody></table></div>
   </main></div>
@@ -1579,6 +1638,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-lab"><main><div id="lab-content"></div></main></div>
   <div class="view" id="view-cartography"><main><div id="carto-content" class="carto"></div></main></div>
   <div class="view" id="view-gnohub"><main><div id="gnohub-content"></div><div id="gnohub-body"></div></main></div>
+  <div class="view" id="view-labgithub"><main><div id="labgithub-content"></div></main></div>
   <div class="view" id="view-tx-detail"><main><div id="tx-detail-content"></div></main></div>
   <div class="view" id="view-address-detail"><main><div id="address-detail-content"></div></main></div>
 </div>
@@ -2774,7 +2834,7 @@ function txDetailEl(msg) {
       s.appendChild(realmPathEl(v.pkg_path));
       s.append('.');
       s.appendChild(funcSpan(v.func));
-      s.appendChild(el('span', { className: 'msg-args' }, '(' + argsPreview(v.args) + ')'));
+      s.appendChild(argsEl(argsPreview(v.args)));
       appendSendEl(s, v.send);
       return s;
     case 'MsgRun':
@@ -3992,6 +4052,7 @@ const NAV = [
   { id: 'lab', label: 'lab', path: '/lab', own: 'experiments', children: [
     { id: 'cartography', label: 'cartography', path: '/cartography' },
     { id: 'gnohub', label: 'gnohub', path: '/gnohub' },
+    { id: 'labgithub', label: 'github', path: '/lab/github' },
   ] },
   { id: 'glossary', label: 'glossary', path: '/glossary' },
   { id: 'watch', label: 'watch', path: '/watch' },
@@ -4168,6 +4229,9 @@ function route() {
   // Cartography's own module and stylesheet are fetched on first entry, so the
   // route only has to name the view; loadCarto() below does the rest.
   else if (path === '/cartography') { view = 'cartography'; }
+  // Before the /gnohub tests below only for reading order; both are exact
+  // matches, so neither can shadow the other.
+  else if (path === '/lab/github') { view = 'labgithub'; }
   // The whole gnohub tree is one view: the sub-page is data, not a second
   // `view-` container, which is what keeps the experiment to one block of
   // markup and one block of script.
@@ -4220,6 +4284,7 @@ function route() {
     case 'lab': loadLab(); break;
     case 'cartography': loadCarto(); break;
     case 'gnohub': loadGnohub(data); break;
+    case 'labgithub': loadLabGitHub(); break;
     case 'realms': loadRealms(); break;
     case 'packages': enterPackages(urlPv); break;
     case 'contracts': loadContracts(); break;
@@ -5947,14 +6012,23 @@ function highlightBtn(group, activeBtn) {
 // Kept deliberately small and duplicated rather than shared: the server has to
 // truncate before writing (the column is bounded) and the client has to
 // truncate what it never wrote. One of the two will always exist.
-const ARGS_PREVIEW_MAX = 96;
+// The same three budgets store.BuildArgsPreview uses, and they have to stay the
+// same three: an address cut here would be just as unlinkable as one cut there.
+const ARGS_PREVIEW_MAX = 224;
 const ARG_PREVIEW_MAX = 32;
+const ARG_ADDRESS_MAX = 48;
+const ARG_PATH_MAX = 72;
+function argBudget(a) {
+  if (/^g1[a-z0-9]{38}$/.test(a)) return ARG_ADDRESS_MAX;
+  if (a.includes('gno.land/')) return ARG_PATH_MAX;
+  return ARG_PREVIEW_MAX;
+}
 function argsPreview(args) {
   if (!args || !args.length) return '';
   let out = '';
   for (const a of args) {
     if (out) out += ', ';
-    out += cutText(a, ARG_PREVIEW_MAX);
+    out += cutText(a, argBudget(a));
     if (out.length >= ARGS_PREVIEW_MAX) break;
   }
   return cutText(out, ARGS_PREVIEW_MAX);
@@ -5967,6 +6041,37 @@ function cutText(v, max) {
   const flat = String(v).split(/\s+/).filter(Boolean).join(' ');
   const r = [...flat];
   return r.length <= max ? flat : r.slice(0, max - 1).join('') + '\u2026';
+}
+
+// argsEl draws the argument preview with its addresses and realm paths
+// shortened and clickable, the way they are everywhere else on the site.
+//
+// An argument that *is* an identifier is the one a reader wants to follow, and
+// it was the one they could not: a 40-character bech32 address rendered in full
+// pushed everything after it off the row, and rendering it truncated turned it
+// into text nobody could click or copy. The preview keeps those two kinds whole
+// (see BuildArgsPreview), and this is where they become `g1vc883g…c2dh` and
+// `/r/gnoswap/position` again.
+//
+// Anything else stays literal, including a string that merely looks addressy.
+// The pattern is the same one linkify uses; the difference is that a path here
+// renders through realmPathEl, so it is shortened and coloured like every other
+// realm reference rather than printed as a bare `gno.land/...` URL.
+function argsEl(args, network) {
+  const wrap = el('span', { className: 'msg-args' });
+  wrap.append('(');
+  const text = args || '';
+  const pattern = /(g1[a-z0-9]{38,42})|(gno\.land\/[a-z0-9/_.-]+)/g;
+  let last = 0, m;
+  while ((m = pattern.exec(text)) !== null) {
+    if (m.index > last) wrap.append(text.slice(last, m.index));
+    if (m[1]) wrap.appendChild(addrLink(m[1], network));
+    else wrap.appendChild(realmPathEl(m[2], network));
+    last = pattern.lastIndex;
+  }
+  if (last < text.length) wrap.append(text.slice(last));
+  wrap.append(')');
+  return wrap;
 }
 
 function storedTxDetail(tx) {
@@ -5988,8 +6093,7 @@ function storedTxDetail(tx) {
       // The cap is what keeps a row one line tall, and a row is not the right
       // place to find out that some other writer put a 4 KB string in the
       // column: cutText is idempotent on anything BuildArgsPreview produced.
-      span.appendChild(el('span', { className: 'msg-args' },
-        '(' + cutText(tx.args || '', ARGS_PREVIEW_MAX) + ')'));
+      span.appendChild(argsEl(tx.args, tx.network));
       appendSendEl(span, tx.send);
       return span;
     }
@@ -6257,6 +6361,8 @@ async function loadBlocks() {
   const filterBar = document.getElementById('blocks-filter');
   statsBar.style.display = 'none';
   filterBar.style.display = 'none';
+  const stripSection = document.getElementById('blocks-strip-section');
+  if (stripSection) stripSection.style.display = 'none';
   try {
     await apiSWR('blocks?limit=500', (data, swrMeta) => {
       _blocksCache = data;
@@ -6287,12 +6393,159 @@ async function loadBlocks() {
       const label = el('label', { style: { display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--fg2)', fontSize: '13px', cursor: 'pointer' } });
       label.appendChild(cb); label.appendChild(document.createTextNode('only blocks with transactions'));
       filterBar.appendChild(label);
+      renderBlockStrip();
       renderBlockRows();
     });
   } catch (err) {
     console.error(err);
     failRows(clear('blocks-list'), 5, err, loadBlocks);
   }
+}
+
+// The last N blocks, drawn. 120 is about 6.5 minutes of mainnet at a 3.3s
+// block time: long enough to show a lull, a burst or a validator skipping its
+// turn, short enough that every bar is still wide enough to aim at.
+const BLOCK_STRIP_N = 120;
+
+// Most gno blocks are empty, so the baseline is what the strip is mostly made
+// of: at 3px it was a row of specks and the picture read as a handful of
+// spikes floating over nothing. 8px is a ribbon, and the busy blocks still
+// stand well clear of it. Log above that, like the header's live train and for
+// the same reason: one 40-tx deploy block must not flatten every ordinary one.
+function blockStripHeight(txs, max) {
+  if (!txs) return 8;
+  const top = Math.max(2, max || 2);
+  return Math.max(18, Math.round(18 + 46 * Math.log10(1 + txs) / Math.log10(1 + top)));
+}
+
+// Colour by proposer, assigned over the window's proposers sorted by address.
+//
+// Sorted rather than first-seen: first-seen reassigns every colour the moment
+// the newest block came from a different validator, which on a page that
+// repaints from cache and then from the network means the picture changes
+// under the reader for no reason. Sorted, a validator joining or leaving shifts
+// only the colours after it.
+function blockStripColors(blocks) {
+  const addrs = [...new Set(blocks.map(b => b.proposer_address_raw).filter(Boolean))].sort();
+  const by = {};
+  addrs.forEach((a, i) => { by[a] = SERIES_PALETTE[i % SERIES_PALETTE.length]; });
+  return by;
+}
+
+// One strip for one chain's blocks, oldest first.
+//
+// Per chain and never merged, even though the table above happily interleaves
+// them: the caption's headline number is the median gap between blocks, and
+// over three chains merged by timestamp that median describes nothing that
+// exists. A picture whose axis is time has to be drawn per timeline.
+function blockStripFor(network, blocks) {
+  const wrap = el('div', { style: { marginTop: '10px' } });
+  const colors = blockStripColors(blocks);
+  const maxTxs = blocks.reduce((m, b) => Math.max(m, b.num_txs || 0), 0);
+
+  // Gaps between consecutive blocks, and their median, so "slow" means slow
+  // for this chain rather than slow against a number baked in here.
+  const gaps = [];
+  for (let i = 1; i < blocks.length; i++) {
+    const d = (Date.parse(blocks[i].time) - Date.parse(blocks[i - 1].time)) / 1000;
+    gaps.push(d >= 0 ? d : 0);
+  }
+  const sorted = [...gaps].sort((a, b) => a - b);
+  const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+
+  if (getNetwork() === 'all') {
+    wrap.appendChild(el('div', { style: { fontSize: '12px', color: 'var(--fg2)' } },
+      el('span', { style: { color: netColor(network) } }, network)));
+  }
+
+  const strip = el('div', { className: 'bstrip' });
+  const counts = {};
+  blocks.forEach((b, i) => {
+    const txs = b.num_txs || 0;
+    counts[b.proposer_address_raw] = (counts[b.proposer_address_raw] || 0) + 1;
+    const gap = i === 0 ? null : gaps[i - 1];
+    const bar = el('a', {
+      style: { height: blockStripHeight(txs, maxTxs) + 'px', color: colors[b.proposer_address_raw] || 'var(--fg2)' },
+      onclick: () => navigate('/block/' + b.height + netSuffix(b.network)),
+    });
+    if (txs > 0) bar.classList.add('has-txs');
+    if (median > 0 && gap !== null && gap > median * 2) bar.classList.add('slow');
+    bar.title = fmtNum(b.height) + ' \u00b7 ' + txs + (txs === 1 ? ' tx' : ' txs')
+      + ' \u00b7 ' + (_proposerMonikers[b.proposer_address_raw] || truncAddr(b.proposer_address_raw))
+      + ' \u00b7 ' + shortAge(b.time) + ' ago'
+      + (gap === null ? '' : ' \u00b7 +' + gap.toFixed(1) + 's');
+    strip.appendChild(bar);
+  });
+  wrap.appendChild(strip);
+
+  const axis = el('div', { className: 'bstrip-axis' });
+  axis.appendChild(el('span', {}, fmtNum(blocks[0].height)));
+  axis.appendChild(el('span', {}, (median ? 'median ' + median.toFixed(1) + 's between blocks \u00b7 ' : '')
+    + 'peak ' + fmtNum(maxTxs) + (maxTxs === 1 ? ' tx' : ' txs') + ' in a block'));
+  axis.appendChild(el('span', {}, fmtNum(blocks[blocks.length - 1].height)));
+  wrap.appendChild(axis);
+
+  // Busiest proposer first: the question a legend on this page answers is who
+  // is carrying the window, and alphabetical order answers a different one.
+  const legend = el('div', { className: 'bstrip-legend' });
+  Object.keys(counts).sort((a, b) => counts[b] - counts[a]).forEach(addr => {
+    const swatch = el('i', { style: { background: colors[addr] || 'var(--fg2)' } });
+    // proposerEl, so a moniker that lands after this paint patches itself in.
+    legend.appendChild(el('span', {}, swatch, proposerEl(addr),
+      el('span', { className: 'bl-n' }, String(counts[addr]))));
+  });
+  wrap.appendChild(legend);
+  return wrap;
+}
+
+// Rebuilt from scratch on every call: this runs from an apiSWR render (cached
+// pass, then fresh pass) and again on every live block, and appending would
+// give a strip that grows without bound.
+function renderBlockStrip() {
+  const section = document.getElementById('blocks-strip-section');
+  const body = clear('blocks-strip');
+  if (!section) return;
+  // Shown before the bars are built, not after: the count below is taken from
+  // the container's width, and a display:none container measures zero. Hidden
+  // again at the bottom if there turns out to be nothing to draw.
+  section.style.display = '';
+
+  // How many bars fit. A bar floors at 2px plus a 1px gap, and past that the
+  // flexbox stops shrinking and the strip overflows to the right, silently
+  // clipping the newest blocks: the half a reader came for. So the window
+  // shortens instead of the picture lying about where it ends.
+  const room = Math.floor((body.clientWidth || 900) / 3);
+  const want = Math.max(20, Math.min(BLOCK_STRIP_N, room));
+
+  // _blocksCache is newest-first and, in all-networks mode, interleaved. Group
+  // first and take each chain's own last N from its own group: slicing before
+  // grouping would give a chain a window of whatever share of the merge it
+  // happened to win.
+  //
+  // The key is not `b.network` alone. /api/blocks sets that field per row only
+  // in all-networks mode and the live feed always sets it, so keying on it raw
+  // split one chain into an unnamed strip of 500 API rows plus a second one
+  // holding the handful of blocks that had arrived live. Fall back the way
+  // netSuffix does.
+  const sel = getNetwork();
+  const groups = new Map();
+  for (const b of (_blocksCache || [])) {
+    const k = sel !== 'all' ? sel : (b.network || '');
+    if (!groups.has(k)) groups.set(k, []);
+    const g = groups.get(k);
+    if (g.length < want) g.push(b);
+  }
+
+  let drawn = 0;
+  for (const [network, blocks] of groups) {
+    if (blocks.length < 2) continue;
+    body.appendChild(blockStripFor(network, blocks.slice().reverse()));
+    drawn = Math.max(drawn, blocks.length);
+  }
+  if (!drawn) { section.style.display = 'none'; return; }
+  // Named from what was actually drawn, so a chain with only forty blocks
+  // indexed does not get a heading claiming a hundred and twenty.
+  document.getElementById('blocks-strip-title').textContent = 'the last ' + drawn + ' blocks, drawn';
 }
 
 function renderBlockRows() {
@@ -21078,6 +21331,8 @@ function onLiveBlock(block, network) {
     const at = _blocksCache.findIndex(b => (Date.parse(b.time) || 0) <= ts);
     _blocksCache.splice(at === -1 ? _blocksCache.length : at, 0,
       Object.assign({ network: network }, block));
+    // The strip reads from the cache, so it follows the live feed for free.
+    renderBlockStrip();
   }
 
   // A live row is a row: the filter applies to it too.
@@ -22206,6 +22461,16 @@ function loadDashboards() {
   }
   section.charts.forEach(c => renderDashChart(c, gen));
 }
+
+// The block strip picks its length from the width it has, so a resize changes
+// how many blocks it should be drawing, not just how wide each bar is.
+let _bstripResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_bstripResizeTimer);
+  _bstripResizeTimer = setTimeout(() => {
+    if (document.getElementById('view-blocks')?.classList.contains('active')) renderBlockStrip();
+  }, 150);
+});
 
 let _dashResizeTimer = null;
 window.addEventListener('resize', () => {
@@ -24751,6 +25016,18 @@ function loadLab() {
   card.appendChild(el('div', { className: 'gh-lab-card-foot' },
     ghLink('open the hub →', '/gnohub' + netSuffix())));
   grid.appendChild(card);
+
+  const gh = el('div', { className: 'gh-lab-card' });
+  gh.appendChild(el('div', { className: 'gh-lab-card-title' },
+    ghLink('github', '/lab/github'), badge('info', 'experimental')));
+  gh.appendChild(el('p', {},
+    'The ecosystem as GitHub sees it: who is contributing to the core repositories, at what ' +
+    'rate pull requests open and merge, and which projects outside them have started depending ' +
+    'on gno. The only surface here that reads something other than a chain, and the only one ' +
+    'with no network selector, because GitHub is one place.'));
+  gh.appendChild(el('div', { className: 'gh-lab-card-foot' }, ghLink('open →', '/lab/github')));
+  grid.appendChild(gh);
+
   root.appendChild(grid);
 }
 
@@ -24796,8 +25073,257 @@ function loadCarto() {
     console.error(err);
     const r = clear('carto-content');
     r.appendChild(el('div', { className: 'carto-err' },
-      'the cartography module failed to load — the page itself is fine, this view is not'));
+      'the cartography module failed to load; the page itself is fine, this view is not'));
   });
+}
+
+// --- /lab/github: the ecosystem, off chain ----------------------------------
+//
+// Every other page here reads a gno.land chain and carries ?network=. This one
+// does not, and the absence is deliberate rather than missing: GitHub is one
+// place, a repository is the same repository whichever network its realms end
+// up on, and a selector that changes nothing is worse than no selector.
+//
+// The window (7/30/90 days) is module state rather than a URL parameter for
+// now, which is a real limitation: a link to this page cannot carry it. Worth
+// promoting to the query string if anyone links a window.
+let _ghgWindow = 30;
+
+function loadLabGitHub() {
+  const root = clear('labgithub-content');
+  root.appendChild(el('div', { className: 'gh-lab-intro' },
+    el('h2', {}, 'github'),
+    el('p', {}, 'What the chain cannot answer. A chain knows a realm was deployed and by whom; ' +
+      'it does not know its author opened their first pull request three weeks earlier, and it ' +
+      'has no idea a Go service imports gnovm as a library and never touches gno.land at all. ' +
+      'Both halves are here: activity on the repositories somebody curated, and discovery of ' +
+      'the ones nobody did.')));
+
+  const pills = el('div', { className: 'gh-pills' },
+    el('span', { className: 'gh-pills-label' }, 'window'));
+  for (const d of [7, 30, 90]) {
+    const b = el('button', { className: 'gh-pill' + (d === _ghgWindow ? ' on' : '') }, d + ' days');
+    b.addEventListener('click', () => { if (d === _ghgWindow) return; _ghgWindow = d; loadLabGitHub(); });
+    pills.appendChild(b);
+  }
+  root.appendChild(pills);
+
+  const body = el('div');
+  root.appendChild(body);
+  ghgRender(body);
+}
+
+// ghgRender paints the four sections. The render callback rebuilds `into`
+// from scratch on every pass, because apiSWR runs it twice (cached, then
+// fresh) and appending to what the first pass drew is how you get two of
+// everything.
+function ghgRender(into) {
+  const d = _ghgWindow;
+  apiSWR([
+    { path: 'lab/github/overview?days=' + d },
+    { path: 'lab/github/contributors?days=' + d + '&limit=40' },
+    { path: 'lab/github/prs?days=' + d + '&limit=40' },
+    { path: 'lab/github/repos?limit=500' },
+  ], ([ov, people, prs, repos]) => {
+    into.textContent = '';
+    if (!ov || ov.enabled === false) {
+      into.appendChild(el('div', { className: 'gh-off' },
+        el('div', {}, 'This section is off on this instance.'),
+        el('div', { style: { marginTop: '6px' } }, (ov && ov.reason) || 'no reason given'),
+        el('div', { style: { marginTop: '6px' } },
+          'It needs a database path and a GitHub token: ',
+          el('code', {}, '-github-db'), ' and ', el('code', {}, '-github-token'),
+          ' (or $GITHUB_TOKEN). The token needs no scopes, everything read is public.')));
+      return;
+    }
+    into.appendChild(ghgStats(ov));
+    into.appendChild(ghgSyncNote(ov));
+    into.appendChild(ghgNewContributors(people));
+    into.appendChild(ghgTopContributors(people));
+    into.appendChild(ghgRepoActivity(prs));
+    into.appendChild(ghgRecentPRs(prs));
+    into.appendChild(ghgDiscovered(repos));
+    enhanceTables();
+  });
+}
+
+function ghgStat(label, value, title) {
+  const s = el('div', { className: 'stat' },
+    el('span', { className: 'label' }, label),
+    el('span', { className: 'value' }, value));
+  if (title) s.title = title;
+  return s;
+}
+
+function ghgStats(ov) {
+  const w = ov.window || {};
+  const bar = el('div', { className: 'stats-bar' });
+  bar.appendChild(ghgStat('repos', fmtNum(ov.repos || 0),
+    (ov.tracked || 0) + ' curated and walked in full, ' + (ov.discovered || 0) + ' found by search'));
+  bar.appendChild(ghgStat('contributors', fmtNum(ov.contributors || 0),
+    'distinct logins with at least one commit in a tracked repository, bots excluded'));
+  bar.appendChild(ghgStat('opened', fmtNum(w.prs_opened || 0), 'pull requests opened in the window'));
+  bar.appendChild(ghgStat('merged', fmtNum(w.prs_merged || 0), 'pull requests merged in the window'));
+  bar.appendChild(ghgStat('median merge', ghgHours(w.median_merge_hours),
+    'middle time from opening to merge. Median, not mean: one PR open for two years and merged ' +
+    'last week moves a mean by days and is normal here, not rare'));
+  bar.appendChild(ghgStat('authors', fmtNum(w.authors || 0), 'people who opened a pull request in the window'));
+  bar.appendChild(ghgStat('new', fmtNum(w.new_contributors || 0), 'first ever merged pull request landed in the window'));
+  bar.appendChild(ghgStat('found', fmtNum(w.repos_discovered || 0), 'repositories this instance first saw in the window'));
+  return bar;
+}
+
+function ghgHours(h) {
+  if (!h) return '—';
+  if (h < 1) return Math.round(h * 60) + 'm';
+  if (h < 48) return (Math.round(h * 10) / 10) + 'h';
+  return Math.round(h / 24) + 'd';
+}
+
+// ghgSyncNote is the difference between a stale page and a lying one. GitHub
+// is polled, not streamed, so the reader has to be told when, and told when a
+// pass hit the rate limit and stopped early.
+function ghgSyncNote(ov) {
+  const m = ov.meta || {};
+  const n = el('div', { className: 'gh-note' });
+  if (m.sync_finished) {
+    n.appendChild(document.createTextNode('Last refreshed ' + timeAgo(m.sync_finished) +
+      ', in ' + (m.sync_seconds || '?') + 's. ' +
+      'GitHub budget left: ' + (m.rate_core || '?') + ' core, ' + (m.rate_search || '?') + ' search.'));
+  } else {
+    n.appendChild(document.createTextNode('No refresh has completed yet.'));
+  }
+  if (m.sync_problems) {
+    n.appendChild(el('span', { className: 'gh-warn' }, ' · ' + m.sync_problems));
+  }
+  return n;
+}
+
+function ghgSection(title, sub, ...body) {
+  const sec = el('div', { className: 'section' });
+  sec.appendChild(el('div', { className: 'section-title' }, title));
+  if (sub) sec.appendChild(el('div', { className: 'section-sub' }, sub));
+  body.forEach(b => b && sec.appendChild(b));
+  return sec;
+}
+
+function ghgTable(headers, rows) {
+  if (!rows.length) return ghEmpty('nothing in this window');
+  const thead = el('thead', {}, el('tr', {}, ...headers.map(h => el('th', {}, h))));
+  const tbody = el('tbody', {}, ...rows);
+  return el('table', {}, thead, tbody);
+}
+
+// ghgUser links a login to GitHub itself rather than to a page here. There is
+// no person page on this site for a GitHub account, and inventing one that
+// holds a single row would be worse than sending the reader where the answer
+// actually is.
+function ghgUser(login) {
+  return el('a', { href: 'https://github.com/' + login, target: '_blank', rel: 'noopener' }, login);
+}
+
+function ghgRepoLink(full) {
+  return el('a', { href: 'https://github.com/' + full, target: '_blank', rel: 'noopener' }, full);
+}
+
+function ghgPRLink(repo, number, title) {
+  return el('a', { href: 'https://github.com/' + repo + '/pull/' + number, target: '_blank', rel: 'noopener' },
+    title || ('#' + number));
+}
+
+function ghgNewContributors(people) {
+  const list = (people && people.new) || [];
+  const rows = list.map(c => el('tr', {},
+    el('td', {}, ghgUser(c.login)),
+    el('td', {}, ghgRepoLink(c.repo)),
+    el('td', {}, ghgPRLink(c.repo, c.number, '#' + c.number + ' ' + (c.title || ''))),
+    el('td', {}, timeAgo(c.merged_at)),
+    el('td', {}, fmtNum(c.merged_total || 0))));
+  return ghgSection('new contributors',
+    'Somebody whose first ever merged pull request across every tracked repository landed inside ' +
+    'the window. First merged, not first opened and not first commit: opening is not contributing ' +
+    'yet, and a first commit is the better definition that GitHub\'s contributors endpoint ' +
+    'cannot date. An empty table here is a real answer, not a missing one.',
+    ghgTable(['who', 'repo', 'their first merge', 'when', 'merges since'], rows));
+}
+
+function ghgTopContributors(people) {
+  const list = (people && people.top) || [];
+  const rows = list.map(c => el('tr', {},
+    el('td', {}, ghgUser(c.login)),
+    el('td', {}, fmtNum(c.commits || 0)),
+    el('td', {}, fmtNum(c.recent_merged || 0)),
+    el('td', { className: 'gh-dim' }, (c.repos || []).join(', '))));
+  return ghgSection('who is building',
+    'All-time commits, summed across the curated repositories only. The second column is what ' +
+    'separates somebody who built a large part of this in 2022 from somebody who is here now.',
+    ghgTable(['who', 'commits (all time)', 'merged in window', 'repositories'], rows));
+}
+
+function ghgRepoActivity(prs) {
+  const list = (prs && prs.repos) || [];
+  const rows = list.map(r => el('tr', {},
+    el('td', {}, ghgRepoLink(r.repo)),
+    el('td', {}, fmtNum(r.opened || 0)),
+    el('td', {}, fmtNum(r.merged || 0)),
+    el('td', {}, fmtNum(r.open_now || 0)),
+    el('td', {}, fmtNum(r.authors || 0)),
+    el('td', {}, ghgHours(r.median_merge_hours)),
+    el('td', {}, fmtNum(r.stars || 0)),
+    el('td', {}, r.pushed_at ? timeAgo(r.pushed_at) : '—')));
+  return ghgSection('pull requests, by repository',
+    'Only the curated repositories: a discovered one is listed and its stars kept fresh, and ' +
+    'that is all. Read the per-repository median rather than the one in the bar above, which a ' +
+    'single fast-merging repository can carry on its own.',
+    ghgTable(['repository', 'opened', 'merged', 'open now', 'authors', 'median merge', '★', 'last push'], rows));
+}
+
+function ghgRecentPRs(prs) {
+  const list = (prs && prs.recent) || [];
+  const rows = list.map(p => el('tr', {},
+    el('td', {}, ghgRepoLink(p.repo)),
+    el('td', {}, ghgPRLink(p.repo, p.number, '#' + p.number + ' ' + (p.title || ''))),
+    el('td', {}, ghgUser(p.author)),
+    el('td', {}, p.merged_at ? badge('ok', 'merged') : badge('info', p.state || '')),
+    el('td', {}, timeAgo(p.merged_at || p.updated_at))));
+  return ghgSection('latest activity', null,
+    ghgTable(['repository', 'pull request', 'author', 'state', 'when'], rows));
+}
+
+// ghgDiscovered is the half that has to carry its evidence. Every row here is
+// a claim this instance is making about somebody else's repository, and a
+// claim printed without its reason beside it reads exactly like a fact.
+function ghgDiscovered(repos) {
+  const all = (repos && repos.repos) || [];
+  const found = all.filter(r => r.source === 'discovered');
+  const rows = found.map(r => el('tr', {},
+    el('td', {}, ghgRepoLink(r.full_name)),
+    el('td', {}, r.kind ? badge('info', r.kind) : ''),
+    el('td', { className: 'gh-why' }, r.evidence || ''),
+    el('td', {}, r.language || '—'),
+    el('td', {}, fmtNum(r.stars || 0)),
+    el('td', {}, r.pushed_at ? timeAgo(r.pushed_at) : '—')));
+
+  const sec = ghgSection('projects that depend on gno',
+    'Found by searching GitHub, not curated by anybody, so each row carries why it is here. ' +
+    'Repositories under the gnolang organisation are excluded: the monorepo importing itself is ' +
+    'true and useless.',
+    ghgTable(['repository', 'how', 'why it is here', 'language', '★', 'last push'], rows));
+
+  const queries = (repos && repos.queries) || [];
+  if (queries.length) {
+    const qrows = queries.map(q => el('tr', {},
+      el('td', {}, q.kind || ''),
+      el('td', {}, el('code', { className: 'gh-q' }, q.query)),
+      el('td', {}, fmtNum(q.total || 0))));
+    sec.appendChild(el('div', { className: 'gh-note' },
+      'The table above is a sample of the searches below, not their result. GitHub caps any ' +
+      'search at 1,000 items however many pages are asked for, and the totals it reports are ' +
+      'estimates over its whole index. A count here far above the row count means the rest ' +
+      'exists and was not handed back.'));
+    sec.appendChild(ghgTable(['kind', 'query', 'files or repositories GitHub reports'], qrows));
+  }
+  return sec;
 }
 
 // --- the hub ----------------------------------------------------------------

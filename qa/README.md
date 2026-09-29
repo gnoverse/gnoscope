@@ -76,6 +76,31 @@ Verified by doing it: removing `glossary`, removing `api-glossary` and adding
 `api-apps` produced a table where the two removed rows kept their old numbers
 with an empty newest column, and the new row had only a newest column.
 
+## Where the results live, and why they are committed
+
+`qa/results/` is **in the repo**, one JSON file per run. That is a decision, not
+a default, and it was taken deliberately after the alternative was costed:
+moul, 2026-09-29.
+
+What committing buys is the only thing that makes a trend table worth having:
+the history survives a fresh clone, and every machine and every session reads
+the same numbers. A local-only `qa/results/` is gone the first time somebody
+checks the repo out somewhere else, and invisible to everyone but its author,
+which leaves the table answering "has this got slower since I last ran it"
+instead of "has this got slower".
+
+What it costs is real and you will notice it: a run produces a file that wants
+committing, in a checkout several agent sessions share, so it turns up in
+somebody else's `git status` mid-task. That was judged the smaller problem.
+
+One file per run rather than one appended file, because two sessions probing at
+once would conflict on a single file and never on separate ones.
+
+**Do not gitignore this directory as tidying.** If the growth becomes a real
+problem the answer costed at the time was pruning to the last N runs, which
+bounds the repo without giving up the shared history. Dropping it to local-only
+gives up the property it exists for.
+
 ## Reading the table
 
 ```

@@ -8,7 +8,7 @@
 import { expect, test } from '@playwright/test';
 
 import {
-  MULTICALL_REALM, MULTICALL_SIGNER,
+  MULTICALL_ARG_ADDR, MULTICALL_REALM, MULTICALL_SIGNER,
 } from '../harness/fixture.mjs';
 import { settle, unexpected, watch } from './helpers.js';
 
@@ -33,13 +33,16 @@ test('a call reads as gno writes it, with its arguments', async ({ page }) => {
   await expect(first).toContainText(`${MULTICALL_REALM.replace('gno.land/', '/')}.Step0`);
   await expect(batch).not.toContainText('::');
 
-  // The arguments are there, bounded, and say so.
+  // The arguments are there, bounded, and say so. The ellipsis is on the
+  // free-form argument; the address and the path beside it are kept whole and
+  // shortened only for display (asserted in its own test below).
   const args = first.locator('.msg-args');
-  await expect(args).toContainText('g1alice');
   await expect(args).toContainText('…');
-  // The rendered cell stays inside the preview budget (96 characters) plus its
-  // two parentheses, whatever the call actually passed.
-  expect([...(await args.textContent())].length).toBeLessThanOrEqual(98);
+  await expect(args).toContainText('some-very-long-flag-value…');
+  // The rendered cell stays inside the preview budget plus its two
+  // parentheses, whatever the call actually passed. Shorter than the stored
+  // string, because addresses and paths are shortened for display.
+  expect([...(await args.textContent())].length).toBeLessThanOrEqual(226);
 
   // Empty parentheses on a call with no stored arguments, not a bare name:
   // `Step0()` and `Step0` say different things and only one is a call. This is
@@ -104,6 +107,41 @@ test('the block number beside a hash is a link', async ({ page }) => {
   await numberLink.click();
   await settle(page);
   await expect(page).toHaveURL(/\/block\/6002/);
+
+  expect(unexpected(seen.consoleErrors)).toEqual([]);
+});
+
+// An argument that is an identifier is the one a reader wants to follow, and
+// before this it was the one they could not: an address rendered in full pushed
+// everything after it off the row, and rendering it truncated turned it into
+// text nobody could click or copy.
+test('an address or realm path in an argument is shortened and clickable', async ({ page }) => {
+  const seen = watch(page);
+  await openTxTab(page);
+
+  const args = txRows(page).nth(1).locator('.msg-line').first().locator('.msg-args');
+
+  // The address is a link, shown in the house short form, never in full.
+  const addr = args.locator(`a[href], a`).filter({ hasText: /^g1/ }).first();
+  await expect(addr).toHaveCount(1);
+  const shown = await addr.textContent();
+  expect(shown).toMatch(/^g1\w{6}…\w{4}$/);
+  expect(shown.length).toBeLessThan(MULTICALL_ARG_ADDR.length);
+  // Shortened for display only: the whole address is still there to act on.
+  await expect(args).not.toContainText(MULTICALL_ARG_ADDR);
+
+  // The realm path is a link too, in the same shortened form the rest of the
+  // site uses: no `gno.land/` prefix.
+  await expect(args).toContainText('/r/gnoswap/position');
+  await expect(args).not.toContainText('gno.land/r/gnoswap/position');
+
+  // Everything else stays literal, ellipsis included.
+  await expect(args).toContainText('some-very-long-flag-value…');
+
+  // Clicking the address goes to its page.
+  await addr.click();
+  await settle(page);
+  await expect(page).toHaveURL(new RegExp(MULTICALL_ARG_ADDR));
 
   expect(unexpected(seen.consoleErrors)).toEqual([]);
 });

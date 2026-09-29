@@ -59,7 +59,7 @@ disabled**, then drives headless Chrome over the pages:
 | `DB` | `gnoscope.db` | database snapshot to render |
 | `OUT` | `docs/images` | output directory |
 | `PORT` | `8899` | port for the temporary server |
-| `NETWORK` | `pearl` | network to select in the UI |
+| `NETWORK` | `onyx` | network to select in the UI |
 | `CONFIG` | `testdata/screenshots-networks.json` | network list |
 | `WIDTH` / `HEIGHT` | `1400` / `900` | window size |
 | `CHROME` | auto-detected | path to Chrome or Chromium |

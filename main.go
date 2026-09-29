@@ -19,6 +19,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/analyzer"
 	"github.com/gnoverse/gnoscope/pkg/config"
 	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/ghlab"
 	"github.com/gnoverse/gnoscope/pkg/httpapi"
 	"github.com/gnoverse/gnoscope/pkg/indexer"
 	"github.com/gnoverse/gnoscope/pkg/stdlibs"
@@ -133,6 +134,24 @@ func run() error {
 			"SQLite path for the request log, e.g. gnoscope-traffic.db (empty = record nothing)")
 		trafficRetention = flag.Int("traffic-retention-days", 30,
 			"how many days of request rows to keep; 0 keeps them forever")
+
+		// The lab's GitHub section, and its own database file, for the same
+		// reasons as traffic above: small, entirely re-fetchable, and with
+		// nothing in common with the chain index but the process.
+		//
+		// Off by default and needing two things to switch on, a path and a
+		// token. The token needs no scopes (everything read is public) and is
+		// not optional: GitHub gives 60 requests an hour without one, and one
+		// pass over the seed list needs more than that, so an unauthenticated
+		// instance would half-fill its tables rather than fail.
+		githubDB = flag.String("github-db", "",
+			"SQLite path for the GitHub lab, e.g. gnoscope-github.db (empty = section off)")
+		githubToken = flag.String("github-token", "",
+			"GitHub API token; falls back to $GITHUB_TOKEN. No scopes needed, everything read is public")
+		githubRepos = flag.String("github-repos", "",
+			"extra owner/name repositories to track, comma-separated, on top of the built-in list")
+		githubEvery = flag.Duration("github-interval", ghlab.DefaultInterval,
+			"how often to refresh the GitHub lab")
 	)
 	flag.Parse()
 
@@ -157,6 +176,37 @@ func run() error {
 			*trafficDB, retention)
 	}
 	defer db.Close()
+
+	// The GitHub lab. Two switches, and a refusal that says which one is
+	// missing: a section that is off for a reason nobody can read is a bug
+	// report waiting to happen.
+	var ghStore *ghlab.Store
+	var ghSyncer *ghlab.Syncer
+	ghOffReason := "the GitHub lab is off on this instance (-github-db unset)"
+	if *githubDB != "" {
+		token := *githubToken
+		if token == "" {
+			token = os.Getenv("GITHUB_TOKEN")
+		}
+		ghClient, cerr := ghlab.NewClient(token)
+		switch {
+		case cerr != nil:
+			ghOffReason = "the GitHub lab has a database but no token: " + cerr.Error()
+			log.Printf("github: %s", ghOffReason)
+		default:
+			ghStore, err = ghlab.Open(*githubDB)
+			if err != nil {
+				return fmt.Errorf("init github db: %w", err)
+			}
+			defer ghStore.Close()
+			ghSyncer = ghlab.NewSyncer(ghStore, ghClient, splitList(*githubRepos))
+			if *githubEvery > 0 {
+				ghSyncer.Interval = *githubEvery
+			}
+			log.Printf("github: lab enabled, %s, refreshing every %s",
+				*githubDB, ghSyncer.Interval)
+		}
+	}
 
 	// Load config
 	cfg, cfgSource, err := config.ResolveConfig(*configPath, *networkFlag, *indexerFlag, *rpcFlag)
@@ -642,6 +692,10 @@ func run() error {
 	api.SetResponseCache(cache)
 	api.SetViewCounter(views)
 	api.SetTraffic(traf)
+	api.SetGitHub(ghStore, ghOffReason)
+	if ghSyncer != nil {
+		go ghSyncer.Run(ctx)
+	}
 
 	// pprof on its own listener rather than on the public mux: a profile says
 	// more about this process than any page does, and the difference between
@@ -696,4 +750,15 @@ func selfHost(origin string) string {
 		return ""
 	}
 	return u.Hostname()
+}
+
+// splitList turns a comma-separated flag into a trimmed, non-empty slice.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

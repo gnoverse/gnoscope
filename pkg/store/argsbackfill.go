@@ -2,8 +2,10 @@ package store
 
 import "strconv"
 
+// The cursor key carries the pass, so bumping argsPass restarts the walk from
+// the tip for free rather than needing a reset anybody has to remember to run.
 func argsBackfillCursorKey(network string) string {
-	return "args_backfill_cursor:" + network
+	return "args_backfill_cursor:v" + strconv.Itoa(argsPass) + ":" + network
 }
 
 // ArgsBackfillHeights returns the next batch of block heights whose messages
@@ -26,11 +28,12 @@ func argsBackfillCursorKey(network string) string {
 // the source tables which heights actually hold candidate rows skips the rest
 // without a request.
 //
-// The emptiness test is a *skip filter*, never the stop condition. An empty
-// args is also the steady state of a call that took no arguments, so a walk
-// that stopped when nothing matched would revisit those heights forever. The
-// cursor is what guarantees termination: it only moves down, and every height
-// it passes is done whether or not anything was written there.
+// The candidate test is a *skip filter*, never the stop condition. The cursor
+// is what guarantees termination: it only moves down, and every height it
+// passes is done whether or not anything was written there. That matters most
+// for the two tables still keyed on an empty `send`, which is the steady state
+// of the overwhelming majority of messages: without the cursor the walk would
+// offer those heights forever.
 func (d *DB) ArgsBackfillHeights(network string, batch int) ([]int, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -47,15 +50,19 @@ func (d *DB) ArgsBackfillHeights(network string, batch int) ([]int, error) {
 	nf := d.networkFilter("network", network)
 	rows, err := d.db.Query(`
 		SELECT height FROM (
+			-- args_pass, not "args is empty": an empty args is also the
+			-- steady state of a call that took no arguments, and after a pass
+			-- bump the rows that need rewriting are precisely the ones that are
+			-- NOT empty. Only this column can tell the two apart.
 			SELECT DISTINCT block_height height FROM calls
-			 WHERE block_height < ? AND args = '' AND send = '' AND `+nf+`
+			 WHERE block_height < ? AND args_pass < ? AND `+nf+`
 			UNION
 			SELECT DISTINCT block_height FROM package_submissions
 			 WHERE block_height < ? AND send = '' AND `+nf+`
 			UNION
 			SELECT DISTINCT block_height FROM msg_runs
 			 WHERE block_height < ? AND send = '' AND `+nf+`
-		) ORDER BY height DESC LIMIT ?`, below, below, below, batch)
+		) ORDER BY height DESC LIMIT ?`, below, argsPass, below, below, batch)
 	if err != nil {
 		return nil, err
 	}

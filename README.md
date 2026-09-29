@@ -42,7 +42,7 @@ gnoscope
 Point it at one network:
 
 ```bash
-gnoscope -indexer https://indexer.pearl.testnets.gno.land/graphql/query -network pearl
+gnoscope -indexer https://indexer.onyx.testnets.gno.land/graphql/query -network onyx
 ```
 
 …or several, with a config file:
