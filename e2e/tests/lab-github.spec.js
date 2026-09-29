@@ -17,11 +17,16 @@ test('the lab index offers github beside gnohub', async ({ page }) => {
   await page.goto('/lab');
   await settle(page);
 
-  const titles = page.locator('.gh-lab-card-title');
-  await expect(titles).toHaveCount(2);
-  await expect(titles.nth(1)).toContainText('github');
+  // Located by name rather than by index. The lab index gains cards, and a
+  // test that says "the second one" starts asserting about whichever surface
+  // happened to be added last: this one broke the day cartography landed
+  // ahead of it, with a failure that said nothing about github.
+  const card = page.locator('.gh-lab-card', { hasText: 'github' });
+  await expect(card).toHaveCount(1);
+  await expect(card.locator('.gh-lab-card-title')).toContainText('github');
+  await expect(page.locator('.gh-lab-card', { hasText: 'gnohub' })).toHaveCount(1);
 
-  await page.locator('.gh-lab-card').nth(1).locator('.gh-lab-card-foot a').click();
+  await card.locator('.gh-lab-card-foot a').click();
   await settle(page);
   await expect(page).toHaveURL(/\/lab\/github$/);
   expect(w.jsErrors).toEqual([]);
