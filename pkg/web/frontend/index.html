@@ -10347,7 +10347,42 @@ let _trafficWho = 'noncrawlers';
 let _trafficKind = '';
 let _trafficErrors = false;
 
-async function loadTraffic() {
+// The filters live in the URL as well as in those variables.
+//
+// Three things fall out of that, and the third is why it is not optional:
+// a filtered view is shareable, the back button works through a sequence of
+// filter changes, and the page becomes drivable from outside. A test that has
+// to click its way into a state can only assert what that state happens to be
+// on the machine running it, which is how the first version of this suite came
+// to depend on whether the local Chromium reports itself as headless.
+function trafficReadURL() {
+  const q = new URLSearchParams(location.search);
+  if (q.has('who')) _trafficWho = q.get('who');
+  if (q.has('kind')) _trafficKind = q.get('kind');
+  if (q.has('errors')) _trafficErrors = q.get('errors') === '1';
+  // An explicit empty host means "every host", which is a real choice and
+  // distinct from not having said anything.
+  if (q.has('host')) _trafficHost = q.get('host');
+  if (q.has('window')) _trafficWindow = q.get('window');
+}
+
+// trafficWriteURL reflects the current filters without adding history entries
+// for every click. replaceState, not pushState: a reader flipping through six
+// pills should not have to press back six times to leave the page.
+function trafficWriteURL() {
+  const q = new URLSearchParams(location.search);
+  q.set('window', _trafficWindow);
+  q.set('who', _trafficWho);
+  q.set('host', _trafficHost);
+  if (_trafficKind) q.set('kind', _trafficKind); else q.delete('kind');
+  if (_trafficErrors) q.set('errors', '1'); else q.delete('errors');
+  history.replaceState(null, '', location.pathname + '?' + q.toString());
+}
+
+async function loadTraffic(fromURL) {
+  // Read the URL on arrival only. Reading it on every call would undo the pill
+  // the reader just clicked, since the click writes the variable first.
+  if (fromURL !== false) trafficReadURL();
   const container = clear('traffic-content');
   skeletonBlock(container);
 
@@ -10365,7 +10400,7 @@ async function loadTraffic() {
         style: { padding: '3px 10px', fontSize: '12px' },
       }, text);
       if (title) btn.setAttribute('title', title);
-      btn.addEventListener('click', () => { onPick(value); loadTraffic(); });
+      btn.addEventListener('click', () => { onPick(value); trafficWriteURL(); loadTraffic(false); });
       r.appendChild(btn);
     }
     controls.appendChild(r);
@@ -10405,7 +10440,7 @@ async function loadTraffic() {
       style: { padding: '3px 10px', fontSize: '12px' },
     }, text);
     if (title) b.setAttribute('title', title);
-    b.addEventListener('click', () => { _trafficHost = value; loadTraffic(); });
+    b.addEventListener('click', () => { _trafficHost = value; trafficWriteURL(); loadTraffic(false); });
     return b;
   };
   statusRow.appendChild(hostBtn(location.hostname, location.hostname, 'only what was asked of this name'));

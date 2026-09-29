@@ -112,25 +112,77 @@ test.describe('/traffic', () => {
     // The default view has rows, because the suite's own browsing produced them.
     expect(await content.locator('.stat').count()).toBeGreaterThan(0);
 
-    // Narrowing to crawlers empties it, and that is the assertion. Playwright
-    // drives a real Chrome user agent, so every request this suite makes is
-    // classified `browser` and the fixture contains no crawler at all. A pill
-    // that rendered and filtered nothing would leave the stats standing.
+    // Narrowing must change the request and must not widen the result.
+    //
+    // Deliberately *not* asserting which bucket this suite's own traffic lands
+    // in. The first version of this test assumed Playwright is classified
+    // `browser` and asserted `crawlers` came back empty; it passed locally and
+    // failed in CI, where the bundled Chromium reports HeadlessChrome and is
+    // therefore a crawler. Which bucket the harness occupies is a property of
+    // the machine, not of the feature.
     const sent = [];
     page.on('request', r => {
       const u = r.url();
       if (u.includes('/api/traffic?')) sent.push(new URL(u).searchParams.get('who'));
     });
-    await content.locator('button', { hasText: /^crawlers$/ }).click();
-    await settle(page);
-    expect(sent).toContain('crawlers');
 
-    // And it says which kind of nothing. The page distinguishes "your filters
-    // match nothing" from "the log is off", because those send someone to look
-    // at two completely different things.
+    const count = async () => {
+      if (await content.locator('.stat').count() === 0) return 0;
+      return parseInt((await content.locator('.stat').first().innerText()).replace(/[^0-9]/g, ''), 10);
+    };
+
+    // This dashboard logs its own reads, so every click here adds a row to the
+    // thing being measured, in whichever bucket this harness occupies. A count
+    // taken before a click is therefore not comparable to one taken after.
+    // Read `all` *after* each bucket: counts only ever grow, so
+    // bucket(t1) <= all(t2) holds for t2 > t1 whatever the harness is
+    // classified as.
+    const readBucket = async (name) => {
+      await content.locator('button', { hasText: new RegExp('^' + name + '$') }).first().click();
+      await settle(page);
+      return count();
+    };
+
+    let narrowed = false;
+    for (const bucket of ['crawlers', 'people', 'agents']) {
+      const n = await readBucket(bucket);
+      expect(sent).toContain(bucket);
+      const allAfter = await readBucket('all');
+      expect(n).toBeLessThanOrEqual(allAfter);
+      if (n < allAfter) narrowed = true;
+    }
+    // At least one bucket must be strictly smaller, or the pills render and
+    // filter nothing, which is the failure this test exists for.
+    expect(narrowed).toBe(true);
+  });
+
+  test('a filter that matches nothing says so, and says which kind of nothing', async ({ page }) => {
+    // Driven through the URL rather than through clicks, so the empty state is
+    // reached deterministically on any machine: no host was ever this one.
+    await open(page, '/traffic?who=all&host=nowhere.invalid');
+    const content = page.locator('#traffic-content');
+
     await expect(content).toContainText('nothing matches these filters');
+    // The distinction matters: "your filters match nothing" and "the log is
+    // off" send someone to look at two completely different things.
     await expect(content).not.toContainText('traffic is not being recorded');
     expect(await content.locator('.stat').count()).toBe(0);
+  });
+
+  test('filters round-trip through the URL', async ({ page }) => {
+    await open(page, '/traffic?window=24h&who=crawlers&kind=api&errors=1');
+    const content = page.locator('#traffic-content');
+    const active = await content.locator('button.active').allInnerTexts();
+    expect(active).toContain('24h');
+    expect(active).toContain('crawlers');
+    expect(active).toContain('api');
+    expect(active).toContain('errors only');
+
+    // And clicking writes back, so a filtered view is shareable.
+    await content.locator('button', { hasText: /^7d$/ }).click();
+    await settle(page);
+    expect(new URL(page.url()).searchParams.get('window')).toBe('7d');
+    expect(new URL(page.url()).searchParams.get('who')).toBe('crawlers');
   });
 
   test('the host filter defaults to this host and can be lifted', async ({ page }) => {

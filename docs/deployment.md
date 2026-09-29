@@ -191,6 +191,9 @@ existing; and it is not `people`, because a tool call is never a browser and
 that would empty the MCP panel permanently. `bots=1` from the previous
 vocabulary still works and means `who=all`.
 
+Every filter is reflected in the page's query string, so a filtered view is
+shareable and the back button works through a sequence of filter changes.
+
 `host` filters to one name. The page defaults it to the name it was served
 from, so "this site" means this site rather than every name the server answers
 to. The hosts panel is always computed across every host, so it can act as the
