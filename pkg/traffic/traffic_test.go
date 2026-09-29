@@ -216,3 +216,31 @@ func TestParseWindowRejectsUnknown(t *testing.T) {
 		t.Error("30d must not bucket by hour: 720 columns is not a chart")
 	}
 }
+
+// Measured on val1 on 2026-09-29: 117 recorded requests against 25 that
+// actually crossed the network. Every panel was inflated by the server talking
+// to itself, and unlike a crawler there is no view in which that belongs.
+func TestReportNeverCountsTheWarmer(t *testing.T) {
+	s := testStore(t, 30)
+	s.Record(rec(testNow, func(r *Record) { r.Visitor, r.Client = "human", "browser" }))
+	for i := 0; i < 92; i++ {
+		s.Record(rec(testNow, func(r *Record) { r.Visitor, r.Client = "warmer", "internal" }))
+	}
+	s.Flush()
+
+	for _, withBots := range []bool{false, true} {
+		got, err := s.Report(Query{Window: ParseWindow("24h"), WithBots: withBots, Now: testNow})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Totals.Requests != 1 {
+			t.Errorf("bots=%v: requests = %d, want 1; the warmer must never be counted, "+
+				"with or without the bot flag", withBots, got.Totals.Requests)
+		}
+		for _, c := range got.Clients {
+			if c.Label == "internal" {
+				t.Errorf("bots=%v: the warmer appears in the client breakdown: %+v", withBots, c)
+			}
+		}
+	}
+}

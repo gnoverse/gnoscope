@@ -124,11 +124,28 @@ var agentMarkers = []string{
 	"node-fetch", "axios", "okhttp", "java/", "claude", "gpt", "openai", "anthropic", "mcp",
 }
 
-// ClientClass reduces a user-agent to one of four words, which is the only form
+// InternalUA is the user-agent this server sends to itself.
+//
+// The cache warmer replays real request paths through the real handler stack,
+// which is the whole point of it: the entries it fills are keyed exactly as a
+// reader's request would key them. That also means it arrives at the outermost
+// middleware looking like a reader, and on 2026-09-29 it was one: the first
+// hour on val1 recorded 117 requests where Caddy, which sees only what crosses
+// the network, had seen 25. Every panel was inflated by the server talking to
+// itself, and the ratio gets worse the quieter the site is.
+//
+// pkg/httpapi's ViewCounter already excluded this by name. This is the same
+// exclusion, one layer out.
+const InternalUA = "gnoscope-warmer"
+
+// ClientClass reduces a user-agent to one of five words, which is the only form
 // of it that is stored. The full string is a fingerprint; this is a category.
 func ClientClass(ua string) string {
 	if strings.TrimSpace(ua) == "" {
 		return "unknown"
+	}
+	if strings.Contains(strings.ToLower(ua), InternalUA) {
+		return "internal"
 	}
 	l := strings.ToLower(ua)
 	for _, m := range botMarkers {

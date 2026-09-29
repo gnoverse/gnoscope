@@ -76,7 +76,9 @@ func TestClientClass(t *testing.T) {
 		{"curl/8.4.0", "agent"},
 		{"claude-code/1.0 mcp", "agent"},
 		{"Go-http-client/2.0", "agent"},
-		{"gnoscope-warmer", "unknown"},
+		// Not "unknown": this server talking to itself is its own category, and
+		// the one the report drops unconditionally.
+		{"gnoscope-warmer", "internal"},
 		{"something entirely made up", "unknown"},
 		// A headless browser sends a browser UA and is still not a reader, so
 		// the bot markers are checked before the browser ones.
@@ -109,5 +111,15 @@ func TestRefererHost(t *testing.T) {
 				t.Errorf("RefererHost(%q, %q) = %q, want %q", tc.referer, tc.self, got, tc.want)
 			}
 		})
+	}
+}
+
+// The warmer replays real request paths through the real handler stack, so it
+// reaches the outermost middleware looking like a reader. It is not one.
+func TestClientClassNamesTheWarmerInternal(t *testing.T) {
+	for _, ua := range []string{InternalUA, "gnoscope-warmer", "GNOSCOPE-WARMER/1"} {
+		if got := ClientClass(ua); got != "internal" {
+			t.Errorf("ClientClass(%q) = %q, want internal; the server would count itself as traffic", ua, got)
+		}
 	}
 }
