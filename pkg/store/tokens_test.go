@@ -98,9 +98,18 @@ func TestTokenSummariesReconstructTheLedger(t *testing.T) {
 	}
 }
 
-// GRC721 emits the same Transfer event without an amount. Summing those gives a
-// supply of 0 and no holders, which is not "empty" but "this arithmetic does
-// not apply", so the summary says so rather than printing a confident zero.
+// GRC721 emits the same Transfer event without an amount, and the two halves of
+// that fall out differently.
+//
+// **Supply** genuinely does not apply: there are no quantities to total, and a 0
+// would read as "empty" rather than as "this arithmetic does not apply", so it
+// stays suppressed.
+//
+// **Holders** does apply, and this test used to assert it must be zero. That was
+// wrong, and it kept a real bug pinned: a collection has holders, they are just
+// counted as items in minus items out rather than summed as a balance. On
+// gnoscope.com 2026-09-29 every collection reported 0 holders in the assets list
+// while its own page listed them correctly.
 func TestTokenSummariesFlagNonFungible(t *testing.T) {
 	db := NewTestDB(t)
 	const nft = "gno.land/r/x/gnft.GNFT.0000000"
@@ -116,8 +125,12 @@ func TestTokenSummariesFlagNonFungible(t *testing.T) {
 	if all[0].Fungible {
 		t.Error("fungible = true, want false when no transfer carries an amount")
 	}
-	if all[0].Supply != 0 || all[0].Holders != 0 {
-		t.Errorf("summary = %+v, want the counts suppressed rather than computed", all[0])
+	if all[0].Supply != 0 {
+		t.Errorf("supply = %d, want it suppressed: there are no amounts to total", all[0].Supply)
+	}
+	// g1a minted one and passed it on, so g1b is the one holder.
+	if all[0].Holders != 1 {
+		t.Errorf("holders = %d, want 1: a collection has holders, counted as items rather than summed as a balance", all[0].Holders)
 	}
 	// The transfers themselves are still real and still counted.
 	if all[0].Transfers != 2 {

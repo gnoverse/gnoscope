@@ -502,3 +502,93 @@ test('the realm page lists every asset the realm issues, not one', async ({ page
 
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
 });
+
+// --- the per-asset page, per kind --------------------------------------------
+//
+// One page draws all three, and the parts that differ are the parts where the
+// data genuinely differs. A collection used to be told it had no holders.
+
+const NATIVE_DETAIL = {
+  network: 'alpha',
+  asset: {
+    token: 'ugnot', symbol: 'GNOT', kind: 'native', network: 'alpha',
+    supply: 1333000221686563, locked: 1108981410871186, supply_known: true,
+    holders: 1240, holders_basis: 'swept', holders_swept: 4820,
+    transfers: 482119, transfers_basis: 'banksend', transfers_24h: 900,
+    fungible: true, verified: true, display_symbol: 'GNOT', decimals: 6,
+  },
+  holders: [{ address: 'g1whale00000000000000000000000000000', balance: 900000000000 }],
+  transfers: [],
+  supply_series: [],
+  flow_series: [
+    { time: '2026-09-27', transfers: 10, volume: 5000000, senders: 3 },
+    { time: '2026-09-28', transfers: 14, volume: 9000000, senders: 5 },
+  ],
+  siblings: [],
+};
+
+const NFT_DETAIL = {
+  network: 'alpha',
+  asset: {
+    token: 'gno.land/r/demo/pics.PIC.0000000', pkg_path: 'gno.land/r/demo/pics', symbol: 'PIC',
+    kind: 'grc721', holders_basis: 'replayed', transfers_basis: 'events',
+    network: 'alpha', supply: 0, holders: 2, fungible: false, transfers: 40, transfers_24h: 1,
+  },
+  holders: [
+    { address: 'g1collector000000000000000000000000000', balance: 3 },
+    { address: 'g1other000000000000000000000000000000', balance: 1 },
+  ],
+  transfers: [],
+  supply_series: [],
+  flow_series: [
+    { time: '2026-09-27', transfers: 2, volume: 0, senders: 1 },
+    { time: '2026-09-28', transfers: 5, volume: 0, senders: 2 },
+  ],
+  siblings: [],
+};
+
+async function stubAsset(page, detail) {
+  await page.route('**/api/asset/**', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
+}
+
+test('the native coin gets its own page, with circulating apart from supply', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await stubAsset(page, NATIVE_DETAIL);
+
+  await page.goto('/grc20/' + encodeURIComponent('ugnot'));
+  await settle(page);
+  const view = page.locator('.view.active');
+
+  // The one asset here where the two differ, so both are shown.
+  await expect(view).toContainText('circulating');
+  await expect(view).toContainText('locked');
+  // Its holders are a sample and the page has to say so where they are read.
+  await expect(view).toContainText('4,820');
+  await expect(view).toContainText('SAMPLE');
+  // A supply curve over bank sends would draw volume and label it supply.
+  await expect(view).not.toContainText('supply over time');
+  await expect(view).toContainText('movement over time');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
+test('a collection lists its holders as items, not as an absence', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await stubAsset(page, NFT_DETAIL);
+
+  await page.goto('/grc20/' + encodeURIComponent('gno.land/r/demo/pics.PIC.0000000'));
+  await settle(page);
+  const view = page.locator('.view.active');
+
+  // The bug this replaced: the page said there were no balances to
+  // reconstruct, and listed nobody.
+  await expect(view).not.toContainText('there are no balances to reconstruct');
+  await expect(view).toContainText('3 items');
+  await expect(view).toContainText('1 item');
+  await expect(view.locator('th', { hasText: 'items' })).toBeVisible();
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});

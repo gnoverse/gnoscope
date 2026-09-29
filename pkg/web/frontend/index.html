@@ -7353,9 +7353,10 @@ function renderAssetPage(container, data, token) {
     badgeEl.title = 'a contributor vouched for this being the token it claims to be. nothing on chain says so: anyone may deploy a realm with this name';
     titleRow.appendChild(badgeEl);
   }
+  titleRow.appendChild(assetKindBadge(a.kind));
   if (!a.fungible) {
     const nf = el('span', { className: 'badge' }, 'not fungible');
-    nf.title = 'every transfer of this asset carries no amount, which is how GRC721 goes through the same event. supply and balances do not apply';
+    nf.title = 'every transfer of this asset carries no amount, which is how GRC721 goes through the same event. a holding is a count of items rather than a balance';
     titleRow.appendChild(nf);
   }
   titleRow.appendChild(copyButton(a.token || token, 'copy the token key'));
@@ -7371,18 +7372,44 @@ function renderAssetPage(container, data, token) {
   }
   container.appendChild(el('div', { className: 'section-sub', style: { marginTop: '2px' } }, a.token || token));
 
-  // Headline figures. Supply and holders are suppressed for a non-fungible
-  // asset rather than shown as 0, for the same reason the list suppresses
-  // them: 0 reads as "empty", and the truth is "this does not apply".
+  // Headline figures, and they differ by kind because the underlying figures
+  // genuinely do. Suppressed rather than zeroed wherever they do not apply: 0
+  // reads as "empty", and the truth is "this arithmetic does not apply".
   const stats = el('div', { className: 'stats-bar' });
-  if (a.fungible) {
+  const dim = (text, title) => el('div', { style: { color: 'var(--fg2)', fontSize: '11px' }, title: title || '' }, text);
+
+  if (a.kind === 'native') {
+    // The one asset on this chain where circulating and fully diluted are
+    // different numbers, so both are shown rather than one standing for both.
+    if (a.supply_known) {
+      const circulating = a.supply - (a.locked || 0);
+      stats.appendChild(assetStat('supply', gnotAmount(a.supply),
+        dim(fmtNum(a.supply) + ' ugnot', 'read from the chain, not from this ledger: bank sends say how much moved, never how much exists')));
+      stats.appendChild(assetStat('circulating', gnotAmount(circulating),
+        dim(((circulating / a.supply) * 100).toFixed(1) + '% of supply',
+          'supply minus the share the chain reports as not yet spendable. this is why the coin’s market capitalisation is a fraction of its fully diluted value')));
+      stats.appendChild(assetStat('locked', gnotAmount(a.locked || 0),
+        dim(((a.locked / a.supply) * 100).toFixed(1) + '% of supply', 'not yet spendable')));
+    } else {
+      stats.appendChild(assetStat('supply', 'unknown',
+        dim('the chain’s supply read did not answer', 'shown as unknown rather than as zero, which on the chain’s own coin would be a striking claim to make by accident')));
+    }
+    stats.appendChild(assetStat('holders read', fmtNum(a.holders || 0),
+      dim('of ' + fmtNum(a.holders_swept || 0) + ' addresses read',
+        'a SAMPLE, not a total. gno offers no way to enumerate accounts, so this counts only the addresses whose balance this indexer has read. the real number is higher and unknowable.')));
+  } else if (a.fungible) {
     stats.appendChild(assetStat('supply', fmtTokenUnits(a.supply), tokenScaledEl(a.supply, a.decimals, a.display_symbol || a.symbol)));
     stats.appendChild(assetStat('holders', fmtNum(a.holders || 0)));
   } else {
-    stats.appendChild(assetStat('supply', 'n/a'));
-    stats.appendChild(assetStat('holders', 'n/a'));
+    stats.appendChild(assetStat('supply', 'n/a',
+      dim('no amounts to sum', 'every transfer of this collection carries no amount, so there is no quantity to total')));
+    stats.appendChild(assetStat('holders', fmtNum((data.holders || []).length),
+      dim('counted as items held', 'a holding here is how many of the collection an address holds, not a balance')));
   }
-  stats.appendChild(assetStat('transfers', fmtNum(a.transfers || 0)));
+  stats.appendChild(assetStat('transfers', fmtNum(a.transfers || 0),
+    a.kind === 'native'
+      ? dim('BankMsgSend only', 'ugnot a realm moves inside a call is not a bank send and is not counted here: it surfaces as gas and as realm activity instead. so this UNDER-counts movement, where a grc20’s figure does not.')
+      : null));
   stats.appendChild(assetStat('24h', fmtNum(a.transfers_24h || 0)));
   // Only when the index reports them: an apiSWR payload cached before these
   // fields existed would otherwise print "minted 0" for a token with a supply,
@@ -7460,13 +7487,69 @@ function renderAssetPage(container, data, token) {
   container.appendChild(info);
 
   // The sibling list, which is the whole reason the realm is not the unit.
-  container.appendChild(assetSiblingsSection(data));
+  // The native coin belongs to no realm, so it has none to compare against.
+  if (a.kind !== 'native') container.appendChild(assetSiblingsSection(data));
 
-  if (a.fungible) container.appendChild(assetSupplySection(data));
+  // A supply curve is the running sum of mints, which only a token ledger
+  // records. The native coin's supply is set by the chain and bank_sends has
+  // never seen a mint, so a cumulative line over it would draw volume and
+  // label it supply.
+  if (a.fungible && a.kind !== 'native') container.appendChild(assetSupplySection(data));
+  container.appendChild(assetFlowSection(data));
   container.appendChild(assetHoldersSection(data));
   container.appendChild(assetTransfersSection(data));
+
+  const back = { native: ['← the native coin', '/coins'], grc721: ['← all nft collections', '/nfts'] }[a.kind]
+    || ['← all grc20 tokens', '/grc20'];
   container.appendChild(el('div', { style: { margin: '16px 0' } },
-    link('← all grc20 assets', () => navigate('/grc20'))));
+    link(back[0], () => navigate(back[1]))));
+}
+
+// assetFlowSection draws how much moved and how often, per day.
+//
+// The series every kind has, and the only one the native coin can honestly
+// draw. Two axes because the two quantities have nothing to do with each
+// other's scale: a day with one enormous transfer and a day with a thousand
+// small ones are both interesting and neither is visible on the other's axis.
+function assetFlowSection(data) {
+  const a = data.asset || {};
+  const sec = el('div', { className: 'section' });
+  sec.appendChild(el('div', { className: 'section-title' }, 'movement over time'));
+  const series = data.flow_series || [];
+  if (series.length < 2) {
+    sec.appendChild(el('div', { className: 'section-sub' },
+      'not enough history yet: the series needs at least two days of transfers.'));
+    return sec;
+  }
+
+  const datasets = [{
+    label: 'transfers', data: series.map(p => p.transfers || 0), yAxisID: 'y',
+    borderColor: '#4ecdc4', backgroundColor: 'rgba(78,205,196,0.12)', fill: true, tension: 0.2,
+  }];
+  const scales = { x: chartAxis({ maxTicks: 8 }), y: chartAxis({}) };
+
+  // Value moved is only drawn where it means something. A non-fungible
+  // collection has no amounts at all, so a volume line would be a flat zero
+  // presented as a fact about trading.
+  if (a.fungible) {
+    const scale = a.decimals > 0 ? Math.pow(10, a.decimals) : 1;
+    datasets.push({
+      label: 'value moved' + (a.decimals > 0 ? ' (' + (a.display_symbol || a.symbol) + ')' : ' (base units)'),
+      data: series.map(p => (p.volume || 0) / scale), yAxisID: 'y1',
+      borderColor: '#ff6b6b', tension: 0.2,
+    });
+    scales.y1 = Object.assign(chartAxis({}), { position: 'right', grid: { drawOnChartArea: false } });
+  }
+
+  detailChart(sec, _detailCharts, {
+    type: 'line', height: 240,
+    data: { labels: series.map(p => p.time), datasets },
+    scales,
+    note: a.kind === 'native'
+      ? 'BankMsgSend only: ugnot moved inside a realm call is not here. a mint or a burn cannot happen on this ledger, so every point is movement between two addresses.'
+      : 'a mint or a burn counts as a transfer and is left out of the value moved, because an issuance is activity rather than trading. the supply curve above is where minting belongs.',
+  });
+  return sec;
 }
 
 // assetSiblingsSection names the other tokens the same realm issues.
@@ -7584,15 +7667,27 @@ function assetHoldersSection(data) {
   const a = data.asset || {};
   const holders = el('div', { className: 'section' });
   holders.appendChild(el('div', { className: 'section-title' }, 'top holders'));
-  if (!a.fungible) {
+  // A collection HAS holders, and this section used to say it did not.
+  // Its transfers carry no amount, so summing them yields zero and any
+  // balance-based reconstruction returns nothing: the fix is to count items
+  // in minus items out, which the API now does. What changes here is only the
+  // unit and the wording, never the shape of the table.
+  const items = !a.fungible;
+  if (a.kind === 'native') {
     holders.appendChild(el('div', { className: 'section-sub' },
-      'this asset’s transfers carry no amount, so there are no balances to reconstruct. '
-      + 'most likely an NFT collection, which emits the same Transfer event without a value.'));
-    return holders;
+      'a SAMPLE, not a ranking of the chain. gno offers no way to enumerate accounts, so these are the largest '
+      + 'balances among the addresses this indexer has read: '
+      + fmtNum(a.holders_swept || 0) + ' of an unknown total. an address nobody has looked up is absent, '
+      + 'however much it holds.'));
+  } else if (items) {
+    holders.appendChild(el('div', { className: 'section-sub' },
+      'counted as items held: transfers in minus transfers out. this collection’s transfers carry no amount, '
+      + 'so there is no balance to sum and a quantity here is a number of tokens rather than a value.'));
+  } else {
+    holders.appendChild(el('div', { className: 'section-sub' },
+      'balances reconstructed from every transfer the ledger holds: an empty sender is a mint and an empty recipient a burn. '
+      + 'an address that received and passed everything on is not counted.'));
   }
-  holders.appendChild(el('div', { className: 'section-sub' },
-    'balances reconstructed from every transfer the ledger holds: an empty sender is a mint and an empty recipient a burn. '
-    + 'an address that received and passed everything on is not counted.'));
   // Shares that add past 100% are the ledger window arriving as arithmetic,
   // not a rounding fault, and they are worth naming where they are read. An
   // address funded before the ledger starts spends into a balance the ledger
@@ -7600,26 +7695,43 @@ function assetHoldersSection(data) {
   // recipient of that spend is credited in full. Measured on the live index
   // 2026-09-22: GNOMI's top holder alone holds 112% of the reported supply.
   const listed = (data.holders || []).reduce((sum, h) => sum + (h.balance || 0), 0);
-  if (a.supply > 0 && listed > a.supply) {
+  if (a.fungible && a.kind !== 'native' && a.supply > 0 && listed > a.supply) {
     holders.appendChild(el('div', { className: 'section-sub', style: { color: 'var(--amber)' } },
       'these balances add up to ' + fmtTokenUnits(listed) + ', more than the ' + fmtTokenUnits(a.supply)
       + ' supply above, so the shares pass 100%. both figures come from the same ledger and it does not '
       + 'reach back to this asset\u2019s first mint.'));
   }
+  // Share is against the supply, and only where a supply means the same thing
+  // as the column beside it. The native coin's supply is the chain's and its
+  // holders are a sample, so a percentage would divide a sample by a total and
+  // read as "this address holds 0.02% of all GNOT" when the denominator and
+  // the numerator come from different populations.
+  const shareOf = a.fungible && a.kind !== 'native' && a.supply > 0 ? a.supply : 0;
+  const total = items ? (data.holders || []).reduce((n, h) => n + (h.balance || 0), 0) : 0;
+
   const hbody = el('tbody');
   (data.holders || []).forEach((h, i) => {
-    const share = a.supply > 0 ? (h.balance / a.supply * 100).toFixed(2) + '%' : '';
+    let share = '';
+    if (shareOf) share = (h.balance / shareOf * 100).toFixed(2) + '%';
+    else if (items && total > 0) share = (h.balance / total * 100).toFixed(2) + '%';
+    const amount = a.kind === 'native' ? gnotAmount(h.balance)
+      : items ? fmtNum(h.balance) + ' item' + (h.balance === 1 ? '' : 's')
+        : fmtTokenUnits(h.balance);
     hbody.appendChild(el('tr', {},
       el('td', {}, '#' + (i + 1)),
       el('td', {}, addrLink(h.address, data.network)),
-      el('td', {}, fmtTokenUnits(h.balance)),
-      el('td', { style: { color: 'var(--fg2)' } }, share)));
+      el('td', {}, amount),
+      el('td', { style: { color: 'var(--fg2)' },
+        title: items ? 'share of the items this ledger has seen, not of a declared collection size' : '' }, share)));
   });
   if (!(data.holders || []).length) {
-    hbody.appendChild(el('tr', {}, el('td', { colspan: '4', style: { color: 'var(--fg2)' } }, 'no holders with a positive balance')));
+    hbody.appendChild(el('tr', {}, el('td', { colspan: '4', style: { color: 'var(--fg2)' } },
+      items ? 'no items held: every one this ledger saw was minted and burned again'
+        : 'no holders with a positive balance')));
   }
   holders.appendChild(el('table', {},
-    el('thead', {}, el('tr', {}, el('th', {}, 'rank'), el('th', {}, 'address'), el('th', {}, 'balance'), el('th', {}, 'share'))),
+    el('thead', {}, el('tr', {}, el('th', {}, 'rank'), el('th', {}, 'address'),
+      el('th', {}, items ? 'items' : 'balance'), el('th', {}, 'share'))),
     hbody));
   return holders;
 }

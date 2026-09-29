@@ -191,28 +191,46 @@ func (d *DB) TokenSummaries(network string) ([]TokenSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Assigned for every kind, not only the fungible ones. This gate was the
+	// second half of the same bug: with it, fixing the query above changed
+	// nothing and a collection still reported 0 holders. A GRC721 HAS holders;
+	// what it does not have is balances, and Fungible is what tells a caller
+	// to render the figure as a count of items.
 	for i := range out {
-		if out[i].Fungible {
-			out[i].Holders = holders[out[i].Network+"\x00"+out[i].Token]
-		}
+		out[i].Holders = holders[out[i].Network+"\x00"+out[i].Token]
 	}
 	return out, nil
 }
 
 // holderCounts counts addresses with a positive reconstructed balance, per
 // token.
+// holderCounts is how many addresses hold each token, for the assets list.
+//
+// The third place this reconstruction lives, and the last one to learn that a
+// GRC721 holding is a count rather than a balance. TopHolders and AllPositions
+// were fixed first; this one kept filtering on `bal > 0`, so every collection
+// reported **0 holders** in the list while its own page listed them correctly.
+// Visible on gnoscope.com 2026-09-29: GNFT, 1,610 transfers, 0 holders.
+//
+// Same rule as the other two: sum value where the token has amounts, count legs
+// where it has none. Deciding per token rather than per row, because
+// fungibility is a property of the token.
 func (d *DB) holderCounts(network, _ string) (map[string]int, error) {
 	rows, err := d.db.Query(`
 		SELECT network, token, COUNT(*) FROM (
-			SELECT network, token, addr, SUM(delta) AS bal FROM (
-				SELECT network, token, to_addr AS addr, value AS delta FROM token_transfers
+			SELECT network, token, addr,
+			       CASE WHEN MAX(amt) > 0 THEN SUM(delta) ELSE SUM(leg) END AS holding
+			  FROM (
+				SELECT network, token, to_addr AS addr, value AS delta,  1 AS leg, value AS amt
+				  FROM token_transfers
 				 WHERE ` + d.networkFilter("network", network) + ` AND to_addr <> ''
 				UNION ALL
-				SELECT network, token, from_addr AS addr, -value AS delta FROM token_transfers
+				SELECT network, token, from_addr AS addr, -value AS delta, -1 AS leg, value AS amt
+				  FROM token_transfers
 				 WHERE ` + d.networkFilter("network", network) + ` AND from_addr <> ''
 			)
 			GROUP BY network, token, addr
-			HAVING bal > 0
+			HAVING holding > 0
 		)
 		GROUP BY network, token`)
 	if err != nil {
