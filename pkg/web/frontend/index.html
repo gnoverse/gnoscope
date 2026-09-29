@@ -7086,6 +7086,13 @@ function priceBanner(meta) {
   }
   // A partial read is not an outage and is not silence either: some tokens are
   // priced and others say "no market" for a reason that is about this server.
+  if (meta.supply_reads_failed > 0) {
+    box.appendChild(el('div', {},
+      el('b', {}, 'Supply not read. '),
+      fact(fmtNum(meta.supply_reads_failed) + ' priced token' + (meta.supply_reads_failed === 1 ? '' : 's') + ' would not answer TotalSupply() this pass',
+        'Those show no supply-times-price figure. Some realms genuinely do not expose it; a pass that could '
+        + 'not reach the chain looks the same on the page, which is why the count is here rather than left to be inferred from a gap.')));
+  }
   if (meta.partial_reads > 0) {
     box.appendChild(el('div', {},
       el('b', {}, 'Partly read. '),

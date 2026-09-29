@@ -1485,7 +1485,18 @@ requests and reads as data churning.
   failed to load. No prices are published.
 - **`partial_reads: N`**: some pools answered and N did not. Tokens priced only through a failed
   one show "no market", which here is a fact about the server rather than about the chain.
+- **`supply_reads_failed: N`**: N priced tokens would not answer `TotalSupply()`, so they carry
+  no supply-times-price figure. Some realms genuinely do not expose it and a pass that could not
+  reach the chain looks identical, which is why the count is reported rather than left to be
+  inferred from a gap.
 - **neither**: the read succeeded, and "no market" means what it says.
+
+**Read order is load-bearing.** Anchor, then pools, then supply, then the depth ladder. Depth is
+four router quotes per priced token, each a real VM call; supply is one cheap read and the
+anchor is two HTTP calls. Twice now a cheap load-bearing step placed last was starved by an
+expensive refining one and failed silently: the anchor (reported as "no venue answered" from a
+host that could reach both) and supply (FDV vanished from every asset while prices stayed).
+Cheap and load-bearing first; expensive and refining last, so pressure drops the least of it.
 
 Measured live 2026-09-29: val1 began getting **403 from rpc.gno.land** while the discovered pool
 set was still in cache, so every `LoadPool` failed and the endpoint answered a well-formed
