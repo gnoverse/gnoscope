@@ -1577,6 +1577,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
     <div class="tab-content" id="tab-deps"></div>
   </main></div>
   <div class="view" id="view-lab"><main><div id="lab-content"></div></main></div>
+  <div class="view" id="view-cartography"><main><div id="carto-content" class="carto"></div></main></div>
   <div class="view" id="view-gnohub"><main><div id="gnohub-content"></div><div id="gnohub-body"></div></main></div>
   <div class="view" id="view-tx-detail"><main><div id="tx-detail-content"></div></main></div>
   <div class="view" id="view-address-detail"><main><div id="address-detail-content"></div></main></div>
@@ -3989,6 +3990,7 @@ const NAV = [
     { id: 'params', label: 'params', path: '/govdao/params' },
   ] },
   { id: 'lab', label: 'lab', path: '/lab', own: 'experiments', children: [
+    { id: 'cartography', label: 'cartography', path: '/cartography' },
     { id: 'gnohub', label: 'gnohub', path: '/gnohub' },
   ] },
   { id: 'glossary', label: 'glossary', path: '/glossary' },
@@ -4163,6 +4165,9 @@ function route() {
   // gain, and an old bookmark is not a mistake to correct.
   else if (path === '/params' || path === '/govdao/params') { view = 'params'; }
   else if (path === '/lab') { view = 'lab'; }
+  // Cartography's own module and stylesheet are fetched on first entry, so the
+  // route only has to name the view; loadCarto() below does the rest.
+  else if (path === '/cartography') { view = 'cartography'; }
   // The whole gnohub tree is one view: the sub-page is data, not a second
   // `view-` container, which is what keeps the experiment to one block of
   // markup and one block of script.
@@ -4203,12 +4208,17 @@ function route() {
     }
   }
 
+  // Cartography's settlement view runs a requestAnimationFrame loop. Left
+  // running it holds a core at 60 Hz for as long as the tab stays open, on a
+  // page the reader has already left.
+  if (view !== 'cartography' && typeof window.unloadCartography === 'function') window.unloadCartography();
   if (view !== 'dashboards' && typeof destroyDashCharts === 'function') destroyDashCharts();
   if (view !== 'realm-detail' && view !== 'address-detail' && view !== 'asset-detail' && typeof destroyDetailCharts === 'function') destroyDetailCharts();
   switch (view) {
     case 'home': loadHome(); break;
     case 'watch': loadWatchlist(); break;
     case 'lab': loadLab(); break;
+    case 'cartography': loadCarto(); break;
     case 'gnohub': loadGnohub(data); break;
     case 'realms': loadRealms(); break;
     case 'packages': enterPackages(urlPv); break;
@@ -24718,6 +24728,19 @@ function loadLab() {
       'may change shape or disappear. The rest of the site does not depend on anything in here.')));
 
   const grid = el('div', { className: 'gh-lab-grid' });
+
+  const carto = el('div', { className: 'gh-lab-card' });
+  carto.appendChild(el('div', { className: 'gh-lab-card-title' },
+    ghLink('cartography', '/cartography' + netSuffix()), badge('info', 'experimental')));
+  carto.appendChild(el('p', {},
+    'The chain drawn as a place instead of a table: a city whose lit windows are the realms ' +
+    'anyone called, the caller graph as villages with people walking between them, one solar ' +
+    'system per namespace with orbits by deploy date, the import graph as a transit map, and a ' +
+    'relief map of where the chain is dense. Five drawings, one data load, no endpoint of their own.'));
+  carto.appendChild(el('div', { className: 'gh-lab-card-foot' },
+    ghLink('open the map →', '/cartography' + netSuffix())));
+  grid.appendChild(carto);
+
   const card = el('div', { className: 'gh-lab-card' });
   card.appendChild(el('div', { className: 'gh-lab-card-title' },
     ghLink('gnohub', '/gnohub' + netSuffix()), badge('info', 'experimental')));
@@ -24729,6 +24752,52 @@ function loadLab() {
     ghLink('open the hub →', '/gnohub' + netSuffix())));
   grid.appendChild(card);
   root.appendChild(grid);
+}
+
+// --- /cartography -----------------------------------------------------------
+
+// Cartography lives in its own module and stylesheet, fetched the first time
+// this route is entered and never otherwise.
+//
+// index.html is ~450 KB and every deep link into the site serves all of it, so
+// a page most readers will never open has no business in that number. The same
+// argument the lib loader makes for echarts-gl, applied to our own code: tens
+// of KB of drawing for one experimental page, off every other page's path.
+//
+// Both files are embedded alongside index.html and served as themselves, so
+// this is one round trip to the same origin, and a failure degrades to a
+// message rather than a blank view.
+let _cartoLoad = null;
+
+function loadCarto() {
+  const root = clear('carto-content');
+  if (window.loadCartography) { window.loadCartography(root); return; }
+
+  skeletonBlock(root);
+  if (!_cartoLoad) {
+    _cartoLoad = new Promise((resolve, reject) => {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = '/cartography.css';
+      document.head.appendChild(css);
+      const sc = document.createElement('script');
+      sc.src = '/cartography.js';
+      sc.async = true;
+      sc.onload = resolve;
+      sc.onerror = () => reject(new Error('could not load /cartography.js'));
+      document.head.appendChild(sc);
+    });
+  }
+  _cartoLoad.then(() => {
+    // The reader may have navigated away while it was in flight.
+    if (!document.getElementById('view-cartography').classList.contains('active')) return;
+    window.loadCartography(clear('carto-content'));
+  }, (err) => {
+    console.error(err);
+    const r = clear('carto-content');
+    r.appendChild(el('div', { className: 'carto-err' },
+      'the cartography module failed to load — the page itself is fine, this view is not'));
+  });
 }
 
 // --- the hub ----------------------------------------------------------------
