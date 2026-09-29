@@ -156,13 +156,18 @@ func Build(in Inputs) *Result {
 			routes     []route
 			usdPerBase *big.Rat
 		)
-		if a.Token == WUGNOT {
+		// Route in pool-token space, report in event-key space. A quote keeps
+		// the event key as its identity because that is what every other
+		// endpoint here joins on; the pool graph knows nothing about the `.id`
+		// segment. See PoolToken.
+		pk := PoolToken(a.Token)
+		if pk == WUGNOT {
 			usdPerBase = anchorBase
 			q.Tier = TierMarket
 			q.DecimalsKnown = true
 			q.Decimals = ugnotDecimals
 		} else {
-			routes = g.Routes(a.Token, 3, usd, tvl)
+			routes = g.Routes(pk, 3, usd, tvl)
 			if len(routes) > 0 {
 				best := routes[0]
 				usdPerBase = best.usdPerBase
@@ -175,7 +180,7 @@ func Build(in Inputs) *Result {
 				}
 				q.RouteCount = len(routes)
 				q.RouteSpreadPct = routeSpread(routes)
-				q.Depth = in.Depth[a.Token]
+				q.Depth = in.Depth[pk]
 				q.Tier = TierFor(q.Depth)
 			} else {
 				q.Tier = TierNone

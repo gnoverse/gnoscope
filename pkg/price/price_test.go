@@ -21,10 +21,19 @@ const (
 	sqrtPerunWugnot  = "81579000262254204451513850777"  // PERUN/wugnot 10000, tick 584
 	sqrtWugnotGnomic = "126503603319273409237122988918" // wugnot/GNOMIC 3000, tick 9359
 
+	// Two key spaces, and conflating them served "no market" for every asset on
+	// a chain with five live pools. `tok*` is what a pool path is built from,
+	// `key*` is what the Transfer event carries and what the ledger stores.
 	tokGNS    = "gno.land/r/gnoswap/gns.GNS"
 	tokBubble = "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/wbubble.BUBBLE"
 	tokPerun  = "gno.land/r/demo/defi/grc20factory.PERUN"
 	tokGnomic = "gno.land/r/nym-thegnomic001/gnomic.GNOMIC"
+
+	keyGNS    = tokGNS + ".0000000"
+	keyBubble = tokBubble + ".0000000"
+	keyPerun  = tokPerun + ".0000001"
+	keyGnomic = tokGnomic + ".0000000"
+	keyWugnot = WUGNOT + ".0000000"
 
 	// GNOT/USD on Kraken (24h VWAP) when the rest of this was measured.
 	gnotUSD = 0.070707
@@ -291,17 +300,19 @@ func mainnetInputs() Inputs {
 		}
 	}
 	return Inputs{
+		// Assets arrive keyed the way the ledger keys them, with the `.<id>`
+		// segment, because that is what the caller has.
 		Assets: []Asset{
-			{Token: tokGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns",
+			{Token: keyGNS, Symbol: "GNS", PkgPath: "gno.land/r/gnoswap/gns",
 				Supply: 108092465530720, Fungible: true, Decimals: 6, DecimalsKnown: true, Verified: true},
-			{Token: WUGNOT, Symbol: "WUGNOT", PkgPath: "gno.land/r/gnoland/wugnot",
+			{Token: keyWugnot, Symbol: "WUGNOT", PkgPath: "gno.land/r/gnoland/wugnot",
 				Supply: 3685791634930, Fungible: true, Decimals: 6, DecimalsKnown: true, Verified: true},
-			{Token: tokBubble, Symbol: "BUBBLE", Supply: 123890421048, Fungible: true},
-			{Token: tokGnomic, Symbol: "GNOMIC", Supply: 20985103432232, Fungible: true,
+			{Token: keyBubble, Symbol: "BUBBLE", Supply: 123890421048, Fungible: true},
+			{Token: keyGnomic, Symbol: "GNOMIC", Supply: 20985103432232, Fungible: true,
 				Decimals: 6, DecimalsKnown: true},
-			{Token: tokPerun, Symbol: "PERUN", Supply: 1000000000000, Fungible: true},
+			{Token: keyPerun, Symbol: "PERUN", Supply: 1000000000000, Fungible: true},
 			// An asset with no pool at all, which is 22 of the 28 on mainnet.
-			{Token: "gno.land/r/x/y.GDOG", Symbol: "GDOG", Supply: 1048226, Fungible: true},
+			{Token: "gno.land/r/x/y.GDOG.0000000", Symbol: "GDOG", Supply: 1048226, Fungible: true},
 		},
 		Pools: mainnetPools(),
 		Anchor: &Anchor{USDPerGNOT: gnotUSD, SpreadPct: 0.02,
@@ -353,21 +364,21 @@ func TestBuildAgainstMainnet(t *testing.T) {
 		// The measured per-token prices, assuming 6 decimals throughout.
 		// Two routes, not one: GNS reaches wugnot directly and again through
 		// PERUN, and the pair disagree by 0.32%.
-		{name: "GNS is the only real market", token: tokGNS, wantTier: TierMarket,
+		{name: "GNS is the only real market", token: keyGNS, wantTier: TierMarket,
 			wantPerTok: 0.017608930, tol: 1e-6, wantFDV: 1903377, fdvTol: 2000, wantRoutes: 2,
 			wantWarning: "route-disagreement"},
-		{name: "wugnot is the anchor", token: WUGNOT, wantTier: TierMarket,
+		{name: "wugnot is the anchor", token: keyWugnot, wantTier: TierMarket,
 			wantPerTok: gnotUSD, tol: 1e-9},
-		{name: "BUBBLE is thin", token: tokBubble, wantTier: TierThin,
+		{name: "BUBBLE is thin", token: keyBubble, wantTier: TierThin,
 			wantPerTok: 0.216365, tol: 1e-4, wantRoutes: 1, wantWarning: "decimals-unknown"},
 		// The headline: a $582k paper value over a $47 pool.
-		{name: "GNOMIC is decorative", token: tokGnomic, wantTier: TierDecorative,
+		{name: "GNOMIC is decorative", token: keyGnomic, wantTier: TierDecorative,
 			wantPerTok: 0.027734209, tol: 1e-6, wantFDV: 582003, fdvTol: 1000, wantRoutes: 1,
 			wantWarning: "thin-pool"},
 		// PERUN is the only token with two routes, and they disagree slightly.
-		{name: "PERUN has two routes", token: tokPerun, wantTier: TierDecorative,
+		{name: "PERUN has two routes", token: keyPerun, wantTier: TierDecorative,
 			wantPerTok: 0.074965, tol: 1e-3, wantRoutes: 2, wantWarning: "route-disagreement"},
-		{name: "GDOG has no market", token: "gno.land/r/x/y.GDOG", wantTier: TierNone},
+		{name: "GDOG has no market", token: "gno.land/r/x/y.GDOG.0000000", wantTier: TierNone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -438,7 +449,7 @@ func TestWarningsAreOrderedBySeverity(t *testing.T) {
 // every other test in this file while telling a reader nothing.
 func TestWarningsAreNotUnconditional(t *testing.T) {
 	res := Build(mainnetInputs())
-	gns := quoteFor(t, res, tokGNS)
+	gns := quoteFor(t, res, keyGNS)
 	for _, code := range []string{"decimals-unknown", "unverified-token"} {
 		if hasWarning(gns, code) {
 			t.Errorf("GNS should not carry %q: it is verified and has 6 decimals", code)
@@ -451,7 +462,7 @@ func TestWarningsAreNotUnconditional(t *testing.T) {
 	}
 	// GNOMIC reaches wugnot exactly one way, so there is nothing for its routes
 	// to disagree about.
-	gnomic := quoteFor(t, res, tokGnomic)
+	gnomic := quoteFor(t, res, keyGnomic)
 	if hasWarning(gnomic, "route-disagreement") {
 		t.Errorf("GNOMIC has a single route and must not carry route-disagreement")
 	}
@@ -476,7 +487,7 @@ func TestRouteDisagreementHasAFloor(t *testing.T) {
 // an empty cell is how a warning list stops being read on the rows that need it.
 func TestUnpricedTokensCarryNoWarnings(t *testing.T) {
 	res := Build(mainnetInputs())
-	q := quoteFor(t, res, "gno.land/r/x/y.GDOG")
+	q := quoteFor(t, res, "gno.land/r/x/y.GDOG.0000000")
 	if q.Tier != TierNone {
 		t.Fatalf("fixture changed: GDOG tier is %q", q.Tier)
 	}
@@ -505,15 +516,15 @@ func TestBuildWithoutAnchorPricesNothing(t *testing.T) {
 // per-token figure may move.
 func TestBaseUnitPriceIgnoresDecimals(t *testing.T) {
 	in := mainnetInputs()
-	base := quoteFor(t, Build(in), tokGnomic)
+	base := quoteFor(t, Build(in), keyGnomic)
 
 	in2 := mainnetInputs()
 	for i := range in2.Assets {
-		if in2.Assets[i].Token == tokGnomic {
+		if in2.Assets[i].Token == keyGnomic {
 			in2.Assets[i].Decimals = 18
 		}
 	}
-	changed := quoteFor(t, Build(in2), tokGnomic)
+	changed := quoteFor(t, Build(in2), keyGnomic)
 
 	if base.USDPerBaseUnit != changed.USDPerBaseUnit {
 		t.Fatalf("base-unit price moved with decimals: %s vs %s", base.USDPerBaseUnit, changed.USDPerBaseUnit)
@@ -544,6 +555,38 @@ func TestSlippagePct(t *testing.T) {
 			got := slippagePct(new(big.Rat).SetInt64(tt.got), new(big.Rat).SetInt64(tt.ideal))
 			if math.Abs(got-tt.want) > 0.001 {
 				t.Fatalf("slippage = %.4f, want %.4f", got, tt.want)
+			}
+		})
+	}
+}
+
+// The normalizer between the two key spaces. Every case here is a real mainnet
+// shape: the ordinary triple, a factory's non-zero id, a realm path with dots in
+// it, and the two tokens that emit a bare symbol with no realm at all.
+func TestPoolToken(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"ordinary event key", "gno.land/r/gnoswap/gns.GNS.0000000", "gno.land/r/gnoswap/gns.GNS"},
+		{"factory, non-zero id", "gno.land/r/demo/defi/grc20factory.PERUN.0000001", "gno.land/r/demo/defi/grc20factory.PERUN"},
+		{"nested realm path", "gno.land/r/g1n4pl5uc4yt5r96m9w6fmdznx3x0jyg8l6arhmt/gnomi/padv3.GNOVA.0000008",
+			"gno.land/r/g1n4pl5uc4yt5r96m9w6fmdznx3x0jyg8l6arhmt/gnomi/padv3.GNOVA"},
+		// Two live mainnet tokens put a bare symbol in the attribute, with no
+		// realm path and therefore no id to strip.
+		{"bare symbol", "COVID", "COVID"},
+		// Already in pool-token space: idempotent, because the wugnot constant
+		// and a discovered pool's tokens both arrive this way.
+		{"already a pool token", "gno.land/r/gnoswap/gns.GNS", "gno.land/r/gnoswap/gns.GNS"},
+		{"anchor constant", WUGNOT, WUGNOT},
+		{"trailing dot", "gno.land/r/x/y.Z.", "gno.land/r/x/y.Z."},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := PoolToken(tt.in); got != tt.want {
+				t.Fatalf("PoolToken(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
