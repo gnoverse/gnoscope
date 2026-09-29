@@ -521,7 +521,22 @@ func (d *DB) WatchAddresses(network string, items []WatchRequest) ([]WatchedAddr
 // StoredTx is one transaction as the list view needs it: enough to render a row
 // without asking the indexer.
 
-func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]StoredTx, int, error) {
+// AddressTxTotals is an address's whole history counted both ways.
+//
+// The two differ, and by a lot: every branch of the union below reads a table
+// that holds one row per *message*, so a multicall of fourteen deploys is
+// fourteen rows carrying one hash. On g1manfred47kzduec920z88wfr64ylksmdcedlf5
+// that is 902 messages against 372 signed transactions, measured 2026-09-29.
+// A header saying "transactions: 902" over a list of messages is a number
+// nothing on chain agrees with, which is why both travel.
+type AddressTxTotals struct {
+	// Messages is how many rows the list holds, and what the pager pages over.
+	Messages int `json:"messages"`
+	// Txs is how many distinct transactions those messages came in.
+	Txs int `json:"txs"`
+}
+
+func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]StoredTx, AddressTxTotals, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -596,7 +611,7 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 		        b.from_address, b.to_address || ' ' || b.amount, b.success`, "bank_sends b"),
 	}, " UNION ALL ")
 
-	// The count is over unbounded branches — a total that stopped at the page
+	// The counts are over unbounded branches, because a total that stopped at the page
 	// size would not be a total. It is cheap: 0.155s for the same account,
 	// because counting needs no sort.
 	countUnion := strings.Join([]string{
@@ -616,9 +631,13 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 	// per session branch. The count union takes the same list in the same order.
 	args := []any{addr, addr, addr, addr, addr, addr, addr, addr}
 
-	var total int
-	if err := d.db.QueryRow(`SELECT COUNT(*) FROM (`+countUnion+`)`, args...).Scan(&total); err != nil {
-		return nil, 0, err
+	// Both counts come out of the one scan: COUNT(DISTINCT tx_hash) needs the
+	// same rows COUNT(*) already reads, and running the union twice to get the
+	// second number would double the only part of this that is not free.
+	var total AddressTxTotals
+	if err := d.db.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT tx_hash) FROM (`+countUnion+`)`,
+		args...).Scan(&total.Messages, &total.Txs); err != nil {
+		return nil, AddressTxTotals{}, err
 	}
 
 	// Gas comes from the transaction row. LEFT JOIN so an event whose
@@ -632,7 +651,7 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 		ORDER BY e.block_height DESC, e.tx_hash ASC LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
-		return nil, 0, err
+		return nil, AddressTxTotals{}, err
 	}
 	defer rows.Close()
 
@@ -641,7 +660,7 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 		var t StoredTx
 		if err := rows.Scan(&t.Network, &t.Hash, &t.BlockHeight, &t.BlockTime,
 			&t.Type, &t.Caller, &t.Detail, &t.Success, &t.GasUsed, &t.GasFee); err != nil {
-			return nil, 0, err
+			return nil, AddressTxTotals{}, err
 		}
 		out = append(out, t)
 	}

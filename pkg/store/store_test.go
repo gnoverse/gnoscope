@@ -2369,12 +2369,12 @@ func TestAddressTransactionsIncludesEveryPackageResubmission(t *testing.T) {
 		t.Fatalf("packages = %+v, want exactly the second (current-state) submission", pkgs)
 	}
 
-	txs, total, err := db.AddressTransactions("gnoland1", creator, 50, 0)
+	txs, totals, err := db.AddressTransactions("gnoland1", creator, 50, 0)
 	if err != nil {
 		t.Fatalf("AddressTransactions: %v", err)
 	}
-	if total != 2 {
-		t.Errorf("total = %d, want 2 (both submissions)", total)
+	if totals.Messages != 2 || totals.Txs != 2 {
+		t.Errorf("totals = %+v, want 2 messages in 2 transactions (both submissions)", totals)
 	}
 	seen := map[string]bool{}
 	for _, tx := range txs {

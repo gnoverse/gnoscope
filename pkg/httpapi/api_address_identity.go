@@ -94,8 +94,10 @@ type addressIdentity struct {
 	// Self-declared, which is why it is not a label: anyone may claim any name.
 	Validator string `json:"validator,omitempty"`
 
-	// Transactions is what storage has seen this address sign. Deploys are not
-	// here on purpose: /api/address already reports them to the same page.
+	// Transactions is what storage has seen this address sign: distinct
+	// transactions, not messages, so it can be read against the chain's own
+	// sequence number. Deploys are not here on purpose: /api/address already
+	// reports them to the same page.
 	Transactions int `json:"transactions"`
 
 	// FirstSeen is the first call it ever signed. Absent for an address that
@@ -236,8 +238,11 @@ func (a *API) HandleAddressIdentity(w http.ResponseWriter, r *http.Request) {
 	// them and the page fetches both endpoints together, so counting them again
 	// would run db.Search a second time on every address page load, for a
 	// number the caller already has.
+	// Txs, not Messages: the verdict beside it reads "has signed N
+	// transactions", and the chain's own sequence number is what a reader
+	// checks it against.
 	if _, total, err := a.db.AddressTransactions(network, addr, 1, 0); err == nil {
-		out.Transactions = total
+		out.Transactions = total.Txs
 	}
 	if fs, ok, err := a.db.FirstSeenAt(network, store.FirstSeenAddress, addr); err == nil && ok {
 		out.FirstSeen = &fs
