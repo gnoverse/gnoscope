@@ -1,0 +1,100 @@
+/* Cartography: the chain drawn as a place.
+ *
+ * A separate stylesheet, like cartography.js, and for the same reason. Every
+ * rule here exists for one experimental page that most readers will never
+ * open, and folding ~300 lines of it into the 450 KB index.html would put the
+ * cost on every cold page load of every other page. Both files are fetched by
+ * loadCarto() when /cartography is first routed to, and never otherwise.
+ *
+ * Everything is scoped under .carto so nothing in here can reach a rule the
+ * rest of the site depends on, the same containment the gh- prefix gives
+ * gnohub. The theme variables are the site's own: a cartography view that
+ * invented its own greys would stop matching the page around it the next time
+ * someone touched :root.
+ */
+
+.carto { --carto-sky: #07070b; --carto-ground: #101016; }
+
+.carto-intro h2 { font-size: 22px; margin-bottom: 6px; }
+.carto-intro p { color: var(--fg2); max-width: 78ch; margin-bottom: 16px; }
+
+/* The view picker. Deliberately not the site's .tab: these are five drawings
+   of one dataset, not five pages, and they read better as a row of cards that
+   each say what they are for than as a tab strip that says only a name. */
+.carto-pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 8px; margin-bottom: 14px; }
+.carto-pick button { text-align: left; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 9px 11px; color: var(--fg2); font: inherit; font-size: 12px;
+  cursor: pointer; line-height: 1.45; }
+.carto-pick button:hover { border-color: var(--fg2); color: var(--fg); }
+.carto-pick button.on { border-color: var(--accent); color: var(--fg); background: var(--bg3); }
+.carto-pick b { display: block; font-size: 13.5px; color: var(--fg); margin-bottom: 1px; }
+.carto-pick.on b { color: var(--accent); }
+.carto-pick button.on b { color: var(--accent); }
+
+/* Controls: window, metric, and whatever one view needs that the others do
+   not. The per-view group is rebuilt on every switch; the shared one is not,
+   because a reader who set the window to 24h means it for every drawing. */
+.carto-bar { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  padding: 8px 0 12px; font-size: 12px; }
+.carto-grp { display: inline-flex; align-items: center; gap: 5px; }
+.carto-grp > span { color: var(--fg2); }
+.carto-bar button { background: var(--bg2); border: 1px solid var(--border); color: var(--fg2);
+  font: inherit; font-size: 11.5px; padding: 2px 9px; border-radius: 4px; cursor: pointer; }
+.carto-bar button:hover { color: var(--fg); border-color: var(--fg2); }
+.carto-bar button.on { background: var(--bg3); border-color: var(--accent); color: var(--accent); }
+
+.carto-stage { position: relative; background: var(--carto-sky); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden; }
+.carto-stage svg, .carto-stage canvas { display: block; width: 100%; }
+.carto-stage canvas { touch-action: none; }
+
+/* The caption under each drawing. Not decoration: a picture that encodes four
+   quantities in shape, height, colour and brightness is unreadable without a
+   sentence saying which is which, and a reader who has to guess will guess
+   wrong and believe the guess. */
+.carto-note { color: var(--fg2); font-size: 12px; padding: 10px 2px 0; max-width: 90ch;
+  line-height: 1.6; }
+.carto-note b { color: var(--fg); font-weight: normal; }
+
+.carto-legend { display: flex; flex-wrap: wrap; gap: 5px 14px; padding: 10px 2px 0; font-size: 11.5px; }
+.carto-legend > span { display: inline-flex; align-items: center; gap: 6px; color: var(--fg2); }
+.carto-legend i { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 9px; }
+.carto-legend b { color: var(--fg); font-weight: normal; }
+
+/* One tooltip element for the whole page, moved and refilled rather than
+   created per hover: five views drawing up to 600 shapes each would otherwise
+   each need their own, and a canvas view has no elements to attach one to. */
+.carto-tip { position: fixed; z-index: 400; pointer-events: none; display: none;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 5px;
+  padding: 7px 10px; font-size: 11.5px; line-height: 1.55; max-width: 330px;
+  box-shadow: 0 6px 22px rgba(0,0,0,.55); }
+.carto-tip .t-p { color: var(--accent); word-break: break-all; }
+.carto-tip .t-k { color: var(--fg2); }
+.carto-tip .t-r { display: flex; gap: 10px; justify-content: space-between; }
+
+.carto-empty { padding: 60px 20px; text-align: center; color: var(--fg2); }
+.carto-err { padding: 40px 20px; text-align: center; color: var(--accent2); }
+
+/* Hover affordance for the SVG views. Cursor only: a stroke change on hover
+   fights the highlight each view already paints, and two highlights reading as
+   one thing is how you end up pointing at the wrong building. */
+.carto-stage [data-cp] { cursor: pointer; }
+
+/* Which chain is drawn. These endpoints resolve "all networks" to one chain of
+   their own accord, so the answer is not derivable from the header selector. */
+.carto-net b { color: var(--accent); font-weight: normal; }
+
+/* Narrow viewports. These drawings are 1200 units wide and every one of them
+   carries labels at 9.5px; scaled into a 320px phone the whole thing is a
+   texture with unreadable text on it, which is worse than a drawing you have
+   to push sideways. So the stage scrolls horizontally instead of shrinking,
+   and only the stage does: the page body never scrolls sideways.
+
+   Breakpoint on the stage rather than a media query on the svg because the rail
+   takes its own width out of the viewport, so the number that matters is how
+   much room the stage actually got. */
+@media (max-width: 900px) {
+  .carto-stage { overflow-x: auto; overflow-y: hidden; }
+  .carto-stage svg, .carto-stage canvas { min-width: 760px; width: 760px; }
+}

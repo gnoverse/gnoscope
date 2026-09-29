@@ -15,17 +15,24 @@ test('the lab index offers gnohub and nothing else claims to be finished', async
   await page.goto('/lab' + NET);
   await settle(page);
 
-  // gnohub is the first card, and the assertion that matters is the second
-  // one: *every* card here says experimental, however many there are. The
-  // index used to hold exactly one, so an unscoped locator said both things
-  // at once; it stopped compiling the moment a second card arrived.
-  const titles = page.locator('.gh-lab-card-title');
-  await expect(titles.first()).toContainText('gnohub');
-  const badges = page.locator('.gh-lab-card-title .badge');
-  expect(await badges.count()).toBe(await titles.count());
-  for (const b of await badges.all()) await expect(b).toHaveText('experimental');
+  // Located by name, not by position, and the badge assertion covers every
+  // card however many there are, which is the half of this test's name that
+  // is about the whole page.
+  //
+  // main resolved this the same way but kept `.first()` for gnohub itself.
+  // That holds only while gnohub happens to be the first card, and it is not
+  // any more: the index is alphabetical-ish by insertion and cartography goes
+  // in ahead of it. Same failure as the count assertion this replaced, one
+  // card later.
+  const cards = page.locator('.gh-lab-card');
+  const n = await cards.count();
+  expect(n).toBeGreaterThan(0);
+  await expect(cards.locator('.gh-lab-card-title .badge')).toHaveText(Array(n).fill('experimental'));
 
-  await page.locator('.gh-lab-card').first().locator('.gh-lab-card-foot a').click();
+  const hub = cards.filter({ hasText: 'gnohub' });
+  await expect(hub).toHaveCount(1);
+  await expect(hub.locator('.gh-lab-card-title')).toContainText('gnohub');
+  await hub.locator('.gh-lab-card-foot a').click();
   await expect(page).toHaveURL(/\/gnohub/);
   expect(w.jsErrors).toEqual([]);
   expect(unexpected(w.failedRequests)).toEqual([]);
