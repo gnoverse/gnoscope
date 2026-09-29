@@ -40,6 +40,8 @@ const (
 	fromChain     = "chain"     // the realm's own package doc comment
 	fromReadme    = "readme"    // the realm's own README
 	fromPath      = "path"      // derived from the path, the last resort
+	fromDerived   = "derived"   // computed from the paths themselves
+	fromInferred  = "inferred"  // a heuristic, and it carries its evidence
 )
 
 // Why an entry is in the list at all.
@@ -64,6 +66,12 @@ type AppCard struct {
 	// they want next, and only if they are the kind of person who wants it.
 	Website  string `json:"website,omitempty"`
 	Category string `json:"category,omitempty"`
+	// CategoryFrom is `curated` when a human filed it and `inferred` when it
+	// was guessed, in which case CategoryWhy names the evidence. An explorer
+	// that showed both the same way would be asking readers to trust the
+	// weaker one as much as the stronger.
+	CategoryFrom string `json:"category_from,omitempty"`
+	CategoryWhy  string `json:"category_why,omitempty"`
 
 	NameFrom        string `json:"name_from"`
 	DescriptionFrom string `json:"description_from,omitempty"`
@@ -91,6 +99,13 @@ type AppCard struct {
 	// carries them, so the page can offer them without ranking them.
 	Supersedes []string  `json:"supersedes,omitempty"`
 	Previous   []AppCard `json:"previous,omitempty"`
+	// SupersedesFrom says whether those edges were curated, derived from the
+	// paths, or both.
+	SupersedesFrom string `json:"supersedes_from,omitempty"`
+	// InheritedFrom is the older generation this card took its name, sentence
+	// or category from, when it had none of its own. Nobody wrote that
+	// sentence about *this* realm, and the card says so.
+	InheritedFrom string `json:"inherited_from,omitempty"`
 	// Covers names the realms this app is made of, and Parts carries them.
 	//
 	// Not the same fold as Previous, and the card says so differently: a
@@ -345,7 +360,7 @@ func (a *API) HandleAppsHub(w http.ResponseWriter, r *http.Request) {
 			c.Website, c.WebsiteFrom = app.URL, fromCurated
 		}
 		if app.Category != "" {
-			c.Category = app.Category
+			c.Category, c.CategoryFrom = app.Category, fromCurated
 		}
 		c.Supersedes = app.Supersedes
 		c.Covers = app.Covers
@@ -357,6 +372,14 @@ func (a *API) HandleAppsHub(w http.ResponseWriter, r *http.Request) {
 	// nothing to count, and a hub that could not show them would be answering
 	// "what is built on gno.land" with the subset it happens to be able to see.
 	a.appendOffChain(&order, &resp)
+
+	// Layer 6: the relations and the category nobody had to write down.
+	//
+	// After curation, never before: a derived edge is only added where a human
+	// has not already spoken, and a guessed category only where none was filed.
+	deriveGenerations(order)
+	inheritAcrossGenerations(order)
+	a.inferCategories(order, network)
 
 	// Fold before ranking, not after. A folded card is ranked on what the whole
 	// app does, and GnoSwap's router alone is a fraction of that.

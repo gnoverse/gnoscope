@@ -845,6 +845,10 @@ html:not(.has-shots) .shot-cell { display: none; }
 .app-name { font-weight: bold; font-size: 13px; }
 .app-cat { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg2);
            border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+/* A guessed category is drawn as a guess. Most cards have one now that it is
+   inferred rather than curated, and a chip that looked identical either way
+   would quietly upgrade a heuristic into somebody's assertion. */
+.app-cat-guessed { border-style: dashed; }
 /* Clamped, not truncated at a character count: the blurbs are several
    sentences and the first one is always the summary. Hovering is not a way to
    read the rest, so the card links through to the realm page for that. */
@@ -10010,14 +10014,18 @@ const PROVENANCE = {
   inferred: ['◐', 'this explorer’s own measurement, not a chain fact'],
 };
 
-function provenanceMark(from, checked) {
+function provenanceMark(from, checked, inheritedFrom) {
   const p = PROVENANCE[from];
   if (!p) return null;
   // The date the registry requires on a blurb naming a volatile fact. It used
   // to sit in a dense table that no longer exists, so it lives here: a rule
   // that makes contributors write a date is only worth anything while a reader
   // can still find the answer.
-  const title = checked ? p[1] + ' (last confirmed ' + checked + ')' : p[1];
+  let title = checked ? p[1] + ' (last confirmed ' + checked + ')' : p[1];
+  // Carried forward from the generation this card replaced. Nobody wrote that
+  // sentence about *this* realm, and a card that did not say so would be
+  // presenting an inherited blurb as a statement about the thing on screen.
+  if (inheritedFrom) title += ', written about ' + inheritedFrom + ', the generation this one replaced';
   return el('span', { className: 'app-prov', title: title }, p[0]);
 }
 
@@ -10028,13 +10036,21 @@ function appCard(card, network) {
   const body = el('div', { className: 'app-card-body' });
   const head = el('div', { className: 'app-card-head' });
   head.appendChild(el('span', { className: 'app-name' }, card.name));
-  if (card.category) head.appendChild(el('span', { className: 'app-cat' }, card.category));
+  if (card.category) {
+    const cat = el('span', { className: 'app-cat' }, card.category);
+    if (card.category_from === 'inferred') {
+      cat.classList.add('app-cat-guessed');
+      cat.title = 'guessed by this explorer, not filed by a human: ' +
+        (card.category_why || 'no evidence recorded');
+    }
+    head.appendChild(cat);
+  }
   body.appendChild(head);
 
   const desc = el('div', { className: 'app-desc' });
   if (card.description) {
     desc.append(card.description);
-    const mark = provenanceMark(card.description_from, card.checked);
+    const mark = provenanceMark(card.description_from, card.checked, card.inherited_from);
     if (mark) desc.appendChild(mark);
   } else {
     // Said plainly rather than left blank, because this is the one thing on the
