@@ -1,0 +1,125 @@
+{
+  "target": "https://gnoscope.com",
+  "network": "mainnet",
+
+  "budgets": {
+    "readyMs": 2500,
+    "domInteractiveMs": 700,
+    "apiMs": 1500,
+    "thirdPartyBytesAtReady": 120000
+  },
+
+  "comment:ignoreRequests": "Request failures that are not the site's fault. Same rule as e2e/tests/helpers.js EXPECTED_FAILURES: every entry is a claim that a failure belongs to the environment rather than to gnoscope, so every entry says why. Anything not listed fails its check, which is the point.",
+  "ignoreRequests": [
+    { "match": "scripts.simpleanalyticscdn.com", "why": "the analytics script is blocked or TLS-intercepted on some networks, including the sandbox this is often run from. It draws nothing, so its absence cannot break a page." },
+    { "match": "/api/shot", "why": "screenshots come from gnoshot on the same box and are decorative; a capture that is still being taken answers 503 by design and the page draws its placeholder." }
+  ],
+
+  "pages": [
+    { "id": "home",             "path": "/" },
+    { "id": "realms",           "path": "/realms",            "proof": "#realms-list tr" },
+    { "id": "packages",         "path": "/packages" },
+    { "id": "contracts",        "path": "/contracts",         "budgetMs": 6000 },
+    { "id": "apps",             "path": "/apps" },
+    { "id": "txs",              "path": "/txs",               "proof": "#txs-list tr" },
+    { "id": "blocks",           "path": "/blocks" },
+    { "id": "accounts",         "path": "/accounts",          "budgetMs": 9000 },
+    { "id": "directory",        "path": "/directory" },
+    { "id": "directory-people", "path": "/directory/people" },
+    { "id": "directory-teams",  "path": "/directory/teams" },
+    { "id": "defi",             "path": "/defi" },
+    { "id": "coins",            "path": "/coins" },
+    { "id": "grc20",            "path": "/grc20" },
+    { "id": "storage",          "path": "/storage" },
+    { "id": "validators",       "path": "/validators" },
+    { "id": "govdao",           "path": "/govdao",            "budgetMs": 4000 },
+    { "id": "govdao-proposals", "path": "/govdao/proposals",  "budgetMs": 4000 },
+    { "id": "govdao-voters",    "path": "/govdao/voters" },
+    { "id": "gas",              "path": "/gas" },
+    { "id": "gas-realms",       "path": "/gas/realms" },
+    { "id": "gas-users",        "path": "/gas/users" },
+    { "id": "analytics",        "path": "/analytics" },
+    { "id": "params",           "path": "/params" },
+    { "id": "glossary",         "path": "/glossary" },
+    { "id": "sanity",           "path": "/sanity" },
+    { "id": "events",           "path": "/events" },
+    { "id": "discover",         "path": "/discover" },
+    { "id": "traffic",          "path": "/traffic" },
+    { "id": "watch",            "path": "/watch" },
+    { "id": "lab",              "path": "/lab" },
+    { "id": "developer",        "path": "/developer" },
+
+    {
+      "id": "dashboards",
+      "path": "/dashboards",
+      "comment": "A canvas, not just a non-empty main. /dashboards spent 40 minutes on production in 2026-09-29 rendering the single sentence 'charts unavailable' and nothing else, which satisfies every weaker assertion there is.",
+      "proof": "#view-dashboards canvas",
+      "budgetMs": 12000
+    },
+    {
+      "id": "realm-detail",
+      "path": "/realm/r/gov/dao",
+      "comment": "The tab strip, not the header: the header is drawn from the required payload and the strip needs the same payload to have been understood.",
+      "proof": "#realm-tabs .tab"
+    },
+    {
+      "id": "realm-source",
+      "path": "/realm/r/gov/dao?tab=source",
+      "proof": "#tab-source pre"
+    },
+    {
+      "id": "realm-docs",
+      "path": "/realm/r/gov/dao?tab=docs",
+      "proof": "#tab-docs [data-sym]"
+    },
+    {
+      "id": "realm-deps",
+      "path": "/realm/r/gov/dao?tab=deps",
+      "comment": "d3 is fetched on first use, so this is also the check that the lazy loader still reaches the dependency graph.",
+      "proof": "#dep-graph svg",
+      "budgetMs": 12000
+    },
+    {
+      "id": "realm-calls",
+      "path": "/realm/r/gov/dao?tab=calls",
+      "comment": "The treemap is ECharts, so this covers the other lazy library.",
+      "proof": "#usage-treemap svg",
+      "budgetMs": 12000
+    },
+    {
+      "id": "package-detail",
+      "path": "/realm/p/nt/avl/v0",
+      "proof": "#realm-tabs .tab"
+    },
+    {
+      "id": "address-detail",
+      "path": "/address/g1manfred47kzduec920z88wfr64ylksmdcedlf5",
+      "budgetMs": 9000
+    },
+    { "id": "block-detail", "path": "/block/1000" },
+    { "id": "gnohub",       "path": "/gnohub/r/gov/dao" }
+  ],
+
+  "api": [
+    { "id": "api-version",        "path": "/api/version" },
+    { "id": "api-networks",       "path": "/api/networks" },
+    { "id": "api-realm",          "path": "/api/realm/r/gov/dao" },
+    { "id": "api-realm-usage",    "path": "/api/realm/usage/r/gov/dao" },
+    { "id": "api-deps",           "path": "/api/deps/r/gov/dao" },
+    { "id": "api-events",         "path": "/api/events/r/gov/dao" },
+    { "id": "api-storage",        "path": "/api/storage/r/gov/dao" },
+    { "id": "api-labels",         "path": "/api/labels", "budgetMs": 4000 },
+    { "id": "api-glossary",       "path": "/api/glossary" },
+    { "id": "api-govdao-overview","path": "/api/govdao/overview", "budgetMs": 4000 },
+    { "id": "api-traffic",        "path": "/api/traffic" },
+    { "id": "api-sanity",         "path": "/api/sanity/overview" },
+
+    {
+      "id": "api-inert-package",
+      "path": "/api/inert/package/r/gov/dao",
+      "comment": "Measured at 34s cold on 2026-09-29. The realm page no longer waits for it (see the apiSWR optional-path change), so this is tracked to watch the endpoint itself rather than because a reader is blocked on it. The budget is deliberately the current bad number, not the number we want, so the row reads honestly until it is fixed.",
+      "budgetMs": 36000,
+      "timeoutMs": 60000
+    }
+  ]
+}

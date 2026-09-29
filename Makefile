@@ -1,4 +1,4 @@
-.PHONY: test e2e screenshots run install dev build awesome awesome-check
+.PHONY: test e2e qa qa-report screenshots run install dev build awesome awesome-check
 
 build:
 	CGO_ENABLED=0 go build -o gnoscope .
@@ -16,6 +16,18 @@ test:
 # which the binary never does — see e2e/README.md.
 e2e:
 	cd e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test
+
+# A QA and performance pass over a RUNNING deployment, by hand, not in CI.
+# `test` and `e2e` answer "did this change break the code"; this answers "is
+# every page still drawing on the real host, and has anything got slower".
+# Every run is recorded under qa/results/ and qa-report pivots them into a
+# table. See qa/README.md.
+qa:
+	cd e2e && npm ci
+	node qa/run.mjs $(ARGS)
+
+qa-report:
+	node qa/report.mjs $(ARGS)
 
 # Reproducible screenshots of every page, rendered against the e2e fixture into
 # docs/images/review/. For reviewing a frontend change without checking the
