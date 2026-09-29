@@ -204,7 +204,19 @@ func (cfg ClearanceConfig) Clear(s Subject) Axis {
 	if s.Namespace != "" && contains(cfg.OtherTeams, s.Namespace) {
 		return Axis{string(ClearanceTheirs), "the namespace belongs to another team"}
 	}
-	if s.Namespace == "" || looksLikeBareAddress(s.Namespace) {
+	// No namespace and an unregistered namespace are different situations, and
+	// collapsing them puts a false sentence in front of a reader.
+	//
+	// transfer.large has no namespace at all: a bank send is between two
+	// accounts and no package is involved. Sharing this branch with the
+	// bare-address case had it telling readers on mainnet that "the namespace
+	// is a bare address with no registered name" about a transfer that has no
+	// namespace to describe. Fluent, specific, and about nothing.
+	if s.Namespace == "" {
+		return Axis{string(ClearanceUnclear),
+			"nothing here belongs to a namespace, so there is nothing to clear it against"}
+	}
+	if looksLikeBareAddress(s.Namespace) {
 		return Axis{string(ClearanceUnclear), "the namespace is a bare address with no registered name"}
 	}
 	return Axis{string(ClearanceUnclear), "no clearance is configured for this namespace"}
