@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/stdlibs"
 	"github.com/gnoverse/gnoscope/pkg/store"
 	"github.com/gnoverse/gnoscope/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/traffic"
 	"github.com/gnoverse/gnoscope/pkg/web"
 )
 
@@ -108,6 +110,21 @@ func run() error {
 		// request behind a reverse proxy that rewrites Host.
 		mcpPublicOrigin = flag.String("mcp-public-origin", "",
 			`the origin this instance is reached by, e.g. "https://gnoscope.example"; enables strict Host and Origin checks on /mcp`)
+
+		// The request log, and its own database file. Off by default: an
+		// explorer somebody runs locally should not start writing a record of
+		// its own use without being asked, and the deployment that wants one
+		// says so in its unit file.
+		//
+		// A separate file, never a table in -db: the chain index is ~1.7 GB
+		// that is rebuilt from the chain when it is wrong, and traffic is small,
+		// unrecoverable and has a retention policy. Sharing would put reader
+		// behaviour inside every backup of the index and tie a retention delete
+		// to its write lock.
+		trafficDB = flag.String("traffic-db", "",
+			"SQLite path for the request log, e.g. gnoscope-traffic.db (empty = record nothing)")
+		trafficRetention = flag.Int("traffic-retention-days", 30,
+			"how many days of request rows to keep; 0 keeps them forever")
 	)
 	flag.Parse()
 
@@ -115,6 +132,21 @@ func run() error {
 	db, err := store.NewDB(*dbPath)
 	if err != nil {
 		return fmt.Errorf("init db: %w", err)
+	}
+
+	var traf *traffic.Store
+	if *trafficDB != "" {
+		traf, err = traffic.Open(*trafficDB, *trafficRetention)
+		if err != nil {
+			return fmt.Errorf("init traffic db: %w", err)
+		}
+		defer traf.Close()
+		retention := "forever"
+		if *trafficRetention > 0 {
+			retention = fmt.Sprintf("%d days", *trafficRetention)
+		}
+		log.Printf("traffic: recording requests to %s (retention %s); /api/traffic is public and aggregate-only",
+			*trafficDB, retention)
 	}
 	defer db.Close()
 
@@ -548,12 +580,19 @@ func run() error {
 	// the first reader of a realm and miss everyone who followed. The more a
 	// realm was read, the less it would appear to be read.
 	views := httpapi.NewViewCounter(db)
-	handler := httpapi.WithRealmViews(views,
-		httpapi.WithResponseCache(cache,
-			httpapi.RejectUnknownNetwork(cfg.Networks,
-				httpapi.WithServerTiming(
-					httpapi.WithCompression(mux)))))
+	// WithAccessLog outermost, and for the same reason WithRealmViews is: a
+	// cached answer never reaches a handler, so a counter placed deeper would
+	// count the first reader of a page and miss everyone who followed. It is
+	// also the only layer that sees the wire bytes, the final status, and the
+	// total a reader actually waited.
+	handler := httpapi.WithAccessLog(traf, mux, selfHost(*mcpPublicOrigin),
+		httpapi.WithRealmViews(views,
+			httpapi.WithResponseCache(cache,
+				httpapi.RejectUnknownNetwork(cfg.Networks,
+					httpapi.WithServerTiming(
+						httpapi.WithCompression(mux))))))
 	go views.Run(ctx)
+	go traf.Run(ctx) // nil-safe
 
 	// A tool call goes through the cache, not straight at the mux: the reads
 	// behind get_realm_state and the analytics endpoints are the expensive
@@ -583,6 +622,7 @@ func run() error {
 	}
 	api.SetResponseCache(cache)
 	api.SetViewCounter(views)
+	api.SetTraffic(traf)
 
 	// pprof on its own listener rather than on the public mux: a profile says
 	// more about this process than any page does, and the difference between
@@ -620,4 +660,21 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// selfHost extracts the hostname from -mcp-public-origin, which is the one flag
+// that already names how this instance is reached.
+//
+// Used to drop own-origin referers from the traffic log: a link from one page of
+// this app to the next says nothing about where readers come from, and left in
+// it would outnumber every real inbound link.
+func selfHost(origin string) string {
+	if origin == "" {
+		return ""
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }

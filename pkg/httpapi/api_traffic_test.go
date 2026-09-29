@@ -1,0 +1,212 @@
+package httpapi
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/gnoverse/gnoscope/pkg/traffic"
+)
+
+func trafficTestStore(t *testing.T) *traffic.Store {
+	t.Helper()
+	s, err := traffic.Open(filepath.Join(t.TempDir(), "traffic.db"), 30)
+	if err != nil {
+		t.Fatalf("open traffic db: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+// trafficTestMux mirrors the real shape: wildcard API routes plus the SPA
+// catch-all that every non-API URL falls through to.
+func trafficTestMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/realm/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Cache", "HIT")
+		w.Write([]byte(`{"ok":true}`))
+	})
+	mux.HandleFunc("GET /api/stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server-Timing", "app;dur=42.5")
+		w.Header().Set("X-Cache", "MISS")
+		w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("POST "+MCPPath, func(w http.ResponseWriter, r *http.Request) {
+		NoteMCPTool(r.Context(), "get_realm_state")
+		w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/nope" {
+			http.Error(w, "no", http.StatusNotFound)
+			return
+		}
+		w.Write([]byte("<html></html>"))
+	})
+	return mux
+}
+
+func fire(t *testing.T, h http.Handler, method, target, ua string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, target, nil)
+	r.RemoteAddr = "203.0.113.7:51234"
+	r.Header.Set("User-Agent", ua)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+const browserUA = "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+
+func TestAccessLogRecordsRouteAndTarget(t *testing.T) {
+	store := trafficTestStore(t)
+	mux := trafficTestMux()
+	h := WithAccessLog(store, mux, "gnoscope.com", mux)
+
+	fire(t, h, "GET", "/api/realm/r/moul/home?network=mainnet", browserUA)
+	fire(t, h, "GET", "/api/stats?network=mainnet", browserUA)
+	fire(t, h, "GET", "/realms?network=pearl", browserUA)
+	store.Flush()
+
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if rep.Totals.Requests != 3 {
+		t.Fatalf("requests = %d, want 3", rep.Totals.Requests)
+	}
+	if rep.Totals.API != 2 || rep.Totals.Pages != 1 {
+		t.Errorf("api/pages = %d/%d, want 2/1", rep.Totals.API, rep.Totals.Pages)
+	}
+
+	// The realm path is what "which realms do people read" is built on.
+	if len(rep.TopRealms) != 1 || rep.TopRealms[0].Label != "r/moul/home" {
+		t.Errorf("top realms = %+v, want one row for r/moul/home", rep.TopRealms)
+	}
+	// The SPA catch-all matches every non-API URL, so the page identity has to
+	// come from the path rather than the pattern.
+	if len(rep.TopPages) != 1 || rep.TopPages[0].Label != "/realms" {
+		t.Errorf("top pages = %+v, want one row for /realms", rep.TopPages)
+	}
+	// #448: the query string is where the network lives, and dropping it is
+	// what made every chain one row in the old client-side analytics.
+	labels := map[string]int64{}
+	for _, c := range rep.Networks {
+		labels[c.Label] = c.Hits
+	}
+	if labels["mainnet"] != 2 || labels["pearl"] != 1 {
+		t.Errorf("networks = %+v, want mainnet:2 pearl:1", rep.Networks)
+	}
+}
+
+func TestAccessLogCapturesCacheStateAndAppTime(t *testing.T) {
+	store := trafficTestStore(t)
+	mux := trafficTestMux()
+	h := WithAccessLog(store, mux, "", mux)
+
+	fire(t, h, "GET", "/api/realm/r/moul/home", browserUA) // X-Cache: HIT, no Server-Timing
+	fire(t, h, "GET", "/api/stats", browserUA)             // X-Cache: MISS, app;dur=42.5
+	store.Flush()
+
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Totals.CacheHits != 1 {
+		t.Errorf("cache hits = %d, want 1", rep.Totals.CacheHits)
+	}
+	states := map[string]int64{}
+	for _, c := range rep.Cache {
+		states[c.Label] = c.Hits
+	}
+	if states["HIT"] != 1 || states["MISS"] != 1 {
+		t.Errorf("cache states = %+v, want one HIT and one MISS", rep.Cache)
+	}
+}
+
+func TestAccessLogRecordsMCPToolName(t *testing.T) {
+	store := trafficTestStore(t)
+	mux := trafficTestMux()
+	h := WithAccessLog(store, mux, "", mux)
+
+	fire(t, h, "POST", MCPPath, "claude-code/1.0")
+	store.Flush()
+
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Totals.MCP != 1 {
+		t.Fatalf("mcp requests = %d, want 1", rep.Totals.MCP)
+	}
+	if len(rep.Tools) != 1 || rep.Tools[0].Label != "get_realm_state" {
+		t.Errorf("tools = %+v, want one row for get_realm_state; without it every "+
+			"agent call is an indistinguishable POST to one path", rep.Tools)
+	}
+}
+
+func TestAccessLogRecordsNotFound(t *testing.T) {
+	store := trafficTestStore(t)
+	mux := trafficTestMux()
+	h := WithAccessLog(store, mux, "", mux)
+
+	fire(t, h, "GET", "/nope", browserUA)
+	store.Flush()
+
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Totals.Errors != 1 {
+		t.Errorf("errors = %d, want 1", rep.Totals.Errors)
+	}
+	if len(rep.NotFound) != 1 || rep.NotFound[0].Label != "/nope" {
+		t.Errorf("not found = %+v, want one row for /nope", rep.NotFound)
+	}
+}
+
+// The middleware must be invisible when no store is configured, and must not
+// change what a reader receives when one is.
+func TestAccessLogIsTransparent(t *testing.T) {
+	mux := trafficTestMux()
+
+	off := WithAccessLog(nil, mux, "", mux)
+	w := fire(t, off, "GET", "/api/stats", browserUA)
+	if w.Code != 200 || w.Body.String() != "{}" {
+		t.Errorf("disabled: got %d %q, want 200 {}", w.Code, w.Body.String())
+	}
+
+	on := WithAccessLog(trafficTestStore(t), mux, "", mux)
+	w = fire(t, on, "GET", "/api/stats", browserUA)
+	if w.Code != 200 || w.Body.String() != "{}" {
+		t.Errorf("enabled: got %d %q, want 200 {}", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Server-Timing") != "app;dur=42.5" {
+		t.Errorf("Server-Timing was disturbed: %q", w.Header().Get("Server-Timing"))
+	}
+}
+
+func TestNoteMCPToolOutsideARequestIsSafe(t *testing.T) {
+	NoteMCPTool(context.Background(), "whatever") // must not panic
+}
+
+func TestAppDurationMS(t *testing.T) {
+	tests := []struct {
+		header string
+		want   float64
+	}{
+		{"", 0},
+		{"app;dur=42.5", 42.5},
+		{"db;dur=1, app;dur=8.25", 8.25},
+		{"app;dur=8.25; other", 8.25},
+		{"app;dur=nonsense", 0},
+		{"other;dur=3", 0},
+	}
+	for _, tc := range tests {
+		if got := appDurationMS(tc.header); got != tc.want {
+			t.Errorf("appDurationMS(%q) = %v, want %v", tc.header, got, tc.want)
+		}
+	}
+}

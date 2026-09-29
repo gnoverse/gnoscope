@@ -23,6 +23,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/registry"
 	"github.com/gnoverse/gnoscope/pkg/store"
 	"github.com/gnoverse/gnoscope/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/traffic"
 )
 
 type API struct {
@@ -55,6 +56,11 @@ type API struct {
 	// wraps this. Nil in the tools and tests that run no counter, and every use
 	// of it is nil-safe.
 	views *ViewCounter
+
+	// traffic records one row per served request, in its own database file. Nil
+	// when -traffic-db is unset, and every use of it is nil-safe: an explorer
+	// that does not want a request log should not need a second build.
+	traffic *traffic.Store
 
 	// syncHealth is how the sanity page answers "are our sync passes
 	// succeeding", which chain liveness cannot: a chain can be producing
@@ -963,6 +969,8 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/realm/usage/{path...}", a.HandleRealmUsage)
 	mux.HandleFunc("GET /api/realm/{path...}", a.HandleRealm)
 	mux.HandleFunc("GET /api/views", a.HandleViews)
+	mux.HandleFunc("GET /api/traffic", a.HandleTraffic)
+	mux.HandleFunc("GET /api/traffic/health", a.HandleTrafficHealth)
 	mux.HandleFunc("GET /api/packages", a.HandlePackages)
 	mux.HandleFunc("GET /api/packages/facets", a.HandlePackageFacets)
 	// {hash...}, not {hash}: roughly a third of gno transaction hashes are
