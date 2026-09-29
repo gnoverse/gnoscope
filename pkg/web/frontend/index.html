@@ -164,6 +164,20 @@ html.rail-collapsed .rail nav .nav-kids { display: none; }
 html.rail-collapsed .rail nav a.in-section { color: var(--accent); background: var(--bg3);
   border-left-color: var(--accent); }
 .rail-foot { margin-top: auto; padding: 8px 6px 12px; }
+/* The about block: which build is this, since when, and where to say it is
+   wrong. Deliberately quiet: it sits under every page but is never the thing
+   being read, so it is one step down in size and colour from a nav entry. */
+.rail-about { border-top: 1px solid var(--border); margin: 0 2px 8px; padding: 8px 4px 2px;
+  font-size: 10px; letter-spacing: -.2px; line-height: 1.55; color: var(--fg2); }
+.rail-about .ra-row { display: flex; gap: 5px; align-items: baseline; white-space: nowrap; }
+.rail-about .ra-k { flex: 0 0 32px; opacity: .7; }
+.rail-about .ra-v { overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+.rail-about a.ra-v { color: var(--fg); }
+.rail-about a.ra-v:hover { color: var(--accent); }
+.rail-about .ra-links { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 7px; }
+.rail-about .ra-links a { color: var(--fg2); }
+.rail-about .ra-links a:hover { color: var(--accent); }
+html.rail-collapsed .rail-about { display: none; }
 .rail-toggle { display: flex; align-items: center; gap: 10px; width: 100%; background: none;
   border: none; color: var(--fg2); font-family: var(--mono); font-size: 12.5px; cursor: pointer;
   padding: 5px 8px; border-radius: 4px; }
@@ -1329,6 +1343,21 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
       <a onclick="navigate('/watch')" id="nav-watch" title="watch"><svg aria-hidden="true"><use href="#i-eye"/></svg><span class="rail-label">watch</span></a>
   </nav>
   <div class="rail-foot">
+    <!-- Which build is this, how long has it been up, what changed, and where
+         to report it. All four were reachable before only from the footer of a
+         scrolled page or from /sanity, which is not where a reader who thinks
+         the page is lying to them goes looking.
+         Outside <nav> on purpose: every <a> in there is matched against the
+         NAV table by TestRailMatchesNavTable, and none of these route. -->
+    <div class="rail-about" id="rail-about">
+      <div class="ra-row"><span class="ra-k">version</span><a class="ra-v" id="about-version" href="https://github.com/gnoverse/gnoscope" target="_blank" rel="noopener" title="the commit this instance was built from">…</a></div>
+      <div class="ra-row"><span class="ra-k">built</span><span class="ra-v" id="about-built">…</span></div>
+      <div class="ra-row"><span class="ra-k">up</span><span class="ra-v" id="about-uptime">…</span></div>
+      <div class="ra-links">
+        <a href="https://github.com/gnoverse/gnoscope/commits/main" target="_blank" rel="noopener" title="every commit, newest first">changelog</a>
+        <a id="about-bug" href="https://github.com/gnoverse/gnoscope/issues/new" target="_blank" rel="noopener" title="opens a GitHub issue with this build, this network and this page already filled in">report a bug</a>
+      </div>
+    </div>
     <button class="rail-toggle" id="rail-toggle" onclick="toggleRail()" aria-label="collapse the navigation"><svg aria-hidden="true"><use href="#i-collapse"/></svg><span class="rail-label">collapse</span></button>
   </div>
 </aside>
@@ -1555,6 +1584,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 <footer>
   <div class="container">
     <span>gnoscope — <a href="https://github.com/gnoverse/gnoscope" target="_blank">github.com/gnoverse/gnoscope</a> @ <a id="footer-hash" href="#" target="_blank">...</a></span>
+    <span><a id="footer-bug" href="https://github.com/gnoverse/gnoscope/issues/new" target="_blank" rel="noopener">report a bug</a> · <a href="https://github.com/gnoverse/gnoscope/commits/main" target="_blank" rel="noopener">changelog</a></span>
     <span id="footer-indexer">data from tx-indexer</span>
   </div>
 </footer>
@@ -20360,11 +20390,100 @@ loadAddrLabels().then(loadNamespaceOwners).then(() => { initNetworkSelector(); s
 proposerMonikersReady();
 renderWatchBadge();
 
-// --- Footer version ---
+// --- Footer version, and the about block at the foot of the rail ---
+//
+// fmtUptime is coarser than fmtDuration on purpose: "3d" alone is the wrong
+// answer to "has this been restarted since the thing I am reporting", and
+// "3d 4h" is the right one at every scale that matters.
+function fmtUptime(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
+  const m = Math.floor(s % 3600 / 60);
+  if (d) return d + 'd ' + h + 'h';
+  if (h) return h + 'h ' + m + 'm';
+  if (m) return m + 'm';
+  return s + 's';
+}
+
+// The bug link carries the four things a report is useless without and that
+// nobody pastes by hand: the build, the chain, the page, the browser. Written
+// at click time rather than at load, because the page is the one that moves.
+function bugReportURL(v) {
+  const body = [
+    '<!-- what you did, what you expected, what happened -->',
+    '',
+    '',
+    '---',
+    '| | |',
+    '|---|---|',
+    '| version | `' + (v.version || '?') + '` |',
+    '| commit | `' + (v.git_hash || '?') + '` |',
+    '| built | `' + (v.build_time || '?') + '` |',
+    '| go | `' + (v.go_version || '?') + '` |',
+    '| up since | `' + (v.started_at || '?') + '` |',
+    '| network | `' + getNetwork() + '` |',
+    '| page | `' + location.pathname + location.search + '` |',
+    '| browser | `' + navigator.userAgent + '` |',
+  ].join('\n');
+  return 'https://github.com/gnoverse/gnoscope/issues/new'
+    + '?title=' + encodeURIComponent('[bug] ')
+    + '&body=' + encodeURIComponent(body);
+}
+
+function renderAbout(v) {
+  const ver = document.getElementById('about-version');
+  // version falls back to the hash on an untagged build, so showing both
+  // would be the same string twice on every deploy this repo has ever made.
+  ver.textContent = v.version && v.version !== v.git_hash ? v.version : (v.git_hash || 'dev');
+  ver.href = 'https://github.com/gnoverse/gnoscope/commit/' + v.git_hash;
+  ver.title = 'built from ' + v.git_hash + (v.go_version ? ', with ' + v.go_version : '');
+
+  const built = document.getElementById('about-built');
+  if (v.build_time && v.build_time !== 'unknown') {
+    built.textContent = v.build_time.slice(0, 10) + ' (' + shortAge(v.build_time) + ')';
+    built.title = v.build_time;
+  } else {
+    built.textContent = 'unknown';
+  }
+
+  const up = document.getElementById('about-uptime');
+  if (v.started_at) {
+    up.textContent = fmtUptime(v.uptime_seconds);
+    // The ticker below keeps this honest on a tab left open for a week.
+    up.setAttribute('data-uptime', v.started_at);
+    up.title = 'since ' + v.started_at;
+  } else {
+    up.textContent = fmtUptime(v.uptime_seconds || 0);
+  }
+
+  const bug = document.getElementById('about-bug');
+  const fill = () => { bug.href = bugReportURL(v); };
+  fill();
+  bug.addEventListener('pointerdown', fill);
+  bug.addEventListener('click', fill);
+  const footBug = document.getElementById('footer-bug');
+  if (footBug) {
+    const fillFoot = () => { footBug.href = bugReportURL(v); };
+    fillFoot();
+    footBug.addEventListener('pointerdown', fillFoot);
+    footBug.addEventListener('click', fillFoot);
+  }
+}
+
+// Uptime is a count-up, not an age: rendering it through the [data-age] ticker
+// would parenthesise it and round 3d 4h down to "3d".
+setInterval(() => {
+  document.querySelectorAll('[data-uptime]').forEach(s => {
+    const t = s.getAttribute('data-uptime');
+    if (t) s.textContent = fmtUptime((Date.now() - new Date(t)) / 1000);
+  });
+}, 10000);
+
 api('version').then(v => {
   const el = document.getElementById('footer-hash');
   el.textContent = v.git_hash;
   el.href = 'https://github.com/gnoverse/gnoscope/commit/' + v.git_hash;
+  renderAbout(v);
 
   // A deploy can change any payload's shape, and the optimistic-UI cache holds
   // payloads across reloads — so a reader with an open tab would paint the old

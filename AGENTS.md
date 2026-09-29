@@ -112,7 +112,10 @@ Break these and things go wrong in ways that are hard to see:
   script below it having run at all. Add an entry to both, in the
   same order, or `TestRailMatchesNavTable` fails. Left to drift it fails
   silently: a rail entry missing from the table navigates fine and simply has no
-  section strip.
+  section strip. The corollary is that a link in the rail that does *not* route
+  (the about block's commit, changelog and bug links) has to live outside
+  `<nav>`, where that test cannot see it; `e2e/tests/rail.spec.js` asserts it
+  stays there.
 - **Nothing third-party is on the critical path, and nothing may go back on
   it.** d3, Chart.js, ECharts and echarts-gl are 676 KB compressed and ~2.2 MB
   parsed from two external origins; they used to be four plain `<script src>`

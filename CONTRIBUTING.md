@@ -83,9 +83,12 @@ untested areas are listed in
 
 ## Reporting bugs
 
-Include the output of `/api/version` and `/api/networks`, the network in question,
-and whether the instance uses a config file or flags. A surprising number of issues
-turn out to be an instance pointed at a different chain than intended.
+The "report a bug" link at the foot of the nav rail does most of this for you: it
+opens a GitHub issue with the build, the network, the page and the browser already
+filled in. Reporting by hand instead, include the output of `/api/version` and
+`/api/networks`, the network in question, and whether the instance uses a config
+file or flags. A surprising number of issues turn out to be an instance pointed at
+a different chain than intended.
 
 ## Adding a name, a token or an app
 

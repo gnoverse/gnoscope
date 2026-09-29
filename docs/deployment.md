@@ -292,6 +292,11 @@ Prefer the image over hand-copied binaries. A deployment updated by scp drifts, 
 a stale binary is hard to notice: check `/api/version`, and if `git_hash` is `dev`
 the build carries no version information at all.
 
+Readers see the same four facts without curling anything: the foot of the nav
+rail carries the version, the build date with its age, and the uptime, and a
+reader on a page that looks wrong has a "report a bug" link there that opens a
+GitHub issue with all of it, the network and the page already filled in.
+
 ## Operating notes
 
 - **Sync runs every 30s per network**, incrementally, from the highest stored

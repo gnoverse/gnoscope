@@ -6,6 +6,7 @@
 #   docker build \
 #     --build-arg COMMIT=$(git rev-parse --short HEAD) \
 #     --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+#     --build-arg VERSION=$(git describe --tags --always --dirty) \
 #     -t gnoscope:dev .
 
 # ---- Build
@@ -18,10 +19,11 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG COMMIT=dev
 ARG BUILD_TIME=unknown
+ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
   go build \
   -trimpath \
-  -ldflags "-s -w -X main.gitHash=$COMMIT -X main.buildTime=$BUILD_TIME" \
+  -ldflags "-s -w -X main.gitHash=$COMMIT -X main.buildTime=$BUILD_TIME -X main.version=$VERSION" \
   -o /out/gnoscope .
 
 # ---- Runtime

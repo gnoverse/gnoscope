@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +30,13 @@ import (
 
 var gitHash = "dev"       // set via -ldflags at build time
 var buildTime = "unknown" // set via -ldflags at build time
+var version = "dev"       // set via -ldflags at build time: git describe --tags --always
+
+// startedAt is when this process came up, and it is the only one of the four
+// build facts that is not stamped at link time. Uptime read from it answers
+// the question a hash cannot: whether the instance in front of you has been
+// restarted since the thing you are reporting happened.
+var startedAt = time.Now().UTC()
 
 // symbolIndexInterval is how often the symbol index re-walks the corpus. Longer
 // than the rollups: a package's declarations change only when somebody deploys,
@@ -509,7 +517,18 @@ func run() error {
 		// shots tells the frontend whether to put any realm <img> on the page.
 		// It asks once and decides for the whole session, so a deployment
 		// without a capture service never requests an image it cannot get.
-		fmt.Fprintf(w, `{"git_hash":%q,"build_time":%q,"shots":%t}`, gitHash, buildTime, api.ShotsEnabled())
+		// Uptime is computed here rather than sent as a start timestamp alone
+		// so a reader with a skewed clock still gets the right number; the
+		// timestamp goes out beside it for anything that wants to tick it.
+		httpapi.JSONResponse(w, map[string]any{
+			"git_hash":       gitHash,
+			"build_time":     buildTime,
+			"version":        version,
+			"go_version":     runtime.Version(),
+			"started_at":     startedAt.Format(time.RFC3339),
+			"uptime_seconds": int64(time.Since(startedAt).Seconds()),
+			"shots":          api.ShotsEnabled(),
+		})
 	})
 	mux.HandleFunc("GET /api/networks", func(w http.ResponseWriter, r *http.Request) {
 		type netInfo struct {

@@ -123,7 +123,7 @@ bounded at 3650 days instead.
 
 | endpoint | description |
 |---|---|
-| `GET /api/version` | build info: `git_hash`, `build_time` |
+| `GET /api/version` | build and process info: `version` (`git describe`, falling back to the short hash while the repo carries no tag), `git_hash`, `build_time`, `go_version`, `started_at`, `uptime_seconds`, `shots`. The first four are stamped at link time by `build.sh` or the Dockerfile and read `dev`/`unknown` on a plain `go build`; the last two are measured by the running process. The rail's about block and the "report a bug" link are drawn from this |
 | `GET /api/networks` | configured network IDs — the fastest way to confirm which chains an instance is actually serving |
 | `GET /api/watch` | activity digest for a watchlist, plus a `transactions` timeline: the 50 most recent rows across every watched realm and address, merged and deduplicated. Repeated `realm=` and `address=` parameters, each optionally `id@height` — that height is the baseline `new_since` counts against (the timeline itself is not filtered by it). Answered from stored rows only, so a watchlist costs no indexer round-trips. Capped at 100 items |
 | `GET /api/labels` | display names for addresses: `{address: {label, kind, why}}`, the curated registry merged with what the chain proves. Includes every **package account**, both the banker and the storage deposit one, derived from the path because the chain stores only the hash; on mainnet that is 1,084 of the ~1,100 entries and takes the payload from 4.4KB to 45KB gzipped, against a 315KB gzipped `index.html` on the same load |

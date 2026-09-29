@@ -64,6 +64,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Tags, so `git describe` below can name a version.
+          fetch-depth: 0
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Set up Buildx
@@ -77,6 +79,12 @@ jobs:
       - name: Compute build time
         id: build_time
         run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      # Falls back to the short sha while this repo carries no tag, which is
+      # what the version row showed before it existed. Needs the full history
+      # fetched above, or describe sees no tags and always takes the fallback.
+      - name: Compute version
+        id: version
+        run: echo "value=$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - name: Compute image tags
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -96,6 +104,7 @@ jobs:
           build-args: |
             COMMIT=${{ github.sha }}
             BUILD_TIME=${{ steps.build_time.outputs.value }}
+            VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           # Attach SLSA provenance + SBOM as attestations embedded in the
