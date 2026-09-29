@@ -549,7 +549,15 @@ func TestEndpointTTLOverridesTheDefault(t *testing.T) {
 // reintroduced it, because ?path= keys separately and happened to be asked
 // first in the test that was supposed to prove it.
 func TestLiveCountersAreNotCacheable(t *testing.T) {
-	for _, path := range []string{"/api/cache/stats", "/api/views", "/api/live", "/api/version"} {
+	for _, path := range []string{
+		"/api/cache/stats", "/api/views", "/api/live", "/api/version",
+		// Third instance of the same mistake. /api/traffic counts the request
+		// that asks for it, so a cached answer excludes the reader's own visit
+		// and up to fifteen minutes of everyone else's while the page presents
+		// it as current. Measured 2026-09-29: two reads four minutes apart were
+		// byte-identical while the reverse proxy logged 64 requests in between.
+		"/api/traffic", "/api/traffic/health",
+	} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		if cacheable(r) {
 			t.Errorf("%s is cacheable, so it would report a stale version of the state it exists to report", path)

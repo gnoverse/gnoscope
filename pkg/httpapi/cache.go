@@ -367,6 +367,28 @@ func cacheable(r *http.Request) bool {
 		// one endpoint over, because `?path=` keys separately and happened to
 		// be asked first in the test.
 		return false
+	case "/api/traffic", "/api/traffic/health":
+		// Third time in this file, so the comment above was not enough and
+		// this one is longer.
+		//
+		// Same class as /api/views and worse, because /api/traffic counts the
+		// request that asks for it. Cached, a reader is shown figures that
+		// exclude their own visit and everyone else's for up to TTL plus the
+		// stale grace, which is fifteen minutes, while the page reports them as
+		// current. HandleTraffic calls Flush() precisely so the answer is
+		// fresh; the cache then throws that away.
+		//
+		// Caught on 2026-09-29 while reconciling recorded requests against the
+		// reverse proxy's own log. Two reads of /api/traffic four minutes apart
+		// returned byte-identical totals while Caddy logged 64 requests in
+		// between, and the zero delta was first misread as the page
+		// over-counting by 2.69x. A dashboard that cannot move is worse than a
+		// slow one: it is wrong and it looks fine.
+		//
+		// /api/traffic/health is the same argument at full strength. Its whole
+		// job is to report the writer's live counters, and `dropped` climbing
+		// is the one thing worth alerting on.
+		return false
 	}
 	// Badges are the one cached thing outside /api/, and the one with the most
 	// to gain: each is fetched once per read of whatever embeds it, by readers
