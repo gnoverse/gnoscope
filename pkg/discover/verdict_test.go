@@ -243,3 +243,41 @@ func TestTheReasonIsAlwaysPresentAndFits(t *testing.T) {
 		}
 	}
 }
+
+// An event with no namespace and an event under an unregistered namespace both
+// land on `unclear`, and they must not say the same thing about why.
+//
+// They shared a branch until 2026-09-29, so mainnet told readers that "the
+// namespace is a bare address with no registered name" about a bank transfer,
+// which has no namespace at all. The verdict was right and the reason was
+// false, which is the worse of the two failures: a reader checks the reason
+// precisely when they are deciding whether to trust the verdict.
+func TestTheReasonForUnclearSaysWhichKindOfUnclearItIs(t *testing.T) {
+	var cfg ClearanceConfig
+
+	// transfer.large carries no namespace, because a bank send involves no package.
+	noNamespace := cfg.Clear(Subject{Kind: "transfer.large", Parties: []string{"g1from", "g1to"}})
+	if noNamespace.Level != string(ClearanceUnclear) {
+		t.Fatalf("level = %q, want unclear", noNamespace.Level)
+	}
+	if strings.Contains(noNamespace.Why, "bare address") {
+		t.Errorf("an event with no namespace is described as having a bare-address namespace: %q", noNamespace.Why)
+	}
+
+	// A package deployed under an unregistered address does have one, and that
+	// is the case the bare-address wording is for.
+	bare := cfg.Clear(Subject{
+		Kind:      "package.deployed",
+		Namespace: "g1s2g47cas6gxamxlkpxu65zu2g4aqma38tx36yv",
+	})
+	if bare.Level != string(ClearanceUnclear) {
+		t.Fatalf("level = %q, want unclear", bare.Level)
+	}
+	if !strings.Contains(bare.Why, "bare address") {
+		t.Errorf("a bare-address namespace lost its own wording: %q", bare.Why)
+	}
+
+	if noNamespace.Why == bare.Why {
+		t.Error("two different situations are given the same reason")
+	}
+}
