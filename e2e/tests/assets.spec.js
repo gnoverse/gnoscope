@@ -12,7 +12,18 @@ const ASSETS = {
   network: 'alpha',
   assets: [
     {
+      // The chain's own coin is a row here like any other asset, and carries
+      // the two markers that stop a reader comparing its columns with a
+      // grc20's: its holders are a sample, its transfers are BankMsgSend only.
+      token: 'ugnot', pkg_path: '', symbol: 'GNOT', kind: 'native',
+      network: 'alpha', supply: 1333000221686563, locked: 1108981410871186, supply_known: true,
+      holders: 1240, holders_basis: 'swept', holders_swept: 4820,
+      transfers: 482119, transfers_basis: 'banksend', transfers_24h: 900,
+      fungible: true, verified: true, display_symbol: 'GNOT', display_name: 'gno.land', decimals: 6,
+    },
+    {
       token: 'gno.land/r/gnoswap/gns.GNS.0000000', pkg_path: 'gno.land/r/gnoswap/gns', symbol: 'GNS',
+      kind: 'grc20', holders_basis: 'replayed', transfers_basis: 'events', supply_known: true,
       network: 'alpha', supply: 100393107865894, holders: 119, fungible: true,
       transfers: 1818, transfers_24h: 12, first_seen_time: '2026-09-01T00:00:00Z',
       verified: true, display_symbol: 'GNS', display_name: 'GnoSwap', decimals: 6,
@@ -20,12 +31,14 @@ const ASSETS = {
     {
       // GRC721 goes through the same events without an amount.
       token: 'gno.land/r/gnoswap/gnft.GNFT.0000000', pkg_path: 'gno.land/r/gnoswap/gnft', symbol: 'GNFT',
+      kind: 'grc721', holders_basis: 'replayed', transfers_basis: 'events', supply_known: true,
       network: 'alpha', supply: 0, holders: 0, fungible: false, transfers: 201, transfers_24h: 0,
       verified: false,
     },
     {
       // A token that emits a bare symbol instead of its realm path.
       token: 'COVID', pkg_path: '', symbol: 'COVID',
+      kind: 'grc20', holders_basis: 'replayed', transfers_basis: 'events', supply_known: true,
       network: 'alpha', supply: 615028450, holders: 15, fungible: true, transfers: 66, transfers_24h: 0,
       verified: false,
     },
@@ -41,11 +54,11 @@ test('an asset shows supply, holders and whether anyone vouched for it', async (
   const seen = watch(page);
   await stubAssets(page);
 
-  const response = await page.goto('/grc20');
+  const response = await page.goto('/defi');
   expect(response.status()).toBe(200);
   await settle(page);
 
-  const list = page.locator('#grc20-list');
+  const list = page.locator('#asset-list');
   await expect(list).toContainText('GNS');
   await expect(list).toContainText('100,393,107,865,894');
   await expect(list).toContainText('119');
@@ -60,12 +73,12 @@ test('an asset whose transfers carry no amount says n/a, not zero', async ({ pag
   const seen = watch(page);
   await stubAssets(page);
 
-  await page.goto('/grc20');
+  await page.goto('/defi');
   await settle(page);
 
   // A supply of 0 and 0 holders would read as "this token is empty". It means
   // the arithmetic does not apply, and the row has to distinguish the two.
-  const nftRow = page.locator('#grc20-list tr', { hasText: 'GNFT' });
+  const nftRow = page.locator('#asset-list tr', { hasText: 'GNFT' });
   await expect(nftRow).toContainText('n/a');
   // Its transfers are real and still counted.
   await expect(nftRow).toContainText('201');
@@ -77,11 +90,11 @@ test('an asset that emits a bare symbol admits its realm is unknown', async ({ p
   const seen = watch(page);
   await stubAssets(page);
 
-  await page.goto('/grc20');
+  await page.goto('/defi');
   await settle(page);
 
   // Printing "COVID" under a column headed "realm" would be inventing a path.
-  const row = page.locator('#grc20-list tr', { hasText: 'COVID' });
+  const row = page.locator('#asset-list tr', { hasText: 'COVID' });
   await expect(row).toContainText('unknown');
   // Its supply is still real: only the realm is missing.
   await expect(row).toContainText('615,028,450');
@@ -162,16 +175,16 @@ test('a price never appears without the tier that says what it is worth', async 
   await stubAssets(page);
   await stubPrices(page, PRICES);
 
-  await page.goto('/grc20');
+  await page.goto('/defi');
   await settle(page);
 
-  const gns = page.locator('#grc20-list tr', { hasText: 'GNS' }).first();
+  const gns = page.locator('#asset-list tr', { hasText: 'GNS' }).first();
   await expect(gns).toContainText('$0.0176');
   await expect(gns.locator('.px-tier-market')).toContainText('market');
 
   // The one that matters: a six-figure paper value backed by a $47 pool is not
   // allowed to render the same way a real price does.
-  const covid = page.locator('#grc20-list tr', { hasText: 'COVID' });
+  const covid = page.locator('#asset-list tr', { hasText: 'COVID' });
   await expect(covid.locator('.px-tier-decorative')).toContainText('decorative');
 
   // Every tier badge carries its argument on hover, not just its label.
@@ -187,10 +200,10 @@ test('a token with no pool says no market, which is not zero', async ({ page }) 
   await stubAssets(page);
   await stubPrices(page, PRICES);
 
-  await page.goto('/grc20');
+  await page.goto('/defi');
   await settle(page);
 
-  const row = page.locator('#grc20-list tr', { hasText: 'GNFT' });
+  const row = page.locator('#asset-list tr', { hasText: 'GNFT' });
   await expect(row.locator('.px-tier-none')).toContainText('no market');
   // $0.00 would be a claim about its value. An absence of a market is not one.
   await expect(row).not.toContainText('$0.00');
@@ -203,10 +216,10 @@ test('the page says out loud that no time-weighted price exists on this chain', 
   await stubAssets(page);
   await stubPrices(page, PRICES);
 
-  await page.goto('/grc20');
+  await page.goto('/defi');
   await settle(page);
 
-  const banner = page.locator('#grc20-price-banner');
+  const banner = page.locator('.px-banner');
   await expect(banner).toContainText('No manipulation-resistant price exists');
   await expect(banner).toContainText('5 liquidity pools on this entire chain');
   await expect(banner).toContainText('GNOT at $0.07');
@@ -220,18 +233,125 @@ test('a network with no RPC says why the prices are missing, and stays quiet', a
   await stubAssets(page);
   await stubPrices(page, { network: 'alpha', unavailable: 'no verified RPC endpoint for network alpha' });
 
-  await page.goto('/grc20');
+  await page.goto('/defi');
   await settle(page);
 
   // "This server could not find out" and "this chain has no market" look
   // identical as an empty column and mean opposite things.
-  await expect(page.locator('#grc20-price-banner')).toContainText('no verified RPC endpoint');
-  await expect(page.locator('#grc20-list tr', { hasText: 'GNS' }).first()).not.toContainText('$');
+  await expect(page.locator('.px-banner')).toContainText('no verified RPC endpoint');
+  await expect(page.locator('#asset-list tr', { hasText: 'GNS' }).first()).not.toContainText('$');
 
   // The column is supplementary. It must not put a red line in the console of
   // every page load on a network that has no RPC, which is most of them.
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
   expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);
+});
+
+// --- the section pages -------------------------------------------------------
+//
+// /coins, /grc20 and /nfts are the same list with the kind preset, which is the
+// point: three implementations of one table is how they drifted into three
+// different mental models in the first place.
+
+test('the grc20 page shows fungible tokens and neither the coin nor the nfts', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await page.goto('/grc20');
+  await settle(page);
+
+  const list = page.locator('#asset-list');
+  await expect(list).toContainText('GNS');
+  await expect(list).toContainText('COVID');
+  await expect(list).not.toContainText('GNFT');
+  await expect(list).not.toContainText('GNOT');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
+test('the nfts page shows collections, and says why they have no supply', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await page.goto('/nfts');
+  await settle(page);
+
+  const row = page.locator('#asset-list tr', { hasText: 'GNFT' });
+  await expect(row).toBeVisible();
+  // A 0 would read as "empty". The truth is that the arithmetic does not apply.
+  await expect(row).toContainText('n/a');
+  // Its transfers are real and still counted.
+  await expect(row).toContainText('201');
+  await expect(page.locator('#asset-list')).not.toContainText('GNS');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
+test('the coins page shows the native coin with its locked share', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await page.goto('/coins');
+  await settle(page);
+
+  const view = page.locator('.view.active');
+  await expect(view).toContainText('GNOT');
+  // 83.2% of the supply is locked, which is the one place circulating and fully
+  // diluted genuinely differ on this chain.
+  await expect(view).toContainText('83.2%');
+  await expect(page.locator('#asset-list')).not.toContainText('GNS');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
+test('the native row is marked where its columns are not comparable', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await page.goto('/defi');
+  await settle(page);
+
+  const row = page.locator('#asset-list tr', { hasText: 'GNOT' }).first();
+  // Two markers: holders are swept, transfers are BankMsgSend only. Without
+  // them a reader ranks a sample against a replay and gets a wrong answer that
+  // looks right.
+  const marks = row.locator('.basis-mark');
+  await expect(marks).toHaveCount(2);
+  const hint = await marks.first().getAttribute('title');
+  expect(hint).toContain('SAMPLE');
+  // And the sample size is stated, or the count reads as a chain total.
+  await expect(row).toContainText('4,820');
+
+  // A grc20 row carries no marker: its figures need no qualifying.
+  const gns = page.locator('#asset-list tr', { hasText: 'GNS' }).first();
+  await expect(gns.locator('.basis-mark')).toHaveCount(0);
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
+test('the kind filter narrows the unified list without hiding the total', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await page.goto('/defi');
+  await settle(page);
+
+  await expect(page.locator('#asset-list')).toContainText('GNOT');
+  await page.locator('.asset-filters .filter-chip', { hasText: 'nfts' }).first().click();
+
+  await expect(page.locator('#asset-list')).toContainText('GNFT');
+  await expect(page.locator('#asset-list')).not.toContainText('GNS');
+  // A filter must never silently hide the rest of the chain.
+  await expect(page.locator('.view.active')).toContainText('of 4 assets');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
+test('the export buttons are gone', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await page.goto('/defi');
+  await settle(page);
+
+  await expect(page.locator('.table-export')).toHaveCount(0);
+  await expect(page.locator('.view.active')).not.toContainText('export:');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
 });
 
 // --- the per-asset page ------------------------------------------------------
@@ -288,9 +408,9 @@ test('an asset has its own URL, reached by clicking it in the list', async ({ pa
   const seen = watch(page);
   await stubFactory(page);
 
-  await page.goto('/grc20');
+  await page.goto('/defi');
   await settle(page);
-  await page.locator('#grc20-list a', { hasText: 'AAA' }).first().click();
+  await page.locator('#asset-list a', { hasText: 'AAA' }).first().click();
   await settle(page);
 
   // The URL is the key, not the realm: the realm issues two of these.
