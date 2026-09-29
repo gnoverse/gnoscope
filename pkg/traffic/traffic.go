@@ -229,34 +229,38 @@ func migrateAddColumns(db *sql.DB) error {
 		if _, err := db.Exec(`ALTER TABLE requests ADD COLUMN ` + c.ddl); err != nil {
 			return fmt.Errorf("add column %s: %w", c.name, err)
 		}
-		// Adding page_kind is the moment the meaning of kind='page' changes, so
-		// it is the moment to fix the rows written under the old meaning.
-		//
-		// Before the beacon existed, every non-API URL was classified 'page'
-		// and every one of those rows is a *document* load: the HTML that
-		// bootstraps the app. From here 'page' means a page view the app
-		// reported, which is a different and much larger number, because one
-		// document load carries every in-app navigation that follows it.
-		//
-		// Left alone, the headline figure would be document loads before this
-		// deploy and page views after it, on one continuous chart, with nothing
-		// saying where the meaning changed. That is the failure the schema note
-		// in the deploy checklist is about: "does the schema move" and "does
-		// stored data still mean what it did" are different questions, and this
-		// is a case where the second is yes and the first is no.
-		//
-		// Keyed on page_kind having just been added, so it runs exactly once
-		// and cannot touch a row the beacon wrote: every beacon row sets
-		// page_kind.
-		if c.name == "page_kind" {
-			res, err := db.Exec(`UPDATE requests SET kind = 'document' WHERE kind = 'page'`)
-			if err != nil {
-				return fmt.Errorf("reclassify pre-beacon page rows: %w", err)
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				log.Printf("traffic: reclassified %d pre-beacon rows from page to document", n)
-			}
-		}
+	}
+	return reclassifyPreBeaconPages(db)
+}
+
+// reclassifyPreBeaconPages corrects rows written before kind='page' meant a page
+// view.
+//
+// Before the beacon existed every non-API URL was classified 'page', and every
+// one of those rows is a *document* load: the HTML that bootstraps the app.
+// From the beacon onward 'page' means a page view the app reported, which is a
+// different and much larger number, because one document load carries every
+// in-app navigation that follows it. Left alone the headline figure would be
+// document loads before the change and page views after it, on one continuous
+// chart, with nothing marking where the meaning moved.
+//
+// Keyed on `page_kind = ”` rather than on the migration that added the column.
+// Every beacon row sets page_kind (PageKind never returns empty, "/" is
+// "home"), so the pair kind='page' AND page_kind=” is exactly the pre-beacon
+// signature and nothing else. The first version keyed on "page_kind was just
+// added", which was true here and false anywhere the schema arrived before this
+// code did: deploy the column-adding build first and the fix would skip
+// silently, forever. A correction that depends on deploy order is not a
+// correction.
+//
+// Idempotent and cheap: after the first run it matches no rows.
+func reclassifyPreBeaconPages(db *sql.DB) error {
+	res, err := db.Exec(`UPDATE requests SET kind = 'document' WHERE kind = 'page' AND page_kind = ''`)
+	if err != nil {
+		return fmt.Errorf("reclassify pre-beacon page rows: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("traffic: reclassified %d pre-beacon rows from page to document", n)
 	}
 	return nil
 }
