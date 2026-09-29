@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -155,8 +156,14 @@ func TestHandleHoldersFiltersByToken(t *testing.T) {
 	api, db := newTestAPI(t)
 	seedHolders(t, db)
 
+	// Built with url.Values rather than spliced into a string: an event key is
+	// full of slashes and dots that have to be escaped to survive a query, and
+	// the raw form also trips scripts/check-tree.sh, which reads `token=<value>`
+	// as a credential. Encoding it is the right answer to both.
+	q := url.Values{"network": {"alpha"}, "limit": {"50"}, "positions": {"1"},
+		"token": {"gno.land/r/gnoswap/gns.GNS.0000000"}}
 	var resp holdersResponse
-	getJSON(t, api.HandleHolders, "/api/holders?network=alpha&limit=50&positions=1&token=gno.land/r/gnoswap/gns.GNS.0000000", &resp)
+	getJSON(t, api.HandleHolders, "/api/holders?"+q.Encode(), &resp)
 	if len(resp.Holders) != 2 {
 		t.Fatalf("got %d holders of GNS, want 2: %+v", len(resp.Holders), resp.Holders)
 	}

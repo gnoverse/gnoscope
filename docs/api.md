@@ -1404,6 +1404,26 @@ mint counts as a transfer and does **not** count as volume, because an issuance
 is activity and summing it into value moved makes minting look like trading.
 `supply_series` is where mints belong and already draws them.
 
+### Chain-wide activity
+
+```
+GET /api/assets/activity?network=<id>&days=<n>
+```
+
+Daily movement across every asset, **split by kind**: `native_transfers`,
+`native_volume`, `grc20_transfers`, `grc721_transfers`, `active_assets`.
+
+Split rather than summed, for the same reason the list marks two of its columns:
+the native count is `BankMsgSend` only and the GRC20 count includes
+realm-internal moves, so one "transfers today" line would add two
+differently-defined numbers and present the total as a fact. `active_assets` is
+the one figure here that IS comparable across kinds.
+
+Fungibility is decided over a token's **whole history**, not over the day's rows:
+a collection whose only transfer today happens to carry no amount is still what
+it has always been, and deciding per day would flip a token between series as its
+traffic changed.
+
 ### An NFT holding is a count, not a balance
 
 A GRC721 rides the GRC20 Transfer event and carries **no amount**, so every leg

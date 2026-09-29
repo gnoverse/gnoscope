@@ -1087,6 +1087,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/assets/search", a.HandleAssetSearch)
 	mux.HandleFunc("GET /api/prices", a.HandlePrices)
 	mux.HandleFunc("GET /api/holders", a.HandleHolders)
+	mux.HandleFunc("GET /api/assets/activity", a.HandleAssetActivity)
 	mux.HandleFunc("GET /api/asset/{token...}", a.HandleAsset)
 	mux.HandleFunc("GET /api/contracts/map", a.HandleContractsMap)
 	mux.HandleFunc("GET /api/contracts/edges", a.HandleContractsEdges)

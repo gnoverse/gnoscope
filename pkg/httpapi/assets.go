@@ -223,6 +223,32 @@ func (a *API) HandleAssets(w http.ResponseWriter, r *http.Request) {
 	JSONResponse(w, assetsResponse{Network: network, Assets: rows})
 }
 
+// HandleAssetActivity is the defi home's chart: daily movement across every
+// asset, split by kind.
+//
+// Split rather than summed. The native count is BankMsgSend only and the GRC20
+// count includes realm-internal moves, so one "transfers today" line would add
+// two differently-defined numbers and present the total as a fact. Three series
+// let a reader see which is which, which is the same reason the list marks the
+// two columns rather than blending them.
+func (a *API) HandleAssetActivity(w http.ResponseWriter, r *http.Request) {
+	network := a.singleNetwork(r)
+	if network == "" {
+		jsonError(w, "no network configured", 404)
+		return
+	}
+	days := 90
+	if v, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && v > 0 && v <= 365 {
+		days = v
+	}
+	points, err := a.db.AssetActivityOverTime(network, days)
+	if err != nil {
+		jsonError(w, err.Error(), 500)
+		return
+	}
+	JSONResponse(w, map[string]any{"network": network, "days": days, "points": points})
+}
+
 // HandleAssetSearch matches assets by their event key, for the search box.
 //
 // Separate from /api/search rather than folded into it: that endpoint answers

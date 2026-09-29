@@ -337,3 +337,73 @@ func TestAllPositionsKeepsNFTHoldings(t *testing.T) {
 		t.Errorf("fungible position = %+v, want 900 and fungible=true", tok)
 	}
 }
+
+// The defi home's chart. Its one judgement call is that fungibility is a
+// property of the TOKEN, decided over its whole history, not of the day's rows:
+// a collection whose only transfer today happens to be amountless is still
+// whatever it has always been, and deciding per day would flip a token between
+// series as its traffic changed.
+func TestAssetActivityOverTime(t *testing.T) {
+	db := NewTestDB(t)
+	now := time.Now().UTC()
+	d1 := now.AddDate(0, 0, -2).Format(time.RFC3339)
+	d2 := now.AddDate(0, 0, -1).Format(time.RFC3339)
+
+	if err := db.InsertBankSend("testnet", "b1", 1, d1, "g1a", "g1b", "1000ugnot", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.InsertBankSend("testnet", "b2", 2, d1, "g1b", "g1a", "40ugnot", false); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := []TokenTransfer{
+		// A fungible token: one amountless leg on day 2 must NOT reclassify it.
+		{Token: "gno.land/r/demo/tok.TOK.0000000", From: "", To: "g1a", Value: 500, TxHash: "t1", BlockHeight: 3, BlockTime: d1},
+		{Token: "gno.land/r/demo/tok.TOK.0000000", From: "g1a", To: "g1b", Value: 0, TxHash: "t2", BlockHeight: 4, BlockTime: d2},
+		// A collection: amountless throughout.
+		{Token: "gno.land/r/demo/pics.PIC.0000000", From: "", To: "g1a", Value: 0, TxHash: "n1", BlockHeight: 5, BlockTime: d2},
+	}
+	for i, r := range rows {
+		if err := db.InsertTokenTransfer("testnet", r.TxHash, i, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pts, err := db.AssetActivityOverTime("testnet", 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 2 {
+		t.Fatalf("got %d days, want 2: %+v", len(pts), pts)
+	}
+	byDay := map[string]AssetActivityPoint{}
+	for _, p := range pts {
+		byDay[p.Time] = p
+	}
+	day1 := byDay[now.AddDate(0, 0, -2).Format("2006-01-02")]
+	day2 := byDay[now.AddDate(0, 0, -1).Format("2006-01-02")]
+
+	if day1.NativeTransfers != 1 || day1.NativeVolume != 1000 {
+		t.Errorf("day1 native = %d/%d, want 1/1000: the failed send must stay out", day1.NativeTransfers, day1.NativeVolume)
+	}
+	if day1.GRC20Transfers != 1 || day1.GRC721Transfers != 0 {
+		t.Errorf("day1 token split = %d/%d, want 1/0", day1.GRC20Transfers, day1.GRC721Transfers)
+	}
+	// The whole point: TOK's amountless leg on day 2 still counts as grc20.
+	if day2.GRC20Transfers != 1 {
+		t.Errorf("day2 grc20 = %d, want 1: a fungible token with one amountless transfer is still fungible", day2.GRC20Transfers)
+	}
+	if day2.GRC721Transfers != 1 {
+		t.Errorf("day2 grc721 = %d, want 1", day2.GRC721Transfers)
+	}
+	// Day 1: TOK plus the native coin. Day 2: TOK and PIC, no native.
+	if day1.ActiveAssets != 2 {
+		t.Errorf("day1 active = %d, want 2 (TOK + native)", day1.ActiveAssets)
+	}
+	if day2.ActiveAssets != 2 {
+		t.Errorf("day2 active = %d, want 2 (TOK + PIC)", day2.ActiveAssets)
+	}
+	if pts[0].Time > pts[1].Time {
+		t.Error("points must be oldest-first")
+	}
+}

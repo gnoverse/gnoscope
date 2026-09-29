@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"sort"
 	"time"
 )
 
@@ -278,4 +279,123 @@ func (d *DB) TokenFlowOverTime(network, token string, days int) ([]TokenFlowPoin
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// AssetActivityPoint is one day of movement across every asset, split by kind.
+//
+// Split rather than summed, because the three counts are not the same
+// measurement: the native one is BankMsgSend only and the GRC20 one includes
+// realm-internal moves, so a single "transfers today" line would add two
+// differently-defined numbers and present the total as a fact. Drawn as three
+// series, a reader can see which is which.
+type AssetActivityPoint struct {
+	Time string `json:"time"`
+	// NativeTransfers and NativeVolume come from bank_sends.
+	NativeTransfers int   `json:"native_transfers"`
+	NativeVolume    int64 `json:"native_volume"`
+	// GRC20Transfers and GRC721Transfers come from token_transfers, separated
+	// by whether the day's rows carried an amount at all.
+	GRC20Transfers  int `json:"grc20_transfers"`
+	GRC721Transfers int `json:"grc721_transfers"`
+	// ActiveAssets is how many distinct assets moved that day, which is the one
+	// number on this chart that IS comparable across kinds.
+	ActiveAssets int `json:"active_assets"`
+}
+
+// AssetActivityOverTime is the defi home's chart: daily movement across the
+// whole chain, by kind.
+//
+// Two queries rather than a union, because the two ledgers live in different
+// tables with different columns and different meanings for an empty address.
+// Merged by day in Go, which also lets a day that exists in one and not the
+// other come back with a zero rather than being absent from the series.
+func (d *DB) AssetActivityOverTime(network string, days int) ([]AssetActivityPoint, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	cutoff := ""
+	if days > 0 {
+		cutoff = time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
+	}
+	byDay := map[string]*AssetActivityPoint{}
+	at := func(day string) *AssetActivityPoint {
+		p, ok := byDay[day]
+		if !ok {
+			p = &AssetActivityPoint{Time: day}
+			byDay[day] = p
+		}
+		return p
+	}
+
+	nat, err := d.db.Query(`
+		SELECT substr(block_time, 1, 10) AS day, COUNT(*), COALESCE(SUM(ugnot_amount), 0)
+		  FROM bank_sends
+		 WHERE network = ? AND success = 1
+		   AND block_time <> '' AND substr(block_time, 1, 10) >= ?
+		 GROUP BY day`, network, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	for nat.Next() {
+		var day string
+		var n int
+		var vol int64
+		if err := nat.Scan(&day, &n, &vol); err != nil {
+			nat.Close()
+			return nil, err
+		}
+		p := at(day)
+		p.NativeTransfers, p.NativeVolume = n, vol
+	}
+	nat.Close()
+	if err := nat.Err(); err != nil {
+		return nil, err
+	}
+
+	// A token is non-fungible when none of its transfers ever carried an
+	// amount, which is a property of the TOKEN and not of the day: a
+	// collection whose only transfer today happens to be amountless is still
+	// whatever it has always been. So fungibility is decided over the token's
+	// whole history and joined back, rather than read off the day's rows.
+	tok, err := d.db.Query(`
+		WITH kinds AS (
+			SELECT token, MAX(value) > 0 AS fungible
+			  FROM token_transfers WHERE network = ?1 GROUP BY token
+		)
+		SELECT substr(t.block_time, 1, 10) AS day,
+		       COALESCE(SUM(CASE WHEN k.fungible THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN k.fungible THEN 0 ELSE 1 END), 0),
+		       COUNT(DISTINCT t.token)
+		  FROM token_transfers t JOIN kinds k ON k.token = t.token
+		 WHERE t.network = ?1
+		   AND t.block_time <> '' AND substr(t.block_time, 1, 10) >= ?2
+		 GROUP BY day`, network, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	for tok.Next() {
+		var day string
+		var fung, nonFung, active int
+		if err := tok.Scan(&day, &fung, &nonFung, &active); err != nil {
+			tok.Close()
+			return nil, err
+		}
+		p := at(day)
+		p.GRC20Transfers, p.GRC721Transfers, p.ActiveAssets = fung, nonFung, active
+	}
+	tok.Close()
+	if err := tok.Err(); err != nil {
+		return nil, err
+	}
+
+	// The native coin counts as an active asset on any day it moved.
+	out := make([]AssetActivityPoint, 0, len(byDay))
+	for _, p := range byDay {
+		if p.NativeTransfers > 0 {
+			p.ActiveAssets++
+		}
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Time < out[j].Time })
+	return out, nil
 }
