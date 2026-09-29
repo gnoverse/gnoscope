@@ -6812,7 +6812,9 @@ async function assetPriceSection(container, token) {
       : 'NOT confirmed. This token exposes no Decimals() and the registry has no entry, so 6 was assumed. If the real figure differs, the per-token price above is wrong by a factor of ten per digit. The per-base-unit figure is unaffected.');
   if (q.fdv_usd > 0) {
     factRow('supply x price', fmtUSD(q.fdv_usd),
-      'Deliberately not labelled "market cap". It is the whole supply valued at a price that only a tiny fraction of it could actually be sold at, and the supply half is itself replayed from the transfer events this indexer walked.');
+      'Deliberately not labelled "market cap". It is the whole supply valued at a price that only a tiny fraction of it could actually be sold at.\n\n'
+      + 'The supply half is read from the token\u2019s own realm (TotalSupply()), not replayed from the transfer ledger the rest of this page shows: that one starts mid-chain and is a floor. '
+      + 'A token whose realm will not answer gets no figure here at all.');
   }
   if (q.route && q.route.length) {
     const r = el('span', {}, q.route.map(h => shortTok(h.from) + ' / ' + shortTok(h.to) + ' @ ' + (h.fee / 10000) + '%  (' + fmtUSD(h.tvl_usd) + ' deep)').join('  then  '));
