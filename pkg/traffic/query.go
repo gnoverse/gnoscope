@@ -128,10 +128,19 @@ func (q Query) where() (string, []any) {
 		cond = append(cond, "kind = ?")
 		args = append(args, q.Kind)
 	}
+	// The warmer is never a reader. It is this server replaying request paths
+	// against itself, so counting it does not overstate traffic slightly, it
+	// invents it: measured on val1 the first hour, 117 recorded requests against
+	// 25 that Caddy saw cross the network. The ratio gets worse the quieter the
+	// site is. Excluded unconditionally, with no flag to bring it back, because
+	// there is no question about reader behaviour it belongs in. What the warmer
+	// costs is /api/cache/stats' job.
+	cond = append(cond, "client <> 'internal'")
 	if !q.WithBots {
-		// Excluded by default. A crawler is real traffic and real cost, so it
-		// is stored; it is not a reader, so it does not get to shape "what are
-		// people doing" unless somebody asks for it.
+		// Excluded by default, but stored, and ?bots=1 brings it back. A
+		// crawler is real traffic and real cost, so it is recorded; it is not a
+		// reader, so it does not get to shape "what are people doing" unless
+		// somebody asks for it.
 		cond = append(cond, "client <> 'bot'")
 	}
 	return strings.Join(cond, " AND "), args
