@@ -40,12 +40,85 @@ func ParseWindow(s string) Window {
 
 // Query is one dashboard request.
 type Query struct {
-	Window   Window
-	Network  string // "" for every network
-	Kind     string // "" for every kind
-	WithBots bool   // false drops self-declared crawlers, which is the default
-	Limit    int
-	Now      time.Time
+	Window  Window
+	Network string // "" for every network
+	Kind    string // "" for every kind
+	// Host filters to the name the reader asked for. "" is every host, which
+	// is not the same as the canonical one: this server answers to its www
+	// form and to whatever redirects at it, and a page that means "this site"
+	// has to say which site.
+	Host string
+	// Who selects a class of client. See parseWho for the vocabulary and for
+	// why "humans" is the default rather than "all".
+	Who Who
+	// ErrorsOnly narrows to 4xx and 5xx, which is the question "what is broken"
+	// rather than "what is being read".
+	ErrorsOnly bool
+	Limit      int
+	Now        time.Time
+}
+
+// Who is the client class a report is about.
+//
+// This replaced a single include-crawlers toggle, which could only say "with"
+// or "without" and could not answer either of the two questions people
+// actually have: how much of this is machines, and which machines.
+type Who string
+
+const (
+	// WhoNonCrawlers is the default, and it is deliberately not WhoPeople.
+	//
+	// A crawler is real load and is not a reader, and on this instance crawlers
+	// outnumbered browsers within a day of the log existing, so leaving them in
+	// makes the page answer "what are robots doing" while looking like it
+	// answers "what is being used". But narrowing all the way to browsers would
+	// empty the MCP panel permanently, because a tool call is never a browser,
+	// and agent traffic is the half of this explorer's use that is growing.
+	// Everything-but-crawlers keeps both.
+	WhoNonCrawlers Who = "noncrawlers"
+	// WhoAll includes every class, which is the right view for capacity and
+	// cost questions and the wrong one for reader behaviour.
+	WhoAll Who = "all"
+	// WhoCrawlers is self-declared crawlers only: what is being indexed.
+	WhoCrawlers Who = "crawlers"
+	// WhoPeople is browsers only: the narrowest reading of "readers".
+	WhoPeople Who = "people"
+	// WhoAgents is scripts, SDKs and MCP clients: deliberate programmatic use,
+	// which is a different thing from being indexed.
+	WhoAgents Who = "agents"
+	// WhoUnknown declared a user agent matching nothing known, or none at all.
+	// Worth reaching directly: it is where a new kind of client shows up first,
+	// and where a misclassification hides.
+	WhoUnknown Who = "unknown"
+)
+
+// ParseWho resolves a who key, falling back to everything but crawlers.
+func ParseWho(s string) Who {
+	switch Who(s) {
+	case WhoAll, WhoCrawlers, WhoPeople, WhoAgents, WhoUnknown, WhoNonCrawlers:
+		return Who(s)
+	}
+	return WhoNonCrawlers
+}
+
+// clause turns a Who into its SQL. The warmer is absent from every branch,
+// including WhoAll: it is this server talking to itself and belongs in no view
+// of who is using the site.
+func (w Who) clause() string {
+	switch w {
+	case WhoAll:
+		return ""
+	case WhoCrawlers:
+		return "client = 'bot'"
+	case WhoPeople:
+		return "client = 'browser'"
+	case WhoAgents:
+		return "client = 'agent'"
+	case WhoUnknown:
+		return "client = 'unknown'"
+	default: // WhoNonCrawlers
+		return "client <> 'bot'"
+	}
 }
 
 // Count is one labelled number, which is most of what the page draws.
@@ -91,24 +164,34 @@ type Totals struct {
 
 // Report is the whole page in one response.
 type Report struct {
-	Window    string   `json:"window"`
-	Since     string   `json:"since"`
-	Network   string   `json:"network,omitempty"`
-	Kind      string   `json:"kind,omitempty"`
-	WithBots  bool     `json:"with_bots"`
-	Totals    Totals   `json:"totals"`
-	Series    []Bucket `json:"series"`
-	TopPages  []Count  `json:"top_pages"`
-	TopRealms []Count  `json:"top_realms"`
-	TopAPI    []Count  `json:"top_api"`
-	Tools     []Count  `json:"tools"`
-	Networks  []Count  `json:"networks"`
-	Clients   []Count  `json:"clients"`
-	Referers  []Count  `json:"referers"`
-	Statuses  []Count  `json:"statuses"`
-	Cache     []Count  `json:"cache"`
-	Slowest   []Timing `json:"slowest"`
-	NotFound  []Count  `json:"not_found"`
+	Window     string   `json:"window"`
+	Since      string   `json:"since"`
+	Network    string   `json:"network,omitempty"`
+	Kind       string   `json:"kind,omitempty"`
+	Host       string   `json:"host,omitempty"`
+	Who        string   `json:"who"`
+	ErrorsOnly bool     `json:"errors_only,omitempty"`
+	Totals     Totals   `json:"totals"`
+	Series     []Bucket `json:"series"`
+	TopPages   []Count  `json:"top_pages"`
+	TopRealms  []Count  `json:"top_realms"`
+	TopAPI     []Count  `json:"top_api"`
+	Tools      []Count  `json:"tools"`
+	Networks   []Count  `json:"networks"`
+	Clients    []Count  `json:"clients"`
+	Referers   []Count  `json:"referers"`
+	Statuses   []Count  `json:"statuses"`
+	Cache      []Count  `json:"cache"`
+	Slowest    []Timing `json:"slowest"`
+	NotFound   []Count  `json:"not_found"`
+	// Hosts is the name readers asked for. Always computed across every host,
+	// ignoring the Host filter, so the panel can act as the filter's own
+	// control: it has to show the options to let anyone pick one.
+	Hosts []Count `json:"hosts"`
+	// Unrecorded counts rows written before the host column existed. Non-zero
+	// means a host filter is hiding real traffic whose host nobody can know,
+	// and the page says so rather than quietly shrinking.
+	Unrecorded int64 `json:"unrecorded_host"`
 	// Empty says the window holds no rows, so the page can say "no data yet"
 	// rather than drawing a dozen convincingly empty charts.
 	Empty bool `json:"empty"`
@@ -136,12 +219,15 @@ func (q Query) where() (string, []any) {
 	// there is no question about reader behaviour it belongs in. What the warmer
 	// costs is /api/cache/stats' job.
 	cond = append(cond, "client <> 'internal'")
-	if !q.WithBots {
-		// Excluded by default, but stored, and ?bots=1 brings it back. A
-		// crawler is real traffic and real cost, so it is recorded; it is not a
-		// reader, so it does not get to shape "what are people doing" unless
-		// somebody asks for it.
-		cond = append(cond, "client <> 'bot'")
+	if q.Host != "" {
+		cond = append(cond, "host = ?")
+		args = append(args, q.Host)
+	}
+	if c := q.Who.clause(); c != "" {
+		cond = append(cond, c)
+	}
+	if q.ErrorsOnly {
+		cond = append(cond, "status >= 400")
 	}
 	return strings.Join(cond, " AND "), args
 }
@@ -165,11 +251,13 @@ func (s *Store) Report(q Query) (*Report, error) {
 	lim := q.limit()
 
 	out := &Report{
-		Window:   q.Window.Key,
-		Since:    q.Now.UTC().Add(-q.Window.Duration).Format(time.RFC3339),
-		Network:  q.Network,
-		Kind:     q.Kind,
-		WithBots: q.WithBots,
+		Window:     q.Window.Key,
+		Since:      q.Now.UTC().Add(-q.Window.Duration).Format(time.RFC3339),
+		Network:    q.Network,
+		Kind:       q.Kind,
+		Host:       q.Host,
+		Who:        string(q.Who),
+		ErrorsOnly: q.ErrorsOnly,
 	}
 
 	row := s.db.QueryRow(`SELECT
@@ -234,6 +322,20 @@ func (s *Store) Report(q Query) (*Report, error) {
 
 	if out.Slowest, err = s.slowest(w, args, lim); err != nil {
 		return nil, err
+	}
+
+	// Hosts, and the pre-migration bucket, are computed with the host filter
+	// lifted. A panel that only ever showed the host you already selected
+	// could not tell you a second one existed.
+	hq := q
+	hq.Host = ""
+	hw, hargs := hq.where()
+	if out.Hosts, err = s.topBy(hw, hargs, "CASE WHEN host = '' THEN '(not recorded)' ELSE host END", "", lim, true); err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM requests WHERE `+hw+` AND host = ''`, hargs...).
+		Scan(&out.Unrecorded); err != nil {
+		return nil, fmt.Errorf("unrecorded hosts: %w", err)
 	}
 	return out, nil
 }
