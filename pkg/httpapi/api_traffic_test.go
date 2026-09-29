@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -250,5 +253,47 @@ func TestAccessLogSeparatesSSEStreams(t *testing.T) {
 		if tm.Route == "/api/live" {
 			t.Errorf("/api/live is in the slowest panel: %+v", tm)
 		}
+	}
+}
+
+// A server error used to reach the reader and nobody else. These two tests
+// cover the two halves: the status line, which fires with no store configured,
+// and the reason, which only jsonError knows.
+func TestServerErrorsReachTheLog(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/boom", func(w http.ResponseWriter, r *http.Request) {
+		jsonError(w, "the indexer said no", http.StatusInternalServerError)
+	})
+	mux.HandleFunc("GET /api/fine", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("{}"))
+	})
+	mux.HandleFunc("GET /api/nope", func(w http.ResponseWriter, r *http.Request) {
+		jsonError(w, "no such realm", http.StatusNotFound)
+	})
+
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+
+	// Deliberately with no store: the 5xx line must not depend on -traffic-db.
+	h := WithAccessLog(nil, mux, "", mux)
+	fire(t, h, "GET", "/api/boom", browserUA)
+	fire(t, h, "GET", "/api/fine", browserUA)
+	fire(t, h, "GET", "/api/nope", browserUA)
+
+	out := buf.String()
+	if !strings.Contains(out, "500") || !strings.Contains(out, "/api/boom") {
+		t.Errorf("the 500 left no status line in the log; got:\n%s", out)
+	}
+	if !strings.Contains(out, "the indexer said no") {
+		t.Errorf("the 500 left no reason in the log; got:\n%s", out)
+	}
+	if strings.Contains(out, "/api/fine") {
+		t.Errorf("a 200 was logged, which buries real failures; got:\n%s", out)
+	}
+	if strings.Contains(out, "no such realm") {
+		t.Errorf("a 404 reason was logged; a bad request is the reader's business, "+
+			"and logging it buries 5xx under scanner traffic; got:\n%s", out)
 	}
 }

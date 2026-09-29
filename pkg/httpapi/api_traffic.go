@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -99,10 +100,11 @@ func (w *logWriter) Flush() {
 //
 // selfHost is this deployment's own hostname, so a link from one page of the
 // app to the next is not recorded as an inbound referer.
+// It also logs every 5xx to stderr whether or not a store is configured, which
+// is the one line that turns "the site was broken for an hour" into a timestamp
+// and a route. Three call sites answer 500 through http.Error rather than
+// jsonError and carry no message; this catches those too, by status.
 func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, next http.Handler) http.Handler {
-	if store == nil {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		slot := &noteSlot{}
@@ -110,6 +112,18 @@ func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, ne
 
 		lw := &logWriter{ResponseWriter: w}
 		next.ServeHTTP(lw, r)
+
+		status := lw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		durMS := float64(time.Since(start).Microseconds()) / 1000
+		if status >= 500 {
+			log.Printf("http: %d %s %s (%.0fms)", status, r.Method, r.URL.Path, durMS)
+		}
+		if store == nil {
+			return
+		}
 
 		// Resolved after serving rather than before, so a request that never
 		// reached the mux (rejected network, rate limit) costs no lookup.
@@ -136,10 +150,6 @@ func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, ne
 
 		ua := r.Header.Get("User-Agent")
 		client := traffic.ClientClass(ua)
-		status := lw.status
-		if status == 0 {
-			status = http.StatusOK
-		}
 
 		store.Record(traffic.Record{
 			At:      start,
@@ -152,7 +162,7 @@ func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, ne
 			Tool:    slot.tool,
 			Status:  status,
 			Bytes:   lw.bytes,
-			DurMS:   float64(time.Since(start).Microseconds()) / 1000,
+			DurMS:   durMS,
 			AppMS:   appDurationMS(lw.Header().Get("Server-Timing")),
 			Cache:   lw.Header().Get("X-Cache"),
 			RefHost: traffic.RefererHost(r.Header.Get("Referer"), selfHost),

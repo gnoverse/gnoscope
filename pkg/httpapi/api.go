@@ -162,6 +162,18 @@ func emptyNotNull(data any) any {
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
+	// A server error used to reach the reader and nobody else. Nine call sites
+	// answer 500 and not one of them logged, so the only account of a failure
+	// was in a response body that had already been sent to the person least
+	// able to act on it. WithAccessLog records *that* a route 500s; this is the
+	// only place that knows *why*.
+	//
+	// 5xx only: a 400 or a 404 is the request being wrong, which is the
+	// reader's business and not an operator's, and logging those would bury the
+	// real failures under scanner traffic.
+	if code >= 500 {
+		log.Printf("http %d: %s", code, msg)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
