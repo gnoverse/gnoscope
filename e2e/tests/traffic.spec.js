@@ -90,6 +90,70 @@ test.describe('/traffic', () => {
     expect(seen).toContain('24h');
   });
 
+  test('who is four rows of filters, and each one narrows', async ({ page }) => {
+    // The predecessor was a single include-crawlers toggle. It could answer
+    // "with or without bots" and neither of the questions people actually
+    // have: how much of this is machines, and which machines.
+    await open(page, '/traffic');
+    const content = page.locator('#traffic-content');
+
+    const labels = await content.locator('.section-title').first().textContent();
+    expect(labels).toBeTruthy();
+
+    // Every filter row is present and independent.
+    const rows = await content.locator('> div').first().innerText();
+    for (const want of ['when', 'who', 'what', 'status', 'host']) {
+      expect(rows).toContain(want);
+    }
+    for (const want of ['non-crawlers', 'all', 'crawlers', 'people', 'agents', 'unknown']) {
+      expect(rows).toContain(want);
+    }
+
+    // The default view has rows, because the suite's own browsing produced them.
+    expect(await content.locator('.stat').count()).toBeGreaterThan(0);
+
+    // Narrowing to crawlers empties it, and that is the assertion. Playwright
+    // drives a real Chrome user agent, so every request this suite makes is
+    // classified `browser` and the fixture contains no crawler at all. A pill
+    // that rendered and filtered nothing would leave the stats standing.
+    const sent = [];
+    page.on('request', r => {
+      const u = r.url();
+      if (u.includes('/api/traffic?')) sent.push(new URL(u).searchParams.get('who'));
+    });
+    await content.locator('button', { hasText: /^crawlers$/ }).click();
+    await settle(page);
+    expect(sent).toContain('crawlers');
+
+    // And it says which kind of nothing. The page distinguishes "your filters
+    // match nothing" from "the log is off", because those send someone to look
+    // at two completely different things.
+    await expect(content).toContainText('nothing matches these filters');
+    await expect(content).not.toContainText('traffic is not being recorded');
+    expect(await content.locator('.stat').count()).toBe(0);
+  });
+
+  test('the host filter defaults to this host and can be lifted', async ({ page }) => {
+    const seen = [];
+    page.on('request', r => {
+      const u = r.url();
+      if (u.includes('/api/traffic?')) seen.push(new URL(u).searchParams.get('host'));
+    });
+
+    await open(page, '/traffic');
+    // Served from somewhere, so the first request pins that name rather than
+    // silently blending every name the server answers to.
+    expect(seen[0]).toBeTruthy();
+
+    await page.locator('#traffic-content button', { hasText: 'every host' }).click();
+    await settle(page);
+    expect(seen[seen.length - 1]).toBeNull();
+
+    // And the hosts panel is drawn, since it is the filter's own control.
+    const titles = (await page.locator('#traffic-content .section-title').allInnerTexts()).map(t => t.toLowerCase());
+    expect(titles).toContain('hosts');
+  });
+
   test('the network selector does not filter this page', async ({ page }) => {
     // Network is a facet here, one of the panels, not a filter. Filtering by it
     // as well silently deletes whole categories: an MCP tool call carries its

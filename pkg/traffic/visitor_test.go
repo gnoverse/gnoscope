@@ -59,10 +59,16 @@ func TestVisitorEmptyWithoutIP(t *testing.T) {
 // The property this whole design rests on: nothing stored can be turned back
 // into an address. The only check available from outside is that the id does
 // not contain the input, which is what a naive implementation would leak.
+//
+// The needles are deliberately non-hex. An earlier version of this test also
+// looked for "203" and "113" from the address, and failed roughly one run in a
+// hundred because a 16-character hex string contains a given 3-digit run by
+// chance: 958ccb51138e7cc4 holds "113". A test that fails at random teaches
+// people to re-run it, which is worse than not having it.
 func TestVisitorDoesNotEmbedInput(t *testing.T) {
 	s := newSaltRotator()
 	id := s.visitor("203.0.113.7", "Mozilla/5.0 (Macintosh)", time.Now())
-	for _, needle := range []string{"203", "113", "Mozilla", "Macintosh"} {
+	for _, needle := range []string{"Mozilla", "Macintosh"} {
 		if len(id) > 0 && contains(id, needle) {
 			t.Errorf("stored id %q contains %q from the input", id, needle)
 		}

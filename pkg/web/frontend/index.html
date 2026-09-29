@@ -10334,21 +10334,82 @@ function appsFooter(data) {
 // serve the same realms, and none of that is visible here.
 
 let _trafficWindow = '7d';
-let _trafficBots = false;
+// Defaults chosen so the first view answers "what are people doing on this
+// site", which is the question the page exists for. Everything else is one
+// click away.
+//
+// _trafficHost starts as the name this page was served from, not as "every
+// host": gnoscope answers to its canonical name, its www form and whatever
+// redirects at it, and mixing them silently was the original complaint.
+// location.hostname needs no configuration and cannot drift from reality.
+let _trafficHost = location.hostname;
+let _trafficWho = 'noncrawlers';
+let _trafficKind = '';
+let _trafficErrors = false;
 
 async function loadTraffic() {
   const container = clear('traffic-content');
   skeletonBlock(container);
 
-  const controls = el('div', { style: { display: 'flex', gap: '4px', alignItems: 'center', margin: '0 0 12px', flexWrap: 'wrap' } });
-  for (const w of ['24h', '7d', '30d', '90d']) {
-    const btn = el('button', { className: 'pager-btn' + (_trafficWindow === w ? ' active' : ''), style: { padding: '3px 10px', fontSize: '12px' } }, w);
-    btn.addEventListener('click', () => { _trafficWindow = w; loadTraffic(); });
-    controls.appendChild(btn);
-  }
-  const botBtn = el('button', { className: 'pager-btn' + (_trafficBots ? ' active' : ''), style: { padding: '3px 10px', fontSize: '12px', marginLeft: '8px' } }, 'include crawlers');
-  botBtn.addEventListener('click', () => { _trafficBots = !_trafficBots; loadTraffic(); });
-  controls.appendChild(botBtn);
+  const controls = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', margin: '0 0 14px' } });
+
+  // One row per dimension, each row labelled. A single flat strip of pills
+  // made "24h" and "crawlers" look like alternatives to each other, which they
+  // are not: every row is an independent filter and they compose.
+  const row = (label, options, current, onPick) => {
+    const r = el('div', { style: { display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' } });
+    r.appendChild(el('span', { className: 'dim', style: { fontSize: '11px', width: '52px', flex: '0 0 auto' } }, label));
+    for (const [value, text, title] of options) {
+      const btn = el('button', {
+        className: 'pager-btn' + (current === value ? ' active' : ''),
+        style: { padding: '3px 10px', fontSize: '12px' },
+      }, text);
+      if (title) btn.setAttribute('title', title);
+      btn.addEventListener('click', () => { onPick(value); loadTraffic(); });
+      r.appendChild(btn);
+    }
+    controls.appendChild(r);
+    return r;
+  };
+
+  row('when', [['24h', '24h'], ['7d', '7d'], ['30d', '30d'], ['90d', '90d']],
+    _trafficWindow, v => { _trafficWindow = v; });
+
+  row('who', [
+    ['noncrawlers', 'non-crawlers', 'everything except self-declared bots. the default: crawlers outnumber browsers here, and narrowing to browsers alone would empty the mcp panel'],
+    ['all', 'all', 'every class except this server\u2019s own cache warmer, which is never counted in any view'],
+    ['crawlers', 'crawlers', 'self-declared bots and indexers: what is being indexed'],
+    ['people', 'people', 'browsers only'],
+    ['agents', 'agents', 'scripts, SDKs and MCP clients: deliberate programmatic use'],
+    ['unknown', 'unknown', 'a user agent matching nothing known, or none at all'],
+  ], _trafficWho, v => { _trafficWho = v; });
+
+  row('what', [
+    ['', 'everything'],
+    ['page', 'pages'],
+    ['api', 'api'],
+    ['mcp', 'mcp'],
+    ['badge', 'badges'],
+    ['asset', 'assets'],
+  ], _trafficKind, v => { _trafficKind = v; });
+
+  const statusRow = row('status', [[false, 'all'], [true, 'errors only']],
+    _trafficErrors, v => { _trafficErrors = v; });
+  // The host control lives on the status row rather than getting its own,
+  // because most deployments answer to exactly one name and an extra row of
+  // one button would be noise.
+  statusRow.appendChild(el('span', { className: 'dim', style: { fontSize: '11px', margin: '0 4px 0 12px' } }, 'host'));
+  const hostBtn = (value, text, title) => {
+    const b = el('button', {
+      className: 'pager-btn' + (_trafficHost === value ? ' active' : ''),
+      style: { padding: '3px 10px', fontSize: '12px' },
+    }, text);
+    if (title) b.setAttribute('title', title);
+    b.addEventListener('click', () => { _trafficHost = value; loadTraffic(); });
+    return b;
+  };
+  statusRow.appendChild(hostBtn(location.hostname, location.hostname, 'only what was asked of this name'));
+  statusRow.appendChild(hostBtn('', 'every host', 'every name this server answers to, including its www form and any redirect'));
 
   let rep;
   try {
@@ -10360,7 +10421,11 @@ async function loadTraffic() {
     // MCP tool call is the clearest case, since the network travels inside the
     // JSON-RPC body: measured locally, selecting a network took mcp from 4 to
     // 0 and total requests from 53 to 42, with nothing on the page saying so.
-    rep = await api('traffic?window=' + _trafficWindow + (_trafficBots ? '&bots=1' : ''), 'all');
+    const qs = new URLSearchParams({ window: _trafficWindow, who: _trafficWho });
+    if (_trafficHost) qs.set('host', _trafficHost);
+    if (_trafficKind) qs.set('kind', _trafficKind);
+    if (_trafficErrors) qs.set('errors', '1');
+    rep = await api('traffic?' + qs.toString(), 'all');
   } catch (e) {
     container.textContent = '';
     container.appendChild(controls);
@@ -10372,10 +10437,16 @@ async function loadTraffic() {
   container.appendChild(controls);
 
   if (rep.empty) {
-    // Said in words rather than drawn as a dozen convincing zeroes.
+    // Said in words rather than drawn as a dozen convincing zeroes. With
+    // filters on the page, "no rows" now has two very different causes and
+    // guessing wrong sends someone to look at the wrong thing, so name both.
+    const filtered = _trafficHost || _trafficKind || _trafficErrors || _trafficWho !== 'all';
     container.appendChild(el('div', { className: 'section-sub' },
-      'nothing recorded in this window yet. the request log is off unless the server was started '
-      + 'with -traffic-db, and a fresh one starts empty.'));
+      filtered
+        ? 'nothing matches these filters in this window. widen them, or set who to all and host to '
+          + 'every host, before concluding the log is empty.'
+        : 'nothing recorded in this window yet. the request log is off unless the server was started '
+          + 'with -traffic-db, and a fresh one starts empty.'));
     return;
   }
 
@@ -10401,6 +10472,17 @@ async function loadTraffic() {
   cards.appendChild(stat('sent', fmtBytesish(t.bytes)));
   container.appendChild(cards);
 
+  if (_trafficHost && rep.unrecorded_host > 0) {
+    // A host filter silently drops these, and they are real traffic. Better to
+    // say so than to let the totals quietly shrink by an unexplained amount.
+    container.appendChild(el('div', {
+      className: 'section-sub',
+      style: { marginBottom: '10px' },
+    }, fmtNum(rep.unrecorded_host) + ' requests in this window were recorded before the host was '
+      + 'stored, so no host filter can include them. "every host" shows them under "(not recorded)". '
+      + 'the bucket drains as retention advances.'));
+  }
+
   container.appendChild(trafficSeriesSection(rep));
 
   const panels = [
@@ -10414,6 +10496,7 @@ async function loadTraffic() {
     ['statuses', null, rep.statuses, p => p, null],
     ['cache', 'HIT served from cache, MISS computed, STALE served while refreshing behind the reader', rep.cache, p => p, null],
     ['not found', 'what people ask for that this explorer does not serve', rep.not_found, p => p, null],
+    ['hosts', 'which name readers asked for. always across every host, so this panel can act as the host filter\u2019s own control', rep.hosts, p => p, null],
   ];
   const grid = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' } });
   for (const [title, sub, rows, label, href] of panels) {
@@ -10426,9 +10509,10 @@ async function loadTraffic() {
 
   container.appendChild(el('div', { className: 'section-sub', style: { marginTop: '24px' } },
     'recorded by this server, from requests it served. no address and no user-agent string is kept: '
-    + 'the visitor id is a keyed hash whose key is regenerated daily and never written down. crawlers '
-    + 'are stored and hidden by default; the cache warmer is never counted, because it is this server '
-    + 'replaying paths against itself.'));
+    + 'the visitor id is a keyed hash whose key is regenerated daily and never written down. every '
+    + 'class of client is stored and reachable from the who filter; the cache warmer is the one '
+    + 'exception and is never counted in any view, because it is this server replaying paths '
+    + 'against itself.'));
 }
 
 // fmtBytesish keeps the unit readable without pulling in a formatter. Traffic

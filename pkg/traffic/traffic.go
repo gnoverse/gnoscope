@@ -54,6 +54,14 @@ const (
 type Record struct {
 	At      time.Time
 	Visitor string // keyed hash, rotates daily, see visitor.go
+	// Host is the name the reader asked for, lowercased and without its port.
+	//
+	// Recorded rather than assumed. This server answers to more than one name
+	// (the canonical one, its www form, and whatever a redirect or a future
+	// rename adds), and every panel here was silently treating them as one
+	// place. "Only the canonical host" is a claim, and a claim needs a column
+	// to be checkable.
+	Host    string
 	Method  string // GET, POST
 	Route   string // mux pattern, e.g. "/api/realm/{path...}", bounded by the routing table
 	Target  string // the wildcard part, e.g. "r/moul/home", the interesting half
@@ -117,6 +125,7 @@ CREATE TABLE IF NOT EXISTS requests (
 	day      TEXT    NOT NULL,
 	hour     INTEGER NOT NULL,
 	visitor  TEXT    NOT NULL DEFAULT '',
+	host     TEXT    NOT NULL DEFAULT '',
 	method   TEXT    NOT NULL DEFAULT '',
 	route    TEXT    NOT NULL DEFAULT '',
 	target   TEXT    NOT NULL DEFAULT '',
@@ -137,8 +146,61 @@ CREATE INDEX IF NOT EXISTS idx_requests_day_kind ON requests(day, kind);
 CREATE INDEX IF NOT EXISTS idx_requests_day_rt   ON requests(day, route);
 CREATE INDEX IF NOT EXISTS idx_requests_ts       ON requests(ts);
 CREATE INDEX IF NOT EXISTS idx_requests_target   ON requests(day, target) WHERE target <> '';
+CREATE INDEX IF NOT EXISTS idx_requests_day_host ON requests(day, host);
 `
+	// Migrate before the DDL, not after: the DDL creates an index on `host`,
+	// and on a database written before that column existed the index is what
+	// fails, with "no such column: host" at Open time. Caught by
+	// TestOpenMigratesDatabaseWithoutHostColumn before it reached a real
+	// database; the failure mode is a server that will not start.
+	if err := migrateAddHost(db); err != nil {
+		return err
+	}
 	_, err := db.Exec(ddl)
+	return err
+}
+
+// migrateAddHost adds the host column to a database written before it existed.
+//
+// Rows from before keep an empty host rather than being guessed at. They show
+// under "(not recorded)" in the hosts panel and are excluded by a host filter,
+// which is the honest handling: this process cannot know what name those
+// readers typed, and backfilling the canonical one would make a filter return
+// rows it has no evidence for. The bucket drains as retention advances.
+func migrateAddHost(db *sql.DB) error {
+	// PRAGMA table_info, not a substring search of the CREATE statement. The
+	// obvious `strings.Contains(ddl, "host")` is wrong and silently so: the
+	// table already has a `ref_host` column, so the check passes on a database
+	// that has no `host` at all, the ALTER is skipped, and Open fails on the
+	// index instead. Caught by TestOpenMigratesDatabaseWithoutHostColumn.
+	rows, err := db.Query(`PRAGMA table_info(requests)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	found, any := false, false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		any = true
+		if name == "host" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !any || found {
+		// No table yet (CREATE TABLE below writes the column), or it is there.
+		return nil
+	}
+	_, err = db.Exec(`ALTER TABLE requests ADD COLUMN host TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 
@@ -191,9 +253,9 @@ func (s *Store) Flush() {
 		return
 	}
 	stmt, err := tx.Prepare(`INSERT INTO requests
-		(ts, day, hour, visitor, method, route, target, network, kind, tool,
+		(ts, day, hour, visitor, host, method, route, target, network, kind, tool,
 		 status, bytes, dur_ms, app_ms, cache, ref_host, client, robot)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		log.Printf("traffic: prepare: %v", err)
@@ -207,7 +269,7 @@ func (s *Store) Flush() {
 		}
 		if _, err := stmt.Exec(
 			utc.Unix(), utc.Format("2006-01-02"), utc.Hour(),
-			r.Visitor, r.Method, r.Route, r.Target, r.Network, r.Kind, r.Tool,
+			r.Visitor, r.Host, r.Method, r.Route, r.Target, r.Network, r.Kind, r.Tool,
 			r.Status, r.Bytes, r.DurMS, r.AppMS, r.Cache, r.RefHost, r.Client, robot,
 		); err != nil {
 			stmt.Close()

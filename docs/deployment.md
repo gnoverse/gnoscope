@@ -179,10 +179,24 @@ address on disk for.
 
 ### Reading it
 
-`GET /api/traffic?window=24h|7d|30d|90d&network=&kind=&bots=1&limit=` returns
-the whole dashboard in one response: totals, a time series, and top-N
+`GET /api/traffic?window=24h|7d|30d|90d&host=&who=&kind=&errors=1&limit=`
+returns the whole dashboard in one response: totals, a time series, and top-N
 breakdowns by page, realm, API route, MCP tool, network, client class, referer
-host, status and cache state, plus the slowest routes ranked by p95.
+host, status, cache state and **host**, plus the slowest routes ranked by p95.
+
+`who` selects a client class: `noncrawlers` (the default), `all`, `crawlers`,
+`people`, `agents`, `unknown`. The default is everything-but-crawlers rather
+than `all`, because crawlers outnumbered browsers here within a day of the log
+existing; and it is not `people`, because a tool call is never a browser and
+that would empty the MCP panel permanently. `bots=1` from the previous
+vocabulary still works and means `who=all`.
+
+`host` filters to one name. The page defaults it to the name it was served
+from, so "this site" means this site rather than every name the server answers
+to. The hosts panel is always computed across every host, so it can act as the
+filter's own control. Rows written before the host column existed show as
+`(not recorded)` and are excluded by any host filter; the page says how many
+rather than letting the totals shrink unexplained.
 
 **Public, and aggregates only.** There is no endpoint that returns a request
 row, and adding one would undo the design above: three rows carrying a visitor

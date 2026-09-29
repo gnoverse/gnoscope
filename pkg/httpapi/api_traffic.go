@@ -154,6 +154,7 @@ func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, ne
 		store.Record(traffic.Record{
 			At:      start,
 			Visitor: store.Visitor(ClientIP(r), ua, start),
+			Host:    requestHost(r),
 			Method:  r.Method,
 			Route:   route,
 			Target:  target,
@@ -170,6 +171,26 @@ func WithAccessLog(store *traffic.Store, mux *http.ServeMux, selfHost string, ne
 			Robot:   client == "bot",
 		})
 	})
+}
+
+// requestHost is the name the reader asked for, lowercased and without its port.
+//
+// From the Host header, which is what the client typed, rather than from any
+// configured canonical name: the point of storing it is to find out which names
+// are actually in use, and a value taken from configuration could only ever
+// confirm the configuration.
+//
+// An absent Host is possible on HTTP/1.0 and from crude scanners. It stays
+// empty rather than being filled in, and surfaces as "(not recorded)".
+func requestHost(r *http.Request) string {
+	h := r.Host
+	if h == "" {
+		return ""
+	}
+	if i := strings.LastIndexByte(h, ':'); i > 0 && !strings.Contains(h[i:], "]") {
+		h = h[:i]
+	}
+	return strings.ToLower(strings.TrimSuffix(h, "."))
 }
 
 // appDurationMS reads the handler cost back out of the header WithServerTiming
@@ -200,7 +221,10 @@ func (a *API) SetTraffic(t *traffic.Store) { a.traffic = t }
 
 // HandleTraffic answers the public traffic dashboard.
 //
-// GET /api/traffic?window=24h|7d|30d|90d&network=&kind=&bots=1&limit=
+// GET /api/traffic?window=24h|7d|30d|90d&host=&who=&kind=&errors=1&limit=
+//
+// who is humans (the default) | all | crawlers | agents | unknown.
+// host filters to one name; omitted, every name this server answers to.
 //
 // Public, and aggregates only. There is no endpoint here that returns a request
 // row, and adding one would undo the whole privacy design: three rows carrying
@@ -218,14 +242,25 @@ func (a *API) HandleTraffic(w http.ResponseWriter, r *http.Request) {
 	// without a sleep.
 	a.traffic.Flush()
 
+	qs := r.URL.Query()
 	q := traffic.Query{
-		Window:   traffic.ParseWindow(r.URL.Query().Get("window")),
-		Network:  a.networkParam(r),
-		Kind:     r.URL.Query().Get("kind"),
-		WithBots: r.URL.Query().Get("bots") == "1",
-		Now:      time.Now(),
+		Window:  traffic.ParseWindow(qs.Get("window")),
+		Network: a.networkParam(r),
+		Kind:    qs.Get("kind"),
+		// Lowercased here rather than trusted: the stored column is
+		// lowercased, and a filter that does not match its own column
+		// silently returns nothing, which reads as "no traffic".
+		Host:       strings.ToLower(strings.TrimSpace(qs.Get("host"))),
+		Who:        traffic.ParseWho(qs.Get("who")),
+		ErrorsOnly: qs.Get("errors") == "1",
+		Now:        time.Now(),
 	}
-	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
+	// bots=1 is the previous vocabulary, kept working because it shipped and
+	// was documented. It means "every class", which is what who=all says now.
+	if qs.Get("bots") == "1" && qs.Get("who") == "" {
+		q.Who = traffic.WhoAll
+	}
+	if n, err := strconv.Atoi(qs.Get("limit")); err == nil {
 		q.Limit = n
 	}
 

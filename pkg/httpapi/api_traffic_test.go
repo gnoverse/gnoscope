@@ -73,7 +73,7 @@ func TestAccessLogRecordsRouteAndTarget(t *testing.T) {
 	fire(t, h, "GET", "/realms?network=pearl", browserUA)
 	store.Flush()
 
-	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll, Now: time.Now()})
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestAccessLogCapturesCacheStateAndAppTime(t *testing.T) {
 	fire(t, h, "GET", "/api/stats", browserUA)             // X-Cache: MISS, app;dur=42.5
 	store.Flush()
 
-	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll, Now: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestAccessLogRecordsMCPToolName(t *testing.T) {
 	fire(t, h, "POST", MCPPath, "claude-code/1.0")
 	store.Flush()
 
-	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll, Now: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestAccessLogRecordsNotFound(t *testing.T) {
 	fire(t, h, "GET", "/nope", browserUA)
 	store.Flush()
 
-	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll, Now: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestAccessLogSeparatesSSEStreams(t *testing.T) {
 	}
 	store.Flush()
 
-	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Now: time.Now()})
+	rep, err := store.Report(traffic.Query{Window: traffic.ParseWindow("24h"), Who: traffic.WhoAll, Now: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}

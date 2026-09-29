@@ -1,6 +1,7 @@
 package traffic
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -80,12 +81,12 @@ func TestReportExcludesBotsByDefault(t *testing.T) {
 		t.Errorf("default requests = %d, want 1 (50 bot rows should be excluded)", def.Totals.Requests)
 	}
 
-	all, err := s.Report(Query{Window: ParseWindow("24h"), WithBots: true, Now: testNow})
+	all, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Now: testNow})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if all.Totals.Requests != 51 {
-		t.Errorf("bots=1 requests = %d, want 51", all.Totals.Requests)
+		t.Errorf("who=all requests = %d, want 51", all.Totals.Requests)
 	}
 }
 
@@ -228,19 +229,194 @@ func TestReportNeverCountsTheWarmer(t *testing.T) {
 	}
 	s.Flush()
 
-	for _, withBots := range []bool{false, true} {
-		got, err := s.Report(Query{Window: ParseWindow("24h"), WithBots: withBots, Now: testNow})
+	for _, who := range []Who{WhoNonCrawlers, WhoAll} {
+		got, err := s.Report(Query{Window: ParseWindow("24h"), Who: who, Now: testNow})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got.Totals.Requests != 1 {
-			t.Errorf("bots=%v: requests = %d, want 1; the warmer must never be counted, "+
-				"with or without the bot flag", withBots, got.Totals.Requests)
+			t.Errorf("who=%s: requests = %d, want 1; the warmer must never be counted, "+
+				"in any who bucket", who, got.Totals.Requests)
 		}
 		for _, c := range got.Clients {
 			if c.Label == "internal" {
-				t.Errorf("bots=%v: the warmer appears in the client breakdown: %+v", withBots, c)
+				t.Errorf("who=%s: the warmer appears in the client breakdown: %+v", who, c)
 			}
 		}
+	}
+}
+
+// The host is recorded so "only this site" is checkable rather than assumed.
+// This server answers to its canonical name, its www form, and whatever
+// redirects at it, and every panel used to treat them as one place.
+func TestReportFiltersHost(t *testing.T) {
+	s := testStore(t, 30)
+	for i := 0; i < 5; i++ {
+		s.Record(rec(testNow, func(r *Record) { r.Host = "gnoscope.com" }))
+	}
+	s.Record(rec(testNow, func(r *Record) { r.Host = "www.gnoscope.com" }))
+	s.Record(rec(testNow, func(r *Record) { r.Host = "" })) // pre-migration row
+	s.Flush()
+
+	one, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Host: "gnoscope.com", Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Totals.Requests != 5 {
+		t.Errorf("host filter = %d rows, want 5", one.Totals.Requests)
+	}
+
+	// The hosts panel ignores the host filter on purpose: a panel that only
+	// showed the host already selected could not tell anyone a second exists.
+	labels := map[string]int64{}
+	for _, c := range one.Hosts {
+		labels[c.Label] = c.Hits
+	}
+	if labels["www.gnoscope.com"] != 1 {
+		t.Errorf("hosts panel lost the other host while filtered: %+v", one.Hosts)
+	}
+	if labels["(not recorded)"] != 1 {
+		t.Errorf("pre-migration rows must be visible as (not recorded): %+v", one.Hosts)
+	}
+	if one.Unrecorded != 1 {
+		t.Errorf("unrecorded_host = %d, want 1; a host filter hides these and the page has to say so", one.Unrecorded)
+	}
+
+	all, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.Totals.Requests != 7 {
+		t.Errorf("no host filter = %d rows, want all 7", all.Totals.Requests)
+	}
+}
+
+// who replaced a two-state include-crawlers toggle, which could not answer
+// either of the questions people actually have: how much of this is machines,
+// and which machines.
+func TestReportWhoBuckets(t *testing.T) {
+	s := testStore(t, 30)
+	add := func(n int, client string) {
+		for i := 0; i < n; i++ {
+			s.Record(rec(testNow, func(r *Record) { r.Client = client; r.Visitor = client }))
+		}
+	}
+	add(10, "browser")
+	add(7, "bot")
+	add(4, "agent")
+	add(2, "unknown")
+	add(99, "internal") // the warmer, never counted anywhere
+	s.Flush()
+
+	for _, tc := range []struct {
+		who  Who
+		want int64
+	}{
+		{WhoAll, 23},         // everything but the warmer
+		{WhoNonCrawlers, 16}, // browser + agent + unknown
+		{WhoCrawlers, 7},
+		{WhoPeople, 10},
+		{WhoAgents, 4},
+		{WhoUnknown, 2},
+	} {
+		got, err := s.Report(Query{Window: ParseWindow("24h"), Who: tc.who, Now: testNow})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Totals.Requests != tc.want {
+			t.Errorf("who=%s: %d requests, want %d", tc.who, got.Totals.Requests, tc.want)
+		}
+	}
+}
+
+func TestParseWhoFallsBackToNonCrawlers(t *testing.T) {
+	for _, in := range []string{"", "humans", "bots", "ALL", "everyone"} {
+		if got := ParseWho(in); got != WhoNonCrawlers {
+			t.Errorf("ParseWho(%q) = %q, want %q", in, got, WhoNonCrawlers)
+		}
+	}
+	// And the real ones resolve to themselves, or this guard has quietly
+	// collapsed every bucket into the default.
+	for _, in := range []Who{WhoAll, WhoCrawlers, WhoPeople, WhoAgents, WhoUnknown, WhoNonCrawlers} {
+		if got := ParseWho(string(in)); got != in {
+			t.Errorf("ParseWho(%q) = %q, want itself", in, got)
+		}
+	}
+}
+
+func TestReportErrorsOnly(t *testing.T) {
+	s := testStore(t, 30)
+	for i := 0; i < 8; i++ {
+		s.Record(rec(testNow, nil)) // 200
+	}
+	s.Record(rec(testNow, func(r *Record) { r.Status = 404 }))
+	s.Record(rec(testNow, func(r *Record) { r.Status = 500 }))
+	s.Flush()
+
+	got, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, ErrorsOnly: true, Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Totals.Requests != 2 {
+		t.Errorf("errors only = %d, want 2", got.Totals.Requests)
+	}
+}
+
+// A database written before the host column existed must open, not fail, and
+// its rows must stay readable rather than being guessed at.
+func TestOpenMigratesDatabaseWithoutHostColumn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.db")
+
+	// The schema as it shipped, without host.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE requests (
+		ts INTEGER NOT NULL, day TEXT NOT NULL, hour INTEGER NOT NULL,
+		visitor TEXT NOT NULL DEFAULT '', method TEXT NOT NULL DEFAULT '',
+		route TEXT NOT NULL DEFAULT '', target TEXT NOT NULL DEFAULT '',
+		network TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '',
+		tool TEXT NOT NULL DEFAULT '', status INTEGER NOT NULL DEFAULT 0,
+		bytes INTEGER NOT NULL DEFAULT 0, dur_ms REAL NOT NULL DEFAULT 0,
+		app_ms REAL NOT NULL DEFAULT 0, cache TEXT NOT NULL DEFAULT '',
+		ref_host TEXT NOT NULL DEFAULT '', client TEXT NOT NULL DEFAULT '',
+		robot INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO requests (ts, day, hour, client, status, route)
+		VALUES (?, ?, ?, 'browser', 200, '/api/stats')`,
+		testNow.Unix(), testNow.UTC().Format("2006-01-02"), testNow.UTC().Hour()); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s, err := Open(path, 30)
+	if err != nil {
+		t.Fatalf("opening a pre-host database must migrate, not fail: %v", err)
+	}
+	defer s.Close()
+
+	// The old row survives and is reachable, with its host honestly empty.
+	got, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Totals.Requests != 1 {
+		t.Fatalf("the pre-migration row was lost: %d requests", got.Totals.Requests)
+	}
+	if got.Unrecorded != 1 {
+		t.Errorf("unrecorded_host = %d, want 1", got.Unrecorded)
+	}
+	// And a new row records its host, so the column is actually being written.
+	s.Record(rec(testNow, func(r *Record) { r.Host = "gnoscope.com" }))
+	s.Flush()
+	after, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Host: "gnoscope.com", Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Totals.Requests != 1 {
+		t.Errorf("host filter after migration = %d, want 1", after.Totals.Requests)
 	}
 }
