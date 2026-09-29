@@ -262,8 +262,18 @@ func TestReportFiltersHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if one.Totals.Requests != 5 {
-		t.Errorf("host filter = %d rows, want 5", one.Totals.Requests)
+	// 5 for this host, plus the one row whose host was never recorded. Unknown
+	// matches every host filter rather than none: the strict version made a
+	// default-filtered page look like the history had been erased.
+	if one.Totals.Requests != 6 {
+		t.Errorf("host filter = %d rows, want 6 (5 matching plus 1 unrecorded)", one.Totals.Requests)
+	}
+	other, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Host: "www.gnoscope.com", Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Totals.Requests != 2 {
+		t.Errorf("www filter = %d rows, want 2 (1 matching plus 1 unrecorded)", other.Totals.Requests)
 	}
 
 	// The hosts panel ignores the host filter on purpose: a panel that only
@@ -416,7 +426,9 @@ func TestOpenMigratesDatabaseWithoutHostColumn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Totals.Requests != 1 {
-		t.Errorf("host filter after migration = %d, want 1", after.Totals.Requests)
+	// 1 new row carrying the host, plus the pre-migration row whose host is
+	// unknown and therefore matches every filter.
+	if after.Totals.Requests != 2 {
+		t.Errorf("host filter after migration = %d, want 2", after.Totals.Requests)
 	}
 }

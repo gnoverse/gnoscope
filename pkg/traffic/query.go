@@ -220,7 +220,21 @@ func (q Query) where() (string, []any) {
 	// costs is /api/cache/stats' job.
 	cond = append(cond, "client <> 'internal'")
 	if q.Host != "" {
-		cond = append(cond, "host = ?")
+		// Rows whose host was never recorded match every host filter, rather
+		// than none of them.
+		//
+		// The strict version shipped first and was wrong in a way that looked
+		// like data loss: on 2026-09-29 the host column arrived mid-life, the
+		// page defaults its filter to the name it was served from, and 5,732
+		// existing rows had no host, so the default view dropped from 6,113
+		// requests to 379 and read as "the history was erased".
+		//
+		// Empty means unknown, not "some other host". Excluding unknown data
+		// from a default view silently is worse than including it: the hosts
+		// panel still lists it separately as "(not recorded)" and the page
+		// prints the count, so nothing is hidden either way. The bucket drains
+		// as retention advances.
+		cond = append(cond, "(host = ? OR host = '')")
 		args = append(args, q.Host)
 	}
 	if c := q.Who.clause(); c != "" {
