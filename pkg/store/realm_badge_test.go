@@ -40,11 +40,11 @@ func TestRealmBadgeStatsCountsMessagesTxsAndCallers(t *testing.T) {
 		{"TX2", 0, "g1bob", day(2), true},
 		{"TX3", 0, "g1alice", day(60), true},
 	} {
-		if err := db.InsertCall("alpha", c.hash, 200+c.msgIdx, c.msgIdx, c.when, c.caller, path, "Post", c.success); err != nil {
+		if err := db.InsertCall("alpha", c.hash, 200+c.msgIdx, c.msgIdx, c.when, c.caller, path, "Post", "", "", c.success); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
-	if err := db.InsertMsgRun("alpha", "TX4", 300, day(1), "g1carol", "import \""+path+"\"", true); err != nil {
+	if err := db.InsertMsgRun("alpha", "TX4", 300, day(1), "g1carol", "import \""+path+"\"", "", true); err != nil {
 		t.Fatalf("InsertMsgRun: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestRealmBadgeStatsCountsAcceptedSubmissionsOnly(t *testing.T) {
 		{"S3", 300, day(10), true},
 	}
 	for _, s := range subs {
-		if err := db.InsertPackageSubmission("alpha", s.hash, 0, path, "board", "g1creator", s.height, s.when, true, 1, s.success); err != nil {
+		if err := db.InsertPackageSubmission("alpha", s.hash, 0, path, "board", "g1creator", s.height, s.when, true, 1, "", s.success); err != nil {
 			t.Fatalf("InsertPackageSubmission(%s): %v", s.hash, err)
 		}
 	}
@@ -123,11 +123,11 @@ func TestRealmBadgeStatsDoesNotMixNetworks(t *testing.T) {
 			t.Fatalf("UpsertPackage(%s): %v", net, err)
 		}
 	}
-	if err := db.InsertCall("alpha", "A1", 200, 0, day(1), "g1alice", path, "Post", true); err != nil {
+	if err := db.InsertCall("alpha", "A1", 200, 0, day(1), "g1alice", path, "Post", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	for i := 0; i < 5; i++ {
-		if err := db.InsertCall("beta", "B1", 200+i, i, day(1), "g1bob", path, "Post", true); err != nil {
+		if err := db.InsertCall("beta", "B1", 200+i, i, day(1), "g1bob", path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}

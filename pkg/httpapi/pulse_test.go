@@ -46,10 +46,10 @@ func TestPulseEndpoint(t *testing.T) {
 	if err := db.UpsertPackage("alpha", realm, "pool", "g1dev", "deploy", 10, when, true, 1); err != nil {
 		t.Fatalf("UpsertPackage: %v", err)
 	}
-	if err := db.InsertPackageSubmission("alpha", "deploy", 0, realm, "pool", "g1dev", 10, when, true, 1, true); err != nil {
+	if err := db.InsertPackageSubmission("alpha", "deploy", 0, realm, "pool", "g1dev", 10, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
-	if err := db.InsertCall("alpha", "call-1", 11, 0, when, "g1human", realm, "Swap", true); err != nil {
+	if err := db.InsertCall("alpha", "call-1", 11, 0, when, "g1human", realm, "Swap", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	// The realm pays a human out of its banker account, which is the case the

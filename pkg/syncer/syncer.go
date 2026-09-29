@@ -65,6 +65,7 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 	s.backfillTransactions(ctx)
 	s.backfillValopers(ctx)
 	s.backfillTokenTransfers(ctx)
+	s.backfillMessageArgs(ctx)
 	s.backfillSessions(ctx)
 	s.syncUsers(ctx)
 	if err := s.syncPackages(ctx); err != nil {
@@ -228,6 +229,7 @@ func (s *Syncer) syncPackages(ctx context.Context) error {
 						tx.BlockHeight,
 						msgIndex,
 						bt,
+						msg.Value.Send,
 						tx.Success,
 					); err != nil {
 						log.Printf("[%s] process package %s: %v", s.networkID, msg.Value.Package.Path, err)
@@ -1095,14 +1097,18 @@ func (s *Syncer) syncCalls(ctx context.Context) error {
 						msg.Value.Caller,
 						msg.Value.PkgPath,
 						msg.Value.Func,
+						msg.Value.Args,
+						msg.Value.Send,
 						tx.Success,
 					); err != nil {
 						log.Printf("[%s] process call: %v", s.networkID, err)
 						continue
 					}
 					callCount++
-					// Args are available here and nowhere else — they are not
-					// stored on the call row. Capture the moniker while we have it.
+					// The call row now keeps a bounded *preview* of the args
+					// (see BuildArgsPreview), which is for reading and cannot
+					// be parsed back. valoper_registrations still takes the
+					// moniker from the raw list here, where it is exact.
 					s.recordValoper(tx, msg, bt)
 				case "BankMsgSend":
 					if err := s.db.InsertBankSend(
@@ -1150,6 +1156,7 @@ func (s *Syncer) syncMsgRuns(ctx context.Context) error {
 						bt,
 						msg.Value.Caller,
 						msg.Value.Package.Files,
+						msg.Value.Send,
 						tx.Success,
 					); err != nil {
 						log.Printf("[%s] process msgrun: %v", s.networkID, err)
@@ -1335,4 +1342,115 @@ func (s *Syncer) markCoinBackfillDone(reason string) {
 		return
 	}
 	log.Printf("[%s] coin backfill: done, %s", s.networkID, reason)
+}
+
+// backfillMessageArgs fills calls.args, calls.send, msg_runs.send and
+// package_submissions.send on the history that was synced before those columns
+// existed.
+//
+// Unlike recordStorageEvents and recordTokenTransfers, this cannot ride the
+// forward walk alone. The fields come off the same message payload the walk
+// already fetches, so new rows are complete the moment this ships; but sync
+// resumes from the highest stored height and never revisits, so every row
+// already in the database would keep an empty args forever. On the instance
+// this was written for that is the entire visible history of every account.
+//
+// Walks backwards from the tip on purpose: see ArgsBackfillRange. Each batch
+// makes the most-read pages better immediately rather than after the whole
+// chain is done.
+//
+// Idempotent by construction. It UPDATEs rows by primary key and never
+// inserts, so a batch replayed after a crash writes the same values, a row the
+// sync has since rewritten is left correct, and the sync cursor (derived from
+// MAX(block_height)) cannot move as a side effect.
+func (s *Syncer) backfillMessageArgs(ctx context.Context) {
+	from, to, more, err := s.db.ArgsBackfillRange(s.networkID, backfillTxBatch)
+	if err != nil {
+		log.Printf("[%s] args backfill: %v", s.networkID, err)
+		return
+	}
+	if !more {
+		return
+	}
+
+	type blockTxs struct {
+		txs []indexer.Transaction
+		err error
+	}
+	heights := make([]int, 0, to-from)
+	for h := to - 1; h >= from; h-- {
+		heights = append(heights, h)
+	}
+	results := make([]blockTxs, len(heights))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, backfillConcurrency)
+	for i, h := range heights {
+		wg.Add(1)
+		go func(i, h int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			txs, err := s.client.GetTransactionsByBlock(ctx, h)
+			results[i] = blockTxs{txs: txs, err: err}
+		}(i, h)
+	}
+	wg.Wait()
+
+	// The cursor only moves over heights that actually answered, and the
+	// heights run newest-first, so a failure halfway leaves the older half for
+	// the next pass instead of skipping it. An indexer having a bad minute must
+	// cost a retry, never a hole nothing comes back for.
+	done := to
+	filled := 0
+	for i, r := range results {
+		if r.err != nil {
+			log.Printf("[%s] args backfill at %d: %v", s.networkID, heights[i], r.err)
+			break
+		}
+		for _, tx := range r.txs {
+			filled += s.fillMessageArgs(tx)
+		}
+		done = heights[i]
+	}
+	if done == to {
+		return // nothing answered; leave the cursor alone and retry next pass
+	}
+	if err := s.db.SetArgsBackfillCursor(s.networkID, done); err != nil {
+		log.Printf("[%s] args backfill cursor: %v", s.networkID, err)
+		return
+	}
+	log.Printf("[%s] args backfill: %d..%d, %d message(s) filled",
+		s.networkID, done, to-1, filled)
+}
+
+// fillMessageArgs updates one transaction's already-stored message rows,
+// returning how many it touched.
+//
+// A message whose row is absent updates nothing and is not an error: the walk
+// covers blocks, and a block can hold a message type this database does not
+// record.
+func (s *Syncer) fillMessageArgs(tx indexer.Transaction) int {
+	n := 0
+	for i, msg := range tx.Messages {
+		var err error
+		switch msg.Value.Typename {
+		case "MsgCall":
+			err = s.db.UpdateCallArgsAndSend(s.networkID, tx.Hash, i,
+				store.BuildArgsPreview(msg.Value.Args), msg.Value.Send)
+		case "MsgAddPackage":
+			err = s.db.UpdatePackageSubmissionSend(s.networkID, tx.Hash, i, msg.Value.Send)
+		case "MsgRun":
+			// Keyed on caller rather than msg_index: msg_runs uniques on
+			// (network, tx_hash, caller), so that is the row that exists.
+			err = s.db.UpdateMsgRunSend(s.networkID, tx.Hash, msg.Value.Caller, msg.Value.Send)
+		default:
+			continue
+		}
+		if err != nil {
+			log.Printf("[%s] args backfill %s#%d: %v", s.networkID, tx.Hash, i, err)
+			continue
+		}
+		n++
+	}
+	return n
 }

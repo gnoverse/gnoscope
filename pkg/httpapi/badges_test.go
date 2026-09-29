@@ -22,7 +22,7 @@ func seedBadgeRealm(t *testing.T, api *API, path string, days int) {
 	for i := 0; i < days; i++ {
 		ts := time.Now().UTC().AddDate(0, 0, -i).Format(time.RFC3339Nano)
 		caller := fmt.Sprintf("g1caller%d", i%3)
-		if err := api.db.InsertCall("alpha", fmt.Sprintf("TX%d", i), 110+i, 0, ts, caller, path, "Post", true); err != nil {
+		if err := api.db.InsertCall("alpha", fmt.Sprintf("TX%d", i), 110+i, 0, ts, caller, path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -215,7 +215,7 @@ func TestBadgeMetricsDiffer(t *testing.T) {
 		t.Fatalf("UpsertPackage: %v", err)
 	}
 	for i := 0; i < 20; i++ {
-		if err := api.db.InsertCall("alpha", fmt.Sprintf("TXB%d", i), 200+i, 0, when, "g1bot", path, "Tick", true); err != nil {
+		if err := api.db.InsertCall("alpha", fmt.Sprintf("TXB%d", i), 200+i, 0, when, "g1bot", path, "Tick", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}

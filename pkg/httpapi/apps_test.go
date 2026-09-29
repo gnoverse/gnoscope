@@ -395,7 +395,7 @@ func TestRefoldStatsCountsEveryRealmTheCardFolded(t *testing.T) {
 	seed := func(path string, callers ...string) {
 		for i, c := range callers {
 			if err := db.InsertCall("alpha", fmt.Sprintf("tx-%s-%d", path, i), 100+i, 0, when,
-				c, path, "Bid", true); err != nil {
+				c, path, "Bid", "", "", true); err != nil {
 				t.Fatalf("InsertCall: %v", err)
 			}
 		}

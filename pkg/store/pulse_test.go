@@ -47,7 +47,7 @@ func TestPulseCountsOnlyTheWindow(t *testing.T) {
 	// Three calls now, two in the window before, one long ago.
 	for i, when := range []string{c.inWindow(1), c.inWindow(2), c.inWindow(3), c.inPrev(), c.inPrev(), c.ancient()} {
 		if err := db.InsertCall("n", fmt.Sprintf("call-%d", i), 100+i, 0, when,
-			"g1caller", "gno.land/r/demo/boards", "Post", true); err != nil {
+			"g1caller", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -139,7 +139,7 @@ func TestPulseHotRealmsRankAndCarryThePreviousWindow(t *testing.T) {
 	}
 	for i, s := range seed {
 		if err := db.InsertCall("n", fmt.Sprintf("tx-%d", i), 100+i, 0, s.when,
-			s.caller, s.path, "Do", s.ok); err != nil {
+			s.caller, s.path, "Do", "", "", s.ok); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -337,7 +337,7 @@ func TestPulseHotDevsMarkFirstTimeDeployers(t *testing.T) {
 	// through the helper: a failed MsgAddPackage leaves a submission row and no
 	// current-state row, which is exactly the state being asserted on.
 	if err := db.InsertPackageSubmission("n", "new-0", 0, "gno.land/p/rookie/lib", "lib",
-		"g1rookie", 13, c.inWindow(3), false, 1, false); err != nil {
+		"g1rookie", 13, c.inWindow(3), false, 1, "", false); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 
@@ -432,7 +432,7 @@ func TestPulseScopesToOneNetwork(t *testing.T) {
 	for _, net := range []string{"one", "two"} {
 		for i := range 3 {
 			if err := db.InsertCall(net, fmt.Sprintf("%s-%d", net, i), 100+i, 0, c.inWindow(1),
-				"g1"+net, "gno.land/r/demo/boards", "Post", true); err != nil {
+				"g1"+net, "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 				t.Fatalf("InsertCall: %v", err)
 			}
 		}
@@ -479,7 +479,7 @@ func TestPackagePathsScopeToNetwork(t *testing.T) {
 func mustSubmit(t *testing.T, db *DB, network, hash, path, creator string, height int, when string, isRealm bool) {
 	t.Helper()
 	name := path[strings.LastIndex(path, "/")+1:]
-	if err := db.InsertPackageSubmission(network, hash, 0, path, name, creator, height, when, isRealm, 1, true); err != nil {
+	if err := db.InsertPackageSubmission(network, hash, 0, path, name, creator, height, when, isRealm, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 	if err := db.UpsertPackage(network, path, name, creator, hash, height, when, isRealm, 1); err != nil {

@@ -48,7 +48,7 @@ func SeedNetwork(t TB, db *DB, network string, height int) {
 	if err := db.UpsertPackage(network, "gno.land/r/demo/foo", "foo", "g1creator", "TXHASH", height, "", true, 1); err != nil {
 		t.Fatalf("upsert package: %v", err)
 	}
-	if err := db.InsertPackageSubmission(network, "TXHASH", 0, "gno.land/r/demo/foo", "foo", "g1creator", height, "", true, 1, true); err != nil {
+	if err := db.InsertPackageSubmission(network, "TXHASH", 0, "gno.land/r/demo/foo", "foo", "g1creator", height, "", true, 1, "", true); err != nil {
 		t.Fatalf("insert package submission: %v", err)
 	}
 	if err := db.UpsertPackageFile(network, "gno.land/r/demo/foo", "foo.gno", "package foo"); err != nil {
@@ -57,10 +57,10 @@ func SeedNetwork(t TB, db *DB, network string, height int) {
 	if err := db.SetDependencies(network, "gno.land/r/demo/foo", []string{"gno.land/p/demo/avl"}); err != nil {
 		t.Fatalf("set dependencies: %v", err)
 	}
-	if err := db.InsertCall(network, "TXHASH", height, 0, "", "g1caller", "gno.land/r/demo/foo", "Bar", true); err != nil {
+	if err := db.InsertCall(network, "TXHASH", height, 0, "", "g1caller", "gno.land/r/demo/foo", "Bar", "", "", true); err != nil {
 		t.Fatalf("insert call: %v", err)
 	}
-	if err := db.InsertMsgRun(network, "TXHASH", height, "", "g1caller", "package main", true); err != nil {
+	if err := db.InsertMsgRun(network, "TXHASH", height, "", "g1caller", "package main", "", true); err != nil {
 		t.Fatalf("insert msg run: %v", err)
 	}
 	if err := db.InsertBankSend(network, "TXHASH", height, "", "g1from", "g1to", "1ugnot", true); err != nil {
@@ -147,7 +147,7 @@ func (d *DB) SQL() *sql.DB { return d.db }
 
 func MustCall(t TB, db *DB, network, hash string, height int, ts time.Time, caller, pkgPath, fn string) {
 	t.Helper()
-	if err := db.InsertCall(network, hash, height, 0, rfc3339(ts), caller, pkgPath, fn, true); err != nil {
+	if err := db.InsertCall(network, hash, height, 0, rfc3339(ts), caller, pkgPath, fn, "", "", true); err != nil {
 		t.Fatalf("insert call: %v", err)
 	}
 }
@@ -162,7 +162,7 @@ func MustPackageSubmission(t TB, db *DB, network, hash, path, creator string, he
 	t.Helper()
 	_, name := lastSegment(path)
 	if err := db.InsertPackageSubmission(network, hash, 0, path, name, creator, height,
-		rfc3339(ts), isRealm, numFiles, true); err != nil {
+		rfc3339(ts), isRealm, numFiles, "", true); err != nil {
 		t.Fatalf("insert package submission: %v", err)
 	}
 	if err := db.UpsertPackage(network, path, name, creator, hash, height,

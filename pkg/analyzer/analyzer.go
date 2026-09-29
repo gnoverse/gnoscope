@@ -175,7 +175,7 @@ func (a *Analyzer) ExtractMsgRunImports(files []indexer.MemFile) []string {
 // — that ordering was chosen once, deliberately, after a mechanical fix-up
 // script and this function's own signature disagreed on it and silently
 // swapped the two everywhere calls was touched.
-func (a *Analyzer) ProcessPackage(network string, pkg *indexer.MemPackage, creator, txHash string, blockHeight, msgIndex int, blockTime string, success bool) error {
+func (a *Analyzer) ProcessPackage(network string, pkg *indexer.MemPackage, creator, txHash string, blockHeight, msgIndex int, blockTime, send string, success bool) error {
 	isRealm := strings.HasPrefix(pkg.Path, "gno.land/r/")
 
 	// store package: current-state, overwritten by a later submission at the
@@ -185,7 +185,7 @@ func (a *Analyzer) ProcessPackage(network string, pkg *indexer.MemPackage, creat
 	}
 	// store the submission itself, kept even once a later one replaces the
 	// row above — see InsertPackageSubmission.
-	if err := a.db.InsertPackageSubmission(network, txHash, msgIndex, pkg.Path, pkg.Name, creator, blockHeight, blockTime, isRealm, len(pkg.Files), success); err != nil {
+	if err := a.db.InsertPackageSubmission(network, txHash, msgIndex, pkg.Path, pkg.Name, creator, blockHeight, blockTime, isRealm, len(pkg.Files), send, success); err != nil {
 		return err
 	}
 
@@ -273,17 +273,22 @@ func (a *Analyzer) ReextractDependencies() error {
 
 // ProcessCall stores a function call record. msgIndex is the message's
 // position within its transaction; see InsertCall.
-func (a *Analyzer) ProcessCall(network, txHash string, blockHeight, msgIndex int, blockTime, caller, pkgPath, funcName string, success bool) error {
-	return a.db.InsertCall(network, txHash, blockHeight, msgIndex, blockTime, caller, pkgPath, funcName, success)
+//
+// args is the raw argument list off the message and is truncated here rather
+// than by the caller, so every write path goes through the one bound: see
+// BuildArgsPreview.
+func (a *Analyzer) ProcessCall(network, txHash string, blockHeight, msgIndex int, blockTime, caller, pkgPath, funcName string, args []string, send string, success bool) error {
+	return a.db.InsertCall(network, txHash, blockHeight, msgIndex, blockTime, caller, pkgPath, funcName,
+		store.BuildArgsPreview(args), send, success)
 }
 
 // ProcessMsgRun stores MsgRun with full source for import analysis.
-func (a *Analyzer) ProcessMsgRun(network, txHash string, blockHeight int, blockTime, caller string, files []indexer.MemFile, success bool) error {
+func (a *Analyzer) ProcessMsgRun(network, txHash string, blockHeight int, blockTime, caller string, files []indexer.MemFile, send string, success bool) error {
 	// Concatenate source for search
 	var source strings.Builder
 	for _, f := range files {
 		source.WriteString(f.Body)
 		source.WriteString("\n")
 	}
-	return a.db.InsertMsgRun(network, txHash, blockHeight, blockTime, caller, source.String(), success)
+	return a.db.InsertMsgRun(network, txHash, blockHeight, blockTime, caller, source.String(), send, success)
 }

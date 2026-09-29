@@ -38,20 +38,20 @@ func seedStorageMap(t *testing.T, db *DB) {
 	must(db.InsertStorageEvent("alpha", "tx2", 0, "gno.land/r/ns1/b", 11, when, "deposit", 500, 50000))
 
 	// tx3: a MsgCall on r/ns1/a. caller1 pays for the bytes it wrote.
-	must(db.InsertCall("alpha", "tx3", 12, 0, when, "caller1", "gno.land/r/ns1/a", "Grow", true))
+	must(db.InsertCall("alpha", "tx3", 12, 0, when, "caller1", "gno.land/r/ns1/a", "Grow", "", "", true))
 	must(db.InsertStorageEvent("alpha", "tx3", 0, "gno.land/r/ns1/a", 12, when, "deposit", 300, 30000))
 
 	// tx4: caller2 calls r/ns1/b, which writes into r/ns1/a. No call row names
 	// r/ns1/a, so only the "any caller on this tx" branch can attribute it.
-	must(db.InsertCall("alpha", "tx4", 13, 0, when, "caller2", "gno.land/r/ns1/b", "Poke", true))
+	must(db.InsertCall("alpha", "tx4", 13, 0, when, "caller2", "gno.land/r/ns1/b", "Poke", "", "", true))
 	must(db.InsertStorageEvent("alpha", "tx4", 0, "gno.land/r/ns1/a", 13, when, "deposit", 200, 20000))
 
 	// tx5: r/ns1/b frees bytes. Signed, so it subtracts.
-	must(db.InsertCall("alpha", "tx5", 14, 0, when, "caller1", "gno.land/r/ns1/b", "Clear", true))
+	must(db.InsertCall("alpha", "tx5", 14, 0, when, "caller1", "gno.land/r/ns1/b", "Clear", "", "", true))
 	must(db.InsertStorageEvent("alpha", "tx5", 0, "gno.land/r/ns1/b", 14, when, "unlock", -100, -10000))
 
 	// tx6: a MsgRun grows a realm nobody called.
-	must(db.InsertMsgRun("alpha", "tx6", 15, when, "runner1", "package main", true))
+	must(db.InsertMsgRun("alpha", "tx6", 15, when, "runner1", "package main", "", true))
 	must(db.InsertStorageEvent("alpha", "tx6", 0, "gno.land/r/ns2/c", 15, when, "deposit", 700, 70000))
 
 	// tx7: nothing to attribute it to.
@@ -215,7 +215,7 @@ func TestStoragePayersDoNotDoubleCountMulticalls(t *testing.T) {
 
 	const when = "2026-01-01T00:00:00Z"
 	for i := range 4 {
-		if err := db.InsertCall("alpha", "txm", 20, i, when, "caller1", "gno.land/r/ns1/a", "Grow", true); err != nil {
+		if err := db.InsertCall("alpha", "txm", 20, i, when, "caller1", "gno.land/r/ns1/a", "Grow", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -293,7 +293,7 @@ func TestStoragePayersAttributeEnableTransactions(t *testing.T) {
 	// The submission: parked, and carrying no storage event, which is the
 	// whole reason this branch has to exist.
 	if err := db.InsertPackageSubmission("alpha", "SUBMIT", 0, path, "parked",
-		creator, 100, when, true, 1, true); err != nil {
+		creator, 100, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 	// The enable: the approver's transaction, with no message row of its own.
@@ -342,7 +342,7 @@ func TestStoragePayersEnableUsesTheSubmissionLiveAtTheTime(t *testing.T) {
 	)
 
 	if err := db.InsertPackageSubmission("alpha", "SUB1", 0, path, "reused",
-		first, 100, when, true, 1, true); err != nil {
+		first, 100, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 	// The enable for that first submission.
@@ -352,7 +352,7 @@ func TestStoragePayersEnableUsesTheSubmissionLiveAtTheTime(t *testing.T) {
 	}
 	// A redeploy at the same path, afterwards, by somebody else.
 	if err := db.InsertPackageSubmission("alpha", "SUB2", 0, path, "reused",
-		later, 200, when, true, 1, true); err != nil {
+		later, 200, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 	if err := db.InsertStorageEvent("alpha", "ENABLE2", 0, path, 201, when,

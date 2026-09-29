@@ -24,12 +24,12 @@ func seedDeploys(t *testing.T, db *store.DB) {
 	}{{"d1", 100, false}, {"d2", 101, false}, {"d3", 102, true}}
 	for _, r := range rows {
 		if err := db.InsertPackageSubmission("alpha", r.hash, 0, path, "one", "g1ns",
-			r.height, "2026-08-01T00:00:00Z", true, 1, r.ok); err != nil {
+			r.height, "2026-08-01T00:00:00Z", true, 1, "", r.ok); err != nil {
 			t.Fatalf("InsertPackageSubmission(%s): %v", r.hash, err)
 		}
 	}
 	if err := db.InsertPackageSubmission("beta", "b1", 0, path, "one", "g1other",
-		7, "2026-08-02T00:00:00Z", true, 1, true); err != nil {
+		7, "2026-08-02T00:00:00Z", true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission(beta): %v", err)
 	}
 }

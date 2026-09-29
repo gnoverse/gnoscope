@@ -578,7 +578,8 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 	// directions because being paid is activity too.
 	union := strings.Join([]string{
 		branch(`network, tx_hash, block_height, COALESCE(block_time,'') bt, 'MsgCall' typ,
-		        caller who, pkg_path || '::' || func_name detail, success`, "calls", "caller = ?"),
+		        caller who, pkg_path || '::' || func_name detail, success,
+		        COALESCE(args,'') args, COALESCE(send,'') snd, msg_index mi`, "calls", "caller = ?"),
 		// package_submissions, not packages: packages is a current-state
 		// projection (one row per path, overwritten by a later submission at
 		// the same path), so it silently drops every resubmission but the
@@ -586,11 +587,11 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 		// against 256 on-chain on the account that surfaced it. Real
 		// per-submission success now, not a hardcoded 1.
 		branch(`network, tx_hash, block_height, COALESCE(block_time,''), 'MsgAddPackage',
-		        creator, path, success`, "package_submissions", "creator = ?"),
+		        creator, path, success, '', COALESCE(send,''), msg_index`, "package_submissions", "creator = ?"),
 		branch(`network, tx_hash, block_height, COALESCE(block_time,''), 'MsgRun',
-		        caller, '', success`, "msg_runs", "caller = ?"),
+		        caller, '', success, '', COALESCE(send,''), 0`, "msg_runs", "caller = ?"),
 		branch(`network, tx_hash, block_height, COALESCE(block_time,''), 'BankMsgSend',
-		        from_address, to_address || ' ' || amount, success`, "bank_sends",
+		        from_address, to_address || ' ' || amount, success, '', '', 0`, "bank_sends",
 			"(from_address = ? OR to_address = ?)"),
 		// Transactions this address SIGNED as a delegated key.
 		//
@@ -604,11 +605,12 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 		// transaction that is not a MsgCall (vm/run and bank/send are grantable
 		// scopes too) is covered by the two branches after it.
 		sessionBranch(`c.network, c.tx_hash, c.block_height, COALESCE(c.block_time,''), 'MsgCall',
-		        c.caller, c.pkg_path || '::' || c.func_name, c.success`, "calls c"),
+		        c.caller, c.pkg_path || '::' || c.func_name, c.success,
+		        COALESCE(c.args,''), COALESCE(c.send,''), c.msg_index`, "calls c"),
 		sessionBranch(`r.network, r.tx_hash, r.block_height, COALESCE(r.block_time,''), 'MsgRun',
-		        r.caller, '', r.success`, "msg_runs r"),
+		        r.caller, '', r.success, '', COALESCE(r.send,''), 0`, "msg_runs r"),
 		sessionBranch(`b.network, b.tx_hash, b.block_height, COALESCE(b.block_time,''), 'BankMsgSend',
-		        b.from_address, b.to_address || ' ' || b.amount, b.success`, "bank_sends b"),
+		        b.from_address, b.to_address || ' ' || b.amount, b.success, '', '', 0`, "bank_sends b"),
 	}, " UNION ALL ")
 
 	// The counts are over unbounded branches, because a total that stopped at the page
@@ -645,10 +647,15 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 	// than disappearing.
 	rows, err := d.db.Query(`
 		SELECT e.network, e.tx_hash, e.block_height, e.bt, e.typ, e.who, e.detail, e.success,
+		       e.args, e.snd,
 		       COALESCE(t.gas_used, 0), COALESCE(t.gas_fee, 0)
 		FROM (`+union+`) e
 		LEFT JOIN transactions t ON t.network = e.network AND t.tx_hash = e.tx_hash
-		ORDER BY e.block_height DESC, e.tx_hash ASC LIMIT ? OFFSET ?`,
+		-- msg_index last, so a multicall's messages read in the order the chain
+		-- executed them. Without it the union returned them in whatever order
+		-- the branches happened to produce, and a four-message batch listed
+		-- itself backwards: the reader has no way to tell that from the truth.
+		ORDER BY e.block_height DESC, e.tx_hash ASC, e.mi ASC LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
 		return nil, AddressTxTotals{}, err
@@ -659,7 +666,8 @@ func (d *DB) AddressTransactions(network, addr string, limit, offset int) ([]Sto
 	for rows.Next() {
 		var t StoredTx
 		if err := rows.Scan(&t.Network, &t.Hash, &t.BlockHeight, &t.BlockTime,
-			&t.Type, &t.Caller, &t.Detail, &t.Success, &t.GasUsed, &t.GasFee); err != nil {
+			&t.Type, &t.Caller, &t.Detail, &t.Success, &t.Args, &t.Send,
+			&t.GasUsed, &t.GasFee); err != nil {
 			return nil, AddressTxTotals{}, err
 		}
 		out = append(out, t)

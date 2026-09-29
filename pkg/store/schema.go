@@ -180,6 +180,11 @@ func NewDB(path string) (*DB, error) {
 		return nil, fmt.Errorf("migrate doc_pass: %w", err)
 	}
 
+	if err := migrateAddMessageArgsAndSend(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate args/send: %w", err)
+	}
+
 	if err := migrateBankSendUgnot(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate bank send ugnot: %w", err)
@@ -278,6 +283,46 @@ func migrateAddPackageDoc(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`ALTER TABLE symbol_index ADD COLUMN package_doc TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("add package_doc to symbol_index: %w", err)
+	}
+	return nil
+}
+
+// migrateAddMessageArgsAndSend adds calls.args, calls.send, msg_runs.send and
+// package_submissions.send to a database written before any of them existed.
+//
+// Unlike migrateAddPackageDoc, these do NOT fill themselves from a later pass:
+// nothing re-reads a call the way the symbol indexer re-reads a package, so on
+// an existing database every historical row keeps an empty args and send until
+// the backfill in pkg/syncer walks history once and updates them. Until it
+// finishes, a row renders the way it did before these columns existed, which is
+// the point: empty has to be indistinguishable from "this call took no
+// arguments and sent nothing", because for most rows that is exactly what it
+// means.
+func migrateAddMessageArgsAndSend(db *sql.DB) error {
+	for _, c := range []struct{ table, column string }{
+		{"calls", "args"},
+		{"calls", "send"},
+		{"msg_runs", "send"},
+		{"package_submissions", "send"},
+	} {
+		exists, err := tableExists(db, c.table)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			continue
+		}
+		has, err := columnExists(db, c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(fmt.Sprintf(
+			`ALTER TABLE %s ADD COLUMN %s TEXT NOT NULL DEFAULT ''`, c.table, c.column)); err != nil {
+			return fmt.Errorf("add %s to %s: %w", c.column, c.table, err)
+		}
 	}
 	return nil
 }
@@ -475,6 +520,9 @@ func initSchema(db *sql.DB) error {
 			block_time TEXT,
 			is_realm BOOLEAN NOT NULL,
 			num_files INTEGER NOT NULL,
+			-- Coins sent with the deploy, same shape and same reason as
+			-- calls.send. A realm can be funded at the moment it is published.
+			send TEXT NOT NULL DEFAULT '',
 			success BOOLEAN NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (network, tx_hash, msg_index)
@@ -636,6 +684,30 @@ func initSchema(db *sql.DB) error {
 			caller TEXT NOT NULL,
 			pkg_path TEXT NOT NULL,
 			func_name TEXT NOT NULL,
+			-- A *preview* of the call's arguments, not the arguments.
+			--
+			-- Storing them in full was rejected once, and the reason still
+			-- holds: it is a free-text column on half a million rows, and
+			-- valoper_registrations exists precisely so one call's first
+			-- argument could be kept without keeping everybody's. What changed
+			-- is the question being asked. A list row reading
+			-- "r/gnoland/wugnot.Deposit" cannot be told apart from the next
+			-- fifty rows that say the same, and the reader is one click from
+			-- the answer on every one of them.
+			--
+			-- So this is capped at argsPreviewMax bytes by BuildArgsPreview
+			-- before it is ever written, and it carries its own ellipsis. It is
+			-- for reading, never for filtering or counting: an argument that
+			-- was truncated is gone, and a query that treats this as the
+			-- argument list is wrong. The transaction detail page reads the
+			-- indexer and shows them in full.
+			args TEXT NOT NULL DEFAULT '',
+			-- The coins the message sent along with the call, verbatim, as the
+			-- chain's coin-list string ("100ugnot,5foo"). Empty for the
+			-- overwhelming majority. A MsgCall may move money and the list said
+			-- nothing about it, which made a Deposit read identically to a
+			-- Render.
+			send TEXT NOT NULL DEFAULT '',
 			success BOOLEAN NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(network, tx_hash, msg_index)
@@ -648,6 +720,8 @@ func initSchema(db *sql.DB) error {
 			block_time TEXT,
 			caller TEXT NOT NULL,
 			source TEXT NOT NULL,
+			-- Coins sent with the run, same shape and same reason as calls.send.
+			send TEXT NOT NULL DEFAULT '',
 			success BOOLEAN NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(network, tx_hash, caller)

@@ -37,14 +37,14 @@ func (d *DB) UpsertPackage(network, path, name, creator, txHash string, blockHei
 // without it two submissions in the same tx would collide on (network,
 // tx_hash) and INSERT OR IGNORE would silently drop the second.
 
-func (d *DB) InsertPackageSubmission(network, txHash string, msgIndex int, path, name, creator string, blockHeight int, blockTime string, isRealm bool, numFiles int, success bool) error {
+func (d *DB) InsertPackageSubmission(network, txHash string, msgIndex int, path, name, creator string, blockHeight int, blockTime string, isRealm bool, numFiles int, send string, success bool) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.db.Exec(`
 		INSERT OR IGNORE INTO package_submissions
-			(network, tx_hash, msg_index, path, name, creator, block_height, block_time, is_realm, num_files, success)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, network, txHash, msgIndex, path, name, creator, blockHeight, blockTime, isRealm, numFiles, success)
+			(network, tx_hash, msg_index, path, name, creator, block_height, block_time, is_realm, num_files, send, success)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, network, txHash, msgIndex, path, name, creator, blockHeight, blockTime, isRealm, numFiles, send, success)
 	return err
 }
 

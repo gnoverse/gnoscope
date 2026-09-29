@@ -38,7 +38,7 @@ func TestGasAttributionCountsEveryDeploySubmission(t *testing.T) {
 			t.Fatalf("UpsertTransaction(%s): %v", d.hash, err)
 		}
 		if err := db.InsertPackageSubmission("live", d.hash, 0, path, "retried",
-			"g1deployer", 100+i, when, true, 1, true); err != nil {
+			"g1deployer", 100+i, when, true, 1, "", true); err != nil {
 			t.Fatalf("InsertPackageSubmission(%s): %v", d.hash, err)
 		}
 		// packages keeps whichever landed last, which is the point.
@@ -104,7 +104,7 @@ func TestTopGasTransactionsLabelEveryDeploy(t *testing.T) {
 			t.Fatalf("UpsertTransaction: %v", err)
 		}
 		if err := db.InsertPackageSubmission("live", hash, 0, path, "retried",
-			"g1deployer", 100+i, when, true, 1, true); err != nil {
+			"g1deployer", 100+i, when, true, 1, "", true); err != nil {
 			t.Fatalf("InsertPackageSubmission: %v", err)
 		}
 		if err := db.UpsertPackage("live", path, "retried", "g1deployer", hash, 100+i, when, true, 1); err != nil {

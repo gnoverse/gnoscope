@@ -43,14 +43,14 @@ func seedAchievementWorld(t *testing.T, db *DB) {
 	// what first-import is about; bob's realm imports hers, which is what
 	// imported-by-other is about.
 	must("pkg", db.UpsertPackage(net, "gno.land/p/alice/util", "util", "g1alice", "TX1", 10, "2026-01-01T00:00:00Z", false, 1))
-	must("sub", db.InsertPackageSubmission(net, "TX1", 0, "gno.land/p/alice/util", "util", "g1alice", 10, "2026-01-01T00:00:00Z", false, 1, true))
+	must("sub", db.InsertPackageSubmission(net, "TX1", 0, "gno.land/p/alice/util", "util", "g1alice", 10, "2026-01-01T00:00:00Z", false, 1, "", true))
 	must("deps", db.SetDependencies(net, "gno.land/p/alice/util", []string{"gno.land/p/demo/avl"}))
 
 	must("pkg", db.UpsertPackage(net, "gno.land/r/alice/shop", "shop", "g1alice", "TX2", 11, "2026-01-02T00:00:00Z", true, 1))
-	must("sub", db.InsertPackageSubmission(net, "TX2", 0, "gno.land/r/alice/shop", "shop", "g1alice", 11, "2026-01-02T00:00:00Z", true, 1, true))
+	must("sub", db.InsertPackageSubmission(net, "TX2", 0, "gno.land/r/alice/shop", "shop", "g1alice", 11, "2026-01-02T00:00:00Z", true, 1, "", true))
 
 	must("pkg", db.UpsertPackage(net, "gno.land/r/alice/home", "home", "g1alice", "TX3", 12, "2026-01-03T00:00:00Z", true, 1))
-	must("sub", db.InsertPackageSubmission(net, "TX3", 0, "gno.land/r/alice/home", "home", "g1alice", 12, "2026-01-03T00:00:00Z", true, 1, true))
+	must("sub", db.InsertPackageSubmission(net, "TX3", 0, "gno.land/r/alice/home", "home", "g1alice", 12, "2026-01-03T00:00:00Z", true, 1, "", true))
 
 	// bob's realm, which imports alice's package.
 	must("pkg", db.UpsertPackage(net, "gno.land/r/bob/app", "app", "g1bob", "TX4", 13, "2026-01-04T00:00:00Z", true, 1))
@@ -66,18 +66,18 @@ func seedAchievementWorld(t *testing.T, db *DB) {
 	must("deps", db.SetDependencies(net, "gno.land/r/dave/app", []string{"gno.land/p/dave/lib"}))
 
 	// Calls. alice calls her own shop; bob calls it too.
-	must("call", db.InsertCall(net, "TX5", 20, 0, "2026-01-05T00:00:00Z", "g1alice", "gno.land/r/alice/shop", "Buy", true))
-	must("call", db.InsertCall(net, "TX6", 21, 0, "2026-01-06T00:00:00Z", "g1bob", "gno.land/r/alice/shop", "Buy", true))
+	must("call", db.InsertCall(net, "TX5", 20, 0, "2026-01-05T00:00:00Z", "g1alice", "gno.land/r/alice/shop", "Buy", "", "", true))
+	must("call", db.InsertCall(net, "TX6", 21, 0, "2026-01-06T00:00:00Z", "g1bob", "gno.land/r/alice/shop", "Buy", "", "", true))
 
 	// wugnot, profile, govdao.
-	must("call", db.InsertCall(net, "TX7", 22, 0, "2026-01-07T00:00:00Z", "g1alice", "gno.land/r/gnoland/wugnot", "Deposit", true))
-	must("call", db.InsertCall(net, "TX8", 23, 0, "2026-01-08T00:00:00Z", "g1alice", "gno.land/r/gnoland/wugnot", "Withdraw", true))
-	must("call", db.InsertCall(net, "TX9", 24, 0, "2026-01-09T00:00:00Z", "g1alice", "gno.land/r/demo/profile", "SetStringField", true))
-	must("call", db.InsertCall(net, "TX10", 25, 0, "2026-01-10T00:00:00Z", "g1alice", "gno.land/r/gov/dao", "MustVoteOnProposalSimple", true))
-	must("call", db.InsertCall(net, "TX11", 26, 0, "2026-01-11T00:00:00Z", "g1alice", "gno.land/r/gov/dao", "ExecuteProposal", true))
+	must("call", db.InsertCall(net, "TX7", 22, 0, "2026-01-07T00:00:00Z", "g1alice", "gno.land/r/gnoland/wugnot", "Deposit", "", "", true))
+	must("call", db.InsertCall(net, "TX8", 23, 0, "2026-01-08T00:00:00Z", "g1alice", "gno.land/r/gnoland/wugnot", "Withdraw", "", "", true))
+	must("call", db.InsertCall(net, "TX9", 24, 0, "2026-01-09T00:00:00Z", "g1alice", "gno.land/r/demo/profile", "SetStringField", "", "", true))
+	must("call", db.InsertCall(net, "TX10", 25, 0, "2026-01-10T00:00:00Z", "g1alice", "gno.land/r/gov/dao", "MustVoteOnProposalSimple", "", "", true))
+	must("call", db.InsertCall(net, "TX11", 26, 0, "2026-01-11T00:00:00Z", "g1alice", "gno.land/r/gov/dao", "ExecuteProposal", "", "", true))
 
 	// A run, a send, a receive.
-	must("run", db.InsertMsgRun(net, "TX12", 27, "2026-01-12T00:00:00Z", "g1alice", "package main", true))
+	must("run", db.InsertMsgRun(net, "TX12", 27, "2026-01-12T00:00:00Z", "g1alice", "package main", "", true))
 	must("send", db.InsertBankSend(net, "TX13", 28, "2026-01-13T00:00:00Z", "g1alice", "g1bob", "1000000ugnot", true))
 
 	// Tokens: alice's shop issues one, and it moves from alice to bob.
@@ -259,7 +259,7 @@ func TestAchievementRecordsTheFirstOccurrenceNotTheLatest(t *testing.T) {
 		{"TXFIRST", 100, "2026-01-01T00:00:00Z"},
 		{"TXMID", 500, "2026-03-01T00:00:00Z"},
 	} {
-		if err := db.InsertCall(net, c.tx, c.height, 0, c.time, "g1alice", "gno.land/r/demo/foo", "Bar", true); err != nil {
+		if err := db.InsertCall(net, c.tx, c.height, 0, c.time, "g1alice", "gno.land/r/demo/foo", "Bar", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -294,7 +294,7 @@ func TestAchievementsStayWithinTheirNetwork(t *testing.T) {
 	db := NewTestDB(t)
 	db.SetConfiguredNetworks([]config.NetworkConfig{{ID: "mainnet"}, {ID: "testnet"}})
 
-	if err := db.InsertCall("testnet", "TX1", 10, 0, "2026-01-01T00:00:00Z", "g1alice", "gno.land/r/gnoland/wugnot", "Deposit", true); err != nil {
+	if err := db.InsertCall("testnet", "TX1", 10, 0, "2026-01-01T00:00:00Z", "g1alice", "gno.land/r/gnoland/wugnot", "Deposit", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	if err := db.RefreshAchievements(); err != nil {

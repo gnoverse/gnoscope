@@ -32,7 +32,7 @@ func TestHandleRealmUsage(t *testing.T) {
 		{"TX3", "g1bob", "Claim", false},
 	}
 	for i, c := range calls {
-		if err := db.InsertCall("alpha", c.tx, 110+i, 0, when, c.caller, path, c.fn, c.ok); err != nil {
+		if err := db.InsertCall("alpha", c.tx, 110+i, 0, when, c.caller, path, c.fn, "", "", c.ok); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}

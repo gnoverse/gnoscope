@@ -73,7 +73,7 @@ func TestPackageDetailAgreesWithTheListing(t *testing.T) {
 		t.Fatalf("UpsertPackage: %v", err)
 	}
 	for i, caller := range []string{"g1one", "g1two", "g1one"} {
-		if err := db.InsertCall("alpha", fmt.Sprintf("tx-%d", i), 101+i, 0, when, caller, path, "Post", true); err != nil {
+		if err := db.InsertCall("alpha", fmt.Sprintf("tx-%d", i), 101+i, 0, when, caller, path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}

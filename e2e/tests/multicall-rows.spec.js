@@ -48,8 +48,9 @@ test('a multicall is one row, and its messages are listed inside it', async ({ p
   await expect(batch.locator('.msg-line:visible')).toHaveCount(MULTICALL_BATCH_MESSAGES);
   await expect(batch.locator('.clamp-toggle')).toHaveText('show less');
 
-  // The hash is drawn once, with the message count beside it.
-  await expect(batch.locator('td').first()).toContainText(`×${MULTICALL_BATCH_MESSAGES} msgs`);
+  // The hash is drawn once, and only once: the message count lives in the type
+  // column (asserted below) and repeating it beside the hash said the same
+  // thing twice on every multicall row.
   // Mixed kinds, so each badge is drawn with its own count rather than one
   // badge standing in for the whole transaction.
   await expect(batch.locator('td').nth(1)).toContainText('×4');
@@ -96,7 +97,7 @@ test('/txs groups a filtered view by transaction too', async ({ page }) => {
   const multi = page.locator('#txs-list tr', { has: page.locator('.msg-list') }).first();
   await expect(multi).toHaveCount(1);
   await expect(multi.locator('.msg-line')).toHaveCount(MULTICALL_CALLS_IN_BATCH);
-  await expect(multi.locator('td').first()).toContainText(`\u00d7${MULTICALL_CALLS_IN_BATCH} msgs`);
+  await expect(multi.locator('td').first()).not.toContainText('msgs');
   // One kind, so the type column carries the count and the lines carry no badge.
   await expect(multi.locator('td').nth(3)).toContainText(`\u00d7${MULTICALL_CALLS_IN_BATCH}`);
   await expect(multi.locator('.msg-line .badge')).toHaveCount(0);

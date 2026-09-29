@@ -18,7 +18,7 @@ const (
 func seedPaidTx(t *testing.T, db *DB, hash, caller string, gasFee int, storageFee int) {
 	t.Helper()
 	const when = "2026-01-01T00:00:00Z"
-	if err := db.InsertCall("alpha", hash, 100, 0, when, caller, "gno.land/r/x/y", "F", true); err != nil {
+	if err := db.InsertCall("alpha", hash, 100, 0, when, caller, "gno.land/r/x/y", "F", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	if err := db.UpsertTransaction("alpha", hash, 100, when, 0, 0, gasFee, true); err != nil {
@@ -104,17 +104,17 @@ func TestUnemittedSpendCountsATransactionOnce(t *testing.T) {
 	}
 	// Four messages of three kinds, all in the one transaction, all naming the
 	// same payer: every branch of the union has to collapse onto one tx_hash.
-	if err := db.InsertCall("alpha", "MULTI", 100, 0, when, payer, "gno.land/r/x/y", "A", true); err != nil {
+	if err := db.InsertCall("alpha", "MULTI", 100, 0, when, payer, "gno.land/r/x/y", "A", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
-	if err := db.InsertCall("alpha", "MULTI", 100, 1, when, payer, "gno.land/r/x/z", "B", true); err != nil {
+	if err := db.InsertCall("alpha", "MULTI", 100, 1, when, payer, "gno.land/r/x/z", "B", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	if err := db.InsertBankSend("alpha", "MULTI", 100, when, payer, other, "5ugnot", true); err != nil {
 		t.Fatalf("InsertBankSend: %v", err)
 	}
 	if err := db.InsertPackageSubmission("alpha", "MULTI", 0, "gno.land/r/x/new", "new",
-		payer, 100, when, true, 1, true); err != nil {
+		payer, 100, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func TestUnemittedSpendKeepsRefundsNegative(t *testing.T) {
 	if err := db.UpsertTransaction("alpha", "FREE", 100, when, 0, 0, 10, true); err != nil {
 		t.Fatalf("UpsertTransaction: %v", err)
 	}
-	if err := db.InsertCall("alpha", "FREE", 100, 0, when, payer, "gno.land/r/x/y", "Del", true); err != nil {
+	if err := db.InsertCall("alpha", "FREE", 100, 0, when, payer, "gno.land/r/x/y", "Del", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	if err := db.InsertStorageEvent("alpha", "FREE", 0, "gno.land/r/x/y", 100, when,
@@ -207,7 +207,7 @@ func TestUnemittedSpendClaimsEnableDeposits(t *testing.T) {
 		t.Fatalf("UpsertTransaction: %v", err)
 	}
 	if err := db.InsertPackageSubmission("alpha", "SUBMIT", 0, pkgPath, "app",
-		payer, 100, when, true, 1, true); err != nil {
+		payer, 100, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 
@@ -255,14 +255,14 @@ func TestUnemittedSpendDoesNotClaimCallersDeposits(t *testing.T) {
 	)
 
 	if err := db.InsertPackageSubmission("alpha", "SUBMIT", 0, pkgPath, "app",
-		payer, 100, when, true, 1, true); err != nil {
+		payer, 100, when, true, 1, "", true); err != nil {
 		t.Fatalf("InsertPackageSubmission: %v", err)
 	}
 	// Somebody else calls it and grows its storage: their cost, their tx.
 	if err := db.UpsertTransaction("alpha", "VISIT", 102, when, 0, 0, 300, true); err != nil {
 		t.Fatalf("UpsertTransaction: %v", err)
 	}
-	if err := db.InsertCall("alpha", "VISIT", 102, 0, when, visitor, pkgPath, "Grow", true); err != nil {
+	if err := db.InsertCall("alpha", "VISIT", 102, 0, when, visitor, pkgPath, "Grow", "", "", true); err != nil {
 		t.Fatalf("InsertCall: %v", err)
 	}
 	if err := db.InsertStorageEvent("alpha", "VISIT", 0, pkgPath, 102, when,

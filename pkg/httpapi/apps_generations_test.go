@@ -182,7 +182,7 @@ func TestAppsHubFoldsANewGenerationNobodyCurated(t *testing.T) {
 		}
 		for i := 0; i < calls; i++ {
 			if err := db.InsertCall("alpha", fmt.Sprintf("tx-%s-%d", path, i), 100+i, 0, when,
-				fmt.Sprintf("g1caller%d", i), path, "Bid", true); err != nil {
+				fmt.Sprintf("g1caller%d", i), path, "Bid", "", "", true); err != nil {
 				t.Fatalf("InsertCall %s: %v", path, err)
 			}
 		}

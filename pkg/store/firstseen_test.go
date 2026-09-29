@@ -118,7 +118,7 @@ func TestFirstSeenMovesEarlierWhenHistoryArrivesLate(t *testing.T) {
 func TestFirstSeenSkipsUntilTheEarliestRowIsTimed(t *testing.T) {
 	db := NewTestDB(t)
 	// Earliest call, no block_time yet.
-	if err := db.InsertCall("alpha", "TX1", 100, 0, "", "g1alice", "gno.land/r/x/a", "Fn", true); err != nil {
+	if err := db.InsertCall("alpha", "TX1", 100, 0, "", "g1alice", "gno.land/r/x/a", "Fn", "", "", true); err != nil {
 		t.Fatal(err)
 	}
 	MustCall(t, db, "alpha", "TX2", 200, ts(20), "g1alice", "gno.land/r/x/a", "Fn")
@@ -152,7 +152,7 @@ func TestFirstSeenDeployerUsesSubmissionsAndIgnoresFailures(t *testing.T) {
 	must := func(hash string, h int, day int, creator string, ok bool) {
 		t.Helper()
 		if err := db.InsertPackageSubmission("alpha", hash, 0, "gno.land/r/x/"+hash, "n",
-			creator, h, ts(day).Format(time.RFC3339), true, 1, ok); err != nil {
+			creator, h, ts(day).Format(time.RFC3339), true, 1, "", ok); err != nil {
 			t.Fatal(err)
 		}
 	}

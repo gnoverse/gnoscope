@@ -29,12 +29,12 @@ func seedSharedRealm(t *testing.T, db *DB) {
 
 	// 50 calls on busy, 2 on quiet.
 	for i := 0; i < 50; i++ {
-		if err := db.InsertCall("busy", "busy-call-"+itoa(i), 100+i, 0, when, "g1shared", path, "Post", true); err != nil {
+		if err := db.InsertCall("busy", "busy-call-"+itoa(i), 100+i, 0, when, "g1shared", path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
 	for i := 0; i < 2; i++ {
-		if err := db.InsertCall("quiet", "quiet-call-"+itoa(i), 100+i, 0, when, "g1shared", path, "Post", true); err != nil {
+		if err := db.InsertCall("quiet", "quiet-call-"+itoa(i), 100+i, 0, when, "g1shared", path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -342,7 +342,7 @@ func TestGasRollups(t *testing.T) {
 		if err := db.UpsertTransaction(net, hash, 100, when, gas, gas*2, fee, true); err != nil {
 			t.Fatalf("UpsertTransaction: %v", err)
 		}
-		if err := db.InsertCall(net, hash, 100, 0, when, "g1caller", path, "Post", true); err != nil {
+		if err := db.InsertCall(net, hash, 100, 0, when, "g1caller", path, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -603,7 +603,7 @@ func TestDedupOnceGivesTheSameCounts(t *testing.T) {
 	for _, net := range []string{"a", "b"} {
 		for i := 0; i < 3; i++ {
 			if err := db.InsertCall(net, fmt.Sprintf("c-%s-%d", net, i), 100+i, 0, when,
-				"g1everywhere", "gno.land/r/demo/boards", "Post", true); err != nil {
+				"g1everywhere", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
 				t.Fatalf("InsertCall: %v", err)
 			}
 			if err := db.InsertBankSend(net, fmt.Sprintf("s-%s-%d", net, i), 200+i, when,
@@ -615,7 +615,7 @@ func TestDedupOnceGivesTheSameCounts(t *testing.T) {
 			net+"-deploy", 300, when, true, 1); err != nil {
 			t.Fatalf("UpsertPackage: %v", err)
 		}
-		if err := db.InsertMsgRun(net, net+"-run", 400, when, "g1everywhere", "package main", true); err != nil {
+		if err := db.InsertMsgRun(net, net+"-run", 400, when, "g1everywhere", "package main", "", true); err != nil {
 			t.Fatalf("InsertMsgRun: %v", err)
 		}
 	}
@@ -697,7 +697,7 @@ func TestRealmShareTimeSeries(t *testing.T) {
 		if err := db.UpsertTransaction("alpha", hash, height, when, 100, 200, fee, true); err != nil {
 			t.Fatalf("UpsertTransaction: %v", err)
 		}
-		if err := db.InsertCall("alpha", hash, height, 0, when, "g1caller", realm, "Post", true); err != nil {
+		if err := db.InsertCall("alpha", hash, height, 0, when, "g1caller", realm, "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}
@@ -745,7 +745,7 @@ func TestRealmShareChargesAMulticallFeeOnce(t *testing.T) {
 		t.Fatalf("UpsertTransaction: %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		if err := db.InsertCall("alpha", "multi", 100, i, when, "g1caller", "gno.land/r/a/busy", "Post", true); err != nil {
+		if err := db.InsertCall("alpha", "multi", 100, i, when, "g1caller", "gno.land/r/a/busy", "Post", "", "", true); err != nil {
 			t.Fatalf("InsertCall: %v", err)
 		}
 	}

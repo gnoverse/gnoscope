@@ -507,11 +507,11 @@ func TestAddressTransactionsIncludeWhatASessionSigned(t *testing.T) {
 	// Two calls by the master. Both name the master as caller, which is what
 	// the chain records; only the signature differs.
 	if err := db.InsertCall("mainnet", "TXSIGNED", 200, 0, "2026-09-25T00:00:00Z",
-		master, "gno.land/r/moul/x/reaper", "Reap", true); err != nil {
+		master, "gno.land/r/moul/x/reaper", "Reap", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 	if err := db.InsertCall("mainnet", "TXSELF", 100, 0, "2026-09-24T00:00:00Z",
-		master, "gno.land/r/moul/home", "Set", true); err != nil {
+		master, "gno.land/r/moul/home", "Set", "", "", true); err != nil {
 		t.Fatalf("seed call: %v", err)
 	}
 	if err := db.RecordSessionTx("mainnet", "TXSIGNED", session, 200); err != nil {
