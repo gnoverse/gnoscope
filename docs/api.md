@@ -1372,6 +1372,93 @@ narrows the kind counts, because otherwise the control describes a listing the
 reader is not looking at; picking a kind leaves every kind still counted,
 because otherwise there is no way to see what switching would give you.
 
+### One asset model: native, grc20 and grc721
+
+`/api/assets` returns the chain's own coin as a **row**, beside the GRC20s, with
+`kind: "native"`. To a reader ugnot is the same kind of thing as GNS, and keeping
+it on its own page meant comparing them took two mental models.
+
+What the shared row must not do is imply the numbers are comparable, because two
+of the columns are not, and they fail in opposite directions. Every row carries
+where its figures came from:
+
+| field | values | what it means |
+|---|---|---|
+| `holders_basis` | `replayed` / `swept` | a GRC20's holders are reconstructed from every Transfer event: exact inside the ledger window, blind before it. ugnot's are counted from the addresses this indexer has read a balance for, because gno cannot enumerate accounts: that figure is a **sample**. One is incomplete at the start, the other at the top |
+| `transfers_basis` | `events` / `banksend` | a GRC20's count includes every move, realm-internal ones included. ugnot's counts `BankMsgSend` only, so coin a realm moves inside a call is absent (it surfaces as gas and realm activity). The native figure **under-counts** movement; the GRC20 one does not |
+| `holders_swept` | count | how many addresses were read at all, native only. Without it the holder count reads as a chain total |
+| `locked`, `supply_known` | | only ugnot has a locked share: **83.2%** on 2026-09-29, which is why its market cap is a seventh of its FDV. `supply_known: false` separates "the read failed" from "the supply is zero", which on the chain's own coin would be a striking claim to publish by accident |
+
+Filters: `?kind=native|grc20|grc721` for the three section pages, `?realm=` as
+before (it excludes the native row, which belongs to no realm), and
+`?include_native=0` to get the old list back.
+
+`/api/asset/ugnot` serves the coin on the same detail shape. Three fields come
+back deliberately different, and each is a fact about the chain rather than a gap
+here: **no supply series** (a GRC20's is the running sum of its mints, and
+`bank_sends` has never seen one, so a cumulative line over it would draw volume
+and label it supply), **no realm and no siblings**, and holders from the sweep.
+
+Every asset now carries `flow_series`: daily transfer count and value moved. A
+mint counts as a transfer and does **not** count as volume, because an issuance
+is activity and summing it into value moved makes minting look like trading.
+`supply_series` is where mints belong and already draws them.
+
+### Chain-wide activity
+
+```
+GET /api/assets/activity?network=<id>&days=<n>
+```
+
+Daily movement across every asset, **split by kind**: `native_transfers`,
+`native_volume`, `grc20_transfers`, `grc721_transfers`, `active_assets`.
+
+Split rather than summed, for the same reason the list marks two of its columns:
+the native count is `BankMsgSend` only and the GRC20 count includes
+realm-internal moves, so one "transfers today" line would add two
+differently-defined numbers and present the total as a fact. `active_assets` is
+the one figure here that IS comparable across kinds.
+
+Fungibility is decided over a token's **whole history**, not over the day's rows:
+a collection whose only transfer today happens to carry no amount is still what
+it has always been, and deciding per day would flip a token between series as its
+traffic changed.
+
+### An NFT holding is a count, not a balance
+
+A GRC721 rides the GRC20 Transfer event and carries **no amount**, so every leg
+parses to zero. Any holder reconstruction that filters on `balance > 0` therefore
+returns an **empty list** for every NFT on the chain, with no error: the page just
+says nobody holds it. `TopHolders` and `AllPositions` count legs in minus legs out
+when the token's every transfer is amountless, and set `fungible: false` so the
+caller renders a count. Ties break on the address, because on an NFT collection
+they are the common case rather than the edge.
+
+### Holders
+
+```
+GET /api/holders?network=<id>&limit=<n>&token=<key>&native=0&positions=1
+```
+
+Who holds what, across every asset. Ranked by **estimated value**, which is the
+only ordering that means anything across assets: by raw base units a token with
+more decimals always wins, and by position count an address holding six worthless
+tokens beats one holding the chain.
+
+That makes it wholly dependent on prices, which on gno.land are mostly absent and,
+where present, mostly decorative. So `usd_value` sums the **priced positions only**
+and `priced_assets` says how many of `assets` that was: a row with 6 assets and 1
+priced has a total describing a sixth of what it holds. An unpriced position is
+never valued at zero, because zero is a claim.
+
+`native_included` and `native_swept` say whether the swept ugnot balances are in
+the ranking and how big that sample is, since they are the rows that did not come
+from a replay. `native=0` drops them, leaving the one view where every row was
+computed the same way. Ordering is fully tie-broken (value, then priced count,
+then asset count, then address) because with 23 of 28 assets unpriced most rows
+sit at exactly zero and would otherwise arrive in map order, which changes between
+requests and reads as data churning.
+
 ### Prices
 
 ```

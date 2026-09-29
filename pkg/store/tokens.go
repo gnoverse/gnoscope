@@ -232,21 +232,41 @@ func (d *DB) holderCounts(network, _ string) (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// TopHolders reconstructs the largest balances for one token.
+// TopHolders reconstructs the largest holdings for one token.
+//
+// "Holdings" rather than "balances", because the two kinds of asset are counted
+// differently and this serves both:
+//
+//	bal    sum of value in minus value out. What a GRC20 holding is.
+//	items  count of legs in minus legs out. What a GRC721 holding is.
+//
+// A GRC721 rides the GRC20 Transfer event and carries **no amount**, so every
+// leg parses to zero and `bal` is always zero for one. Filtering on `bal > 0`
+// alone, which is what this did first, returned an EMPTY holder list for every
+// NFT on the chain, with no error to notice: the page simply said nobody holds
+// it. Balance carries the item count in that case, and TokenSummary.Fungible is
+// what tells the caller to render it as a count.
+//
+// Ties break on the address, so two holders of the same amount come back in the
+// same order on every request. Without it they arrive in whatever order SQLite
+// happens to produce, which on an NFT collection is most rows: item counts are
+// small integers and ties are the common case, not the edge.
 func (d *DB) TopHolders(network, token string, limit int) ([]TokenHolder, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
 	rows, err := d.db.Query(`
-		SELECT addr, SUM(delta) AS bal FROM (
-			SELECT to_addr AS addr, value AS delta FROM token_transfers
-			 WHERE network = ? AND token = ? AND to_addr <> ''
+		SELECT addr,
+		       CASE WHEN MAX(amt) > 0 THEN SUM(delta) ELSE SUM(leg) END AS holding
+		  FROM (
+			SELECT to_addr AS addr, value AS delta,  1 AS leg, value AS amt FROM token_transfers
+			 WHERE network = ?1 AND token = ?2 AND to_addr <> ''
 			UNION ALL
-			SELECT from_addr AS addr, -value AS delta FROM token_transfers
-			 WHERE network = ? AND token = ? AND from_addr <> ''
+			SELECT from_addr AS addr, -value AS delta, -1 AS leg, value AS amt FROM token_transfers
+			 WHERE network = ?1 AND token = ?2 AND from_addr <> ''
 		)
-		GROUP BY addr HAVING bal > 0
-		ORDER BY bal DESC LIMIT ?`, network, token, network, token, limit)
+		GROUP BY addr HAVING holding > 0
+		ORDER BY holding DESC, addr ASC LIMIT ?3`, network, token, limit)
 	if err != nil {
 		return nil, err
 	}
