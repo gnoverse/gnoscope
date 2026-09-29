@@ -400,6 +400,7 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/symbols/status` | what the symbol index covers |
 | `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset` |
 | `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
+| `GET /api/gnohub/forge/{path...}` | what r/moul/forge claims about a package path: `{path, network, realm, linked, repo_id, repo_url, latest_release, release_count, log_head, unavailable}`. **Requires `network`**: the forge is realm state and the same path exists on more than one chain. `linked: false` with no `unavailable` means nobody has registered the package, which is the normal case and not an error. Reads live over `vm/qeval`, cached 2 minutes; see below |
 | `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
 | `GET /api/deps/{path...}` | dependency graph as `{path: [imports]}`. `dir=dependents` reverses direction, and defaults to one hop; `depth=N` caps the reverse walk, `depth=0` is unbounded |
@@ -407,6 +408,22 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/storage/{path...}` | storage events for a package. **Requires `network`**: the figures are denominated amounts and blending chains would be meaningless |
 | `GET /api/realm/defi/{path...}` | what a package holds: its two accounts' live balances, every native transfer through them, and its GRC20 positions. **Requires `network`**. The `flows[]` table pages with `flows_limit` (default 500, capped at 5000, `0` for a totals-only read) and `flows_offset`, counting back from the newest leg; `flows_total` is the whole history and every balance figure is summed over all of it, never over the page. `counterparties[]` is the same legs collapsed by who was at the other end (`sent`, `received`, `net` from *that account's* side, `legs`), always over every leg and never over the page, ranked by gross and capped at 50 with `counterparties_total` beside it. See below |
 | `GET /api/events/{path...}` | every event tagged with a package's path. Bounded: `limit` defaults to 200, capped at 2000. In all-networks mode it queries every chain and tags each row with its `network`. Unlike `/api/allevents` this is not filtered to `GnoEvent`, so the chain's own `StorageDepositEvent` / `StorageUnlockEvent` for that path are included; the realm page hides those behind a toggle rather than dropping them here |
+
+### The forge link is a claim, not a chain fact
+
+Every other endpoint here reports something the chain knows. This one does not.
+gno.land has no concept of an issue, a pull request or a release, so they live
+in a realm (`gno.land/r/moul/forge/v0`), and a deployed package path is tied to
+a forge repo by an explicit claim.
+
+Nothing verifies that claim and nothing can: a realm cannot ask the chain who
+deployed a path. What is guaranteed is that someone with write access to the
+repo made the claim, under a namespace `r/sys/users` governs, and that a path is
+claimed by at most one repo. Read it the way you read a `go.mod`.
+
+An unreachable forge answers **200 with `unavailable` set**, never a 500: a realm
+page must not break because a realm nobody uses could not be reached, and a
+consumer has to be able to tell "nobody linked this" from "the node is down".
 
 ### The deploy history is the submissions, not the package row
 
