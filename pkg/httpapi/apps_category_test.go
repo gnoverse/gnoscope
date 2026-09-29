@@ -123,3 +123,23 @@ func TestCategoryNameBeatsDescription(t *testing.T) {
 		}
 	}
 }
+
+func TestCategoryImportsProveHandlingNotGovernance(t *testing.T) {
+	// r/sys/namereg's real import list on mainnet. It imports the DAO because
+	// its own admin calls are proposal-gated, which makes it governed and not
+	// governance: the first version of the table filed the username registry
+	// under chain governance on that basis.
+	namereg := []string{
+		"gno.land/p/moul/fifo/v0", "gno.land/p/moul/md/v0",
+		"gno.land/p/moul/realmpath/v0", "gno.land/p/moul/txlink/v0",
+		"gno.land/p/nt/ufmt/v0", "gno.land/r/demo/profile",
+		"gno.land/r/gov/dao", "gno.land/r/sys/users",
+	}
+	if cat, why := categoryFromImports(namereg); cat != "" {
+		t.Errorf("namereg: imports proved %q (%s), want nothing", cat, why)
+	}
+	// ...and the words then answer it correctly.
+	if cat, _ := categoryFromWords("gno.land/r/sys/namereg/v0", "sys/namereg", ""); cat != catInfra {
+		t.Errorf("namereg by name = %q, want %q", cat, catInfra)
+	}
+}

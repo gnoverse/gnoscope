@@ -39,19 +39,24 @@ var categoryPriority = []string{catDefi, catGames, catGov, catContent, catInfra}
 
 // categoryImports maps an import path fragment to what importing it proves.
 //
-// Kept to the fragments that are a standard or a named realm, never a word:
-// this is the half of the guesser that is not a guess, and it stays that way
-// only while every entry is something the chain records rather than something
-// a developer called their package.
+// Only what a realm *handles*, never what governs or serves it. The first
+// version of this table read `gno.land/r/gov/dao` as governance and filed
+// `r/sys/namereg`, the realm anyone registers a username in, under it: namereg
+// imports the DAO because its own admin calls are proposal-gated, which makes
+// it governed and not governance. Measured live on mainnet 2026-09-29, minutes
+// after the deploy. The same argument retires `r/sys/params` and `r/sys/users`
+// from here: reading a chain parameter and resolving a @handle are things any
+// realm does.
+//
+// What survives is the token standards and the named defi realms. Those are a
+// claim about the thing itself, recorded by the chain rather than chosen by
+// whoever named the package, which is the whole reason this half of the
+// guesser is not a guess.
 var categoryImports = map[string]string{
 	"/grc20":            catDefi,
 	"/grc20reg":         catDefi,
 	"/r/gnoland/wugnot": catDefi,
 	"/r/gnoswap/":       catDefi,
-	"/r/gov/dao":        catGov,
-	"/p/gov/proposal":   catGov,
-	"/r/sys/users":      catInfra,
-	"/r/sys/params":     catGov,
 }
 
 // categoryWords are the fallback, matched against tokens of the path, the name
