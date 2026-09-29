@@ -4185,7 +4185,23 @@ function reportPageView() {
   const q = new URLSearchParams({ path });
   const net = getNetwork();
   if (net) q.set('network', net);
-  fetch('/api/traffic/pageview?' + q.toString(), { method: 'GET', keepalive: true }).catch(() => {});
+  const url = '/api/traffic/pageview?' + q.toString();
+
+  // sendBeacon, not fetch.
+  //
+  // A page view is reported at the moment the page changes, which is the exact
+  // moment the browser is entitled to cancel in-flight requests. With fetch the
+  // browser aborted them: net::ERR_ABORTED on four of six navigations in the
+  // e2e suite, so page views were being lost in proportion to how fast someone
+  // clicked. keepalive:true is not enough on a same-document navigation.
+  //
+  // sendBeacon exists for this one job: the request is handed to the browser to
+  // deliver regardless of what the page does next. It is a POST, which is also
+  // the honest method for something that writes.
+  if (navigator.sendBeacon && navigator.sendBeacon(url)) return;
+  // Older browsers, and the case where sendBeacon refuses because its queue is
+  // full. Losing a view here is acceptable; blocking a reader is not.
+  fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
 }
 
 function route() {

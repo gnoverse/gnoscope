@@ -184,6 +184,31 @@ returns the whole dashboard in one response: totals, a time series, and top-N
 breakdowns by page, realm, API route, MCP tool, network, client class, referer
 host, status, cache state and **host**, plus the slowest routes ranked by p95.
 
+`what` selects the kind of request, and defaults to **page views**. One refresh
+of this single-page app fires a document load plus roughly ten XHRs, so an
+unfiltered request count moves in jumps of ten and answers "how chatty is the
+frontend" rather than "how many people looked". `all requests` is one pill away.
+
+A page view is reported by the frontend through `navigator.sendBeacon` to
+`/api/traffic/pageview`, not inferred from the document fetch. Navigation here
+is `history.pushState`, so moving between pages sends no document request at
+all: without the beacon, in-app navigation is invisible and only cold loads
+count. `sendBeacon` rather than `fetch` because the report fires at the moment
+the page changes, which is the moment a browser cancels in-flight requests.
+
+Page views also carry what they are **about**: `realms_viewed`,
+`addresses_viewed`, `txs_viewed` and `assets_viewed` fold every page about one
+subject into a single row, so a realm read through its overview and its source
+browser is one realm and not two URLs. `page_kinds` answers the opposite
+question: not which realm, but what readers come here to do.
+
+Requests for software this server does not run (`/wp-login.php`, `/.env`,
+`/.git`, and about thirty more prefixes) are classified `probe` and excluded
+from every other view. They are recorded, because being scanned is worth
+seeing, and kept apart because otherwise they bury the mistyped realm paths in
+the not-found panel, which are the ones that say something. The list is in
+`pkg/traffic/classify.go` and is meant to grow.
+
 `who` selects a client class: `noncrawlers` (the default), `all`, `crawlers`,
 `people`, `agents`, `unknown`. The default is everything-but-crawlers rather
 than `all`, because crawlers outnumbered browsers here within a day of the log
@@ -193,6 +218,13 @@ vocabulary still works and means `who=all`.
 
 Every filter is reflected in the page's query string, so a filtered view is
 shareable and the back button works through a sequence of filter changes.
+
+Referrers are stored as the **whole link**, minus tracking parameters
+(`utm_*`, `fbclid`, `gclid`, X's `s` and `t`) and minus any embedded
+credentials, so one tweet and one aggregator thread are two rows rather than
+both being "twitter.com". ⚠️ The traffic page is public, so referring URLs are
+published: a private path in somebody's referer becomes visible here. Return
+`u.Hostname()` from `RefererURL` to go back to host-only.
 
 `host` filters to one name. The page defaults it to the name it was served
 from, so "this site" means this site rather than every name the server answers
