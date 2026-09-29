@@ -53,9 +53,12 @@
       "path": "gno.land/r/gov/dao",
       "name": "GovDAO",
       "category": "governance",
-      "description": "Chain governance: proposals, votes and the executors that change parameters under r/sys/params. The r/sys realms below are what it writes to, not separate apps.",
+      "description": "Chain governance: proposals, votes and the executors that change parameters under r/sys/params. The r/sys realms it writes to are listed below as parts of it rather than as separate apps.",
       "covers": [
-        "gno.land/r/sys/*"
+        "gno.land/r/sys/params",
+        "gno.land/r/sys/cla",
+        "gno.land/r/sys/txfees",
+        "gno.land/r/sys/rewards"
       ],
       "checked": "2026-09-24"
     },
@@ -75,31 +78,18 @@
       "path": "gno.land/r/sys/users",
       "name": "Users",
       "category": "infrastructure",
-      "description": "The on-chain username registry. It is what resolves a @handle to an address across the explorer."
-    },
-    {
-      "path": "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble3",
-      "supersedes": [
-        "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble",
-        "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble2"
-      ]
-    },
-    {
-      "path": "gno.land/r/g1n4pl5uc4yt5r96m9w6fmdznx3x0jyg8l6arhmt/gnomi/padv3",
-      "supersedes": [
-        "gno.land/r/g1n4pl5uc4yt5r96m9w6fmdznx3x0jyg8l6arhmt/gnomi/padv2"
+      "description": "The on-chain username registry. It is what resolves a @handle to an address across the explorer, and r/sys/namereg is the realm anyone registers one in.",
+      "covers": [
+        "gno.land/r/sys/namereg/*"
       ]
     },
     {
       "path": "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble4",
       "name": "Bubble Rumble",
       "category": "games",
-      "description": "Last bidder wins. A bid pushes the pool's clock out and splits itself: 55% into the pot, 30% credited at once to the bidders before you, 10% to whoever invited you, 5% to the pool's creator, settled by a flag war on the pool's last day. v4 adds the shot, extra money on a bid that can pop the bubble and take the pot on a commit-reveal draw.",
+      "description": "Last bidder wins. A bid pushes the pool's clock out and splits itself: 55% into the pot, 30% credited at once to the bidders before you, 10% to whoever invited you, 5% to the pool's creator, settled by a flag war on the pool's last day. Later generations add the shot, extra money on a bid that can pop the bubble and take the pot on a commit-reveal draw.",
       "url": "https://bubblerumble.net",
-      "checked": "2026-09-24",
-      "supersedes": [
-        "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble3"
-      ]
+      "checked": "2026-09-24"
     },
     {
       "path": "gno.land/r/moul/blog",

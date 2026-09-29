@@ -115,11 +115,35 @@ photographs it. These files are the three levers over that:
 - **Relate**: `supersedes` folds an older generation into the one that replaces
   it, because two live deployments of the same idea is the normal state of a
   chain nobody can delete from, and ranking them as peers sends people to last
-  year's version. An entry may carry **only** a path and `supersedes`: that is a
-  fact about two deploys, and requiring a description alongside it would force
-  you to invent one about somebody else's realm.
+  year's version. **Write one only where the paths do not already say it**: the
+  hub derives the relation itself now, and a curated edge exists for the cases
+  it cannot see (a rename, a move to another namespace). An entry may carry
+  **only** a path and `supersedes`: that is a fact about two deploys, and
+  requiring a description alongside it would force you to invent one about
+  somebody else's realm.
 - **Skip**: `moderation.toml` removes, and every entry must say why. Usage is
   evidence of activity, not of worth.
+
+### The relation and the category are derived first
+
+`bubblerumble5` is the generation after `bubblerumble4`, and asking a human to
+write that down is asking for an edit the paths already contain. The hub reads
+it: two realms are one family when every segment of their paths matches once the
+generation number is removed, which means the same namespace, the same nesting
+and the same name. `bubble`, `wbubble` and `bubblerumble` are three families,
+not one. A curated `supersedes` always wins, and a higher number deployed
+*earlier* is refused rather than guessed at.
+
+Whatever a human wrote for an older generation is carried forward along those
+edges, so the sentence about Bubble Rumble keeps describing Bubble Rumble when
+generation six ships. The card names the realm it inherited from, because nobody
+wrote that sentence about *this* realm.
+
+A missing `category` is guessed the same way, from the realm's imports first
+(`gno.land/p/nt/grc20/v0` in the list is the chain's own record that this realm
+moves a token) and from words in the path, the name and the sentence second.
+Guessed categories are marked `inferred`, carry the evidence that produced them,
+and are drawn with a dashed border. Filing one in `apps.json` overrides it.
 
 A `description` here is still the best one available and still wins over the
 realm's own doc comment and its README, so writing one is worth doing. It is shown as one line;
