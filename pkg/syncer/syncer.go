@@ -253,6 +253,13 @@ const backfillBatch = 200
 const (
 	backfillTxBatch     = 100
 	backfillConcurrency = 10
+	// backfillArgsBatch is larger than backfillTxBatch because it is a batch of
+	// *candidate heights* rather than of consecutive blocks: the query behind
+	// it has already dropped every height with nothing to fill, so each fetch
+	// here does work. Mainnet's 32,774 calls sit in a few thousand distinct
+	// blocks out of 430,000, so this walks the history that matters in tens of
+	// passes rather than in four thousand.
+	backfillArgsBatch = 400
 )
 
 // backfillBlockTimes fills in block_time for rows written before that column
@@ -1364,22 +1371,18 @@ func (s *Syncer) markCoinBackfillDone(reason string) {
 // sync has since rewritten is left correct, and the sync cursor (derived from
 // MAX(block_height)) cannot move as a side effect.
 func (s *Syncer) backfillMessageArgs(ctx context.Context) {
-	from, to, more, err := s.db.ArgsBackfillRange(s.networkID, backfillTxBatch)
+	heights, err := s.db.ArgsBackfillHeights(s.networkID, backfillArgsBatch)
 	if err != nil {
 		log.Printf("[%s] args backfill: %v", s.networkID, err)
 		return
 	}
-	if !more {
-		return
+	if len(heights) == 0 {
+		return // every height below the cursor is done
 	}
 
 	type blockTxs struct {
 		txs []indexer.Transaction
 		err error
-	}
-	heights := make([]int, 0, to-from)
-	for h := to - 1; h >= from; h-- {
-		heights = append(heights, h)
 	}
 	results := make([]blockTxs, len(heights))
 	var wg sync.WaitGroup
@@ -1400,7 +1403,7 @@ func (s *Syncer) backfillMessageArgs(ctx context.Context) {
 	// heights run newest-first, so a failure halfway leaves the older half for
 	// the next pass instead of skipping it. An indexer having a bad minute must
 	// cost a retry, never a hole nothing comes back for.
-	done := to
+	done, processed := -1, 0
 	filled := 0
 	for i, r := range results {
 		if r.err != nil {
@@ -1410,17 +1413,17 @@ func (s *Syncer) backfillMessageArgs(ctx context.Context) {
 		for _, tx := range r.txs {
 			filled += s.fillMessageArgs(tx)
 		}
-		done = heights[i]
+		done, processed = heights[i], processed+1
 	}
-	if done == to {
+	if done < 0 {
 		return // nothing answered; leave the cursor alone and retry next pass
 	}
 	if err := s.db.SetArgsBackfillCursor(s.networkID, done); err != nil {
 		log.Printf("[%s] args backfill cursor: %v", s.networkID, err)
 		return
 	}
-	log.Printf("[%s] args backfill: %d..%d, %d message(s) filled",
-		s.networkID, done, to-1, filled)
+	log.Printf("[%s] args backfill: %d..%d, %d of %d height(s), %d message(s) filled",
+		s.networkID, done, heights[0], processed, len(heights), filled)
 }
 
 // fillMessageArgs updates one transaction's already-stored message rows,
