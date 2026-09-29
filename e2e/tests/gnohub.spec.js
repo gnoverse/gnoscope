@@ -15,10 +15,17 @@ test('the lab index offers gnohub and nothing else claims to be finished', async
   await page.goto('/lab' + NET);
   await settle(page);
 
-  await expect(page.locator('.gh-lab-card-title')).toContainText('gnohub');
-  await expect(page.locator('.gh-lab-card-title .badge')).toHaveText('experimental');
+  // Scoped to gnohub's own card rather than to every card on the page. /lab
+  // held exactly one when this was written, so an unscoped locator read as
+  // "the gnohub card" and was really "all of them"; the github card (f1497c3)
+  // made it resolve to two and every assertion here a strict-mode violation.
+  // What this test is about is gnohub, so it says gnohub, and lab-github.spec.js
+  // owns the count.
+  const card = page.locator('.gh-lab-card').first();
+  await expect(card.locator('.gh-lab-card-title')).toContainText('gnohub');
+  await expect(card.locator('.gh-lab-card-title .badge')).toHaveText('experimental');
 
-  await page.locator('.gh-lab-card-foot a').click();
+  await card.locator('.gh-lab-card-foot a').click();
   await expect(page).toHaveURL(/\/gnohub/);
   expect(w.jsErrors).toEqual([]);
   expect(unexpected(w.failedRequests)).toEqual([]);
