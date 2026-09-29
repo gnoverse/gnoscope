@@ -35,6 +35,16 @@ The offset on its own is enough: `harness/port.mjs` is the single source both th
 config and the harness read, because `use.baseURL` is resolved when the config
 loads and nothing globalSetup does later can reach it.
 
+⛔ **A collision does not stop the run, it silently changes what the run is
+testing.** globalSetup's server prints `bind: address already in use` and exits,
+and the suite then drives whoever already owns 8899: another session's binary,
+built from another tree, serving another frontend. The tests pass or fail on that
+code and say nothing about yours. Measured 2026-09-29, twice in one session: a
+spec that was red on CI passed locally three times in a row, against a colleague's
+harness one directory over. The tell is that one line in the output, above a
+result that otherwise looks normal. Two people work this repo at once often
+enough that the offset is the default worth reaching for, not the fallback.
+
 A failure leaves a screenshot, a video and a trace under `test-results/`:
 
 ```bash
