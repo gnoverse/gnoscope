@@ -407,3 +407,50 @@ func TestAssetActivityOverTime(t *testing.T) {
 		t.Error("points must be oldest-first")
 	}
 }
+
+// The assets list reported 0 holders for every NFT collection on the chain
+// while the collection's own page listed them: three copies of the holder
+// reconstruction, and this was the last one still filtering on a balance.
+// Seen on gnoscope.com 2026-09-29: GNFT, 1,610 transfers, 0 holders.
+func TestTokenSummariesCountNFTHolders(t *testing.T) {
+	db := NewTestDB(t)
+	at := time.Now().UTC().Format(time.RFC3339)
+	const nft = "gno.land/r/demo/pics.PIC.0000000"
+	const tok = "gno.land/r/demo/tok.TOK.0000000"
+
+	rows := []TokenTransfer{
+		{Token: nft, PkgPath: "gno.land/r/demo/pics", From: "", To: "g1a", Value: 0, TxHash: "n1", BlockHeight: 1, BlockTime: at},
+		{Token: nft, PkgPath: "gno.land/r/demo/pics", From: "", To: "g1b", Value: 0, TxHash: "n2", BlockHeight: 2, BlockTime: at},
+		// g1c received one and sent it on, so it is not a holder.
+		{Token: nft, PkgPath: "gno.land/r/demo/pics", From: "", To: "g1c", Value: 0, TxHash: "n3", BlockHeight: 3, BlockTime: at},
+		{Token: nft, PkgPath: "gno.land/r/demo/pics", From: "g1c", To: "g1a", Value: 0, TxHash: "n4", BlockHeight: 4, BlockTime: at},
+		// A fungible token alongside, so the fix cannot work by counting legs
+		// for everything.
+		{Token: tok, PkgPath: "gno.land/r/demo/tok", From: "", To: "g1a", Value: 900, TxHash: "t1", BlockHeight: 5, BlockTime: at},
+		{Token: tok, PkgPath: "gno.land/r/demo/tok", From: "g1a", To: "g1b", Value: 900, TxHash: "t2", BlockHeight: 6, BlockTime: at},
+	}
+	for i, r := range rows {
+		if err := db.InsertTokenTransfer("testnet", r.TxHash, i, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sums, err := db.TokenSummaries("testnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTok := map[string]TokenSummary{}
+	for _, s := range sums {
+		byTok[s.Token] = s
+	}
+	if got := byTok[nft].Holders; got != 2 {
+		t.Errorf("nft holders = %d, want 2 (g1a holds two items, g1b one, g1c passed its on)", got)
+	}
+	if byTok[nft].Fungible {
+		t.Error("the collection came back fungible")
+	}
+	// g1a minted 900 and sent all of it to g1b, so only g1b holds any.
+	if got := byTok[tok].Holders; got != 1 {
+		t.Errorf("fungible holders = %d, want 1: counting legs here would say 2", got)
+	}
+}
