@@ -433,3 +433,159 @@ func TestOpenMigratesDatabaseWithoutHostColumn(t *testing.T) {
 		t.Errorf("host filter after migration = %d, want 2", after.Totals.Requests)
 	}
 }
+
+// Adding page_kind is the moment kind='page' changes meaning, so it is the
+// moment the rows written under the old meaning have to be corrected.
+//
+// Before the beacon existed every non-API URL was classified 'page' and every
+// one of those rows is a document load. Left alone, the headline figure would
+// be document loads before the deploy and page views after it, on one
+// continuous chart, with nothing marking where the meaning changed.
+func TestMigrationReclassifiesPreBeaconPageRows(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.db")
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The schema as it stood after host arrived and before page_kind did.
+	if _, err := db.Exec(`CREATE TABLE requests (
+		ts INTEGER NOT NULL, day TEXT NOT NULL, hour INTEGER NOT NULL,
+		visitor TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+		method TEXT NOT NULL DEFAULT '', route TEXT NOT NULL DEFAULT '',
+		target TEXT NOT NULL DEFAULT '', network TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '',
+		status INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0,
+		dur_ms REAL NOT NULL DEFAULT 0, app_ms REAL NOT NULL DEFAULT 0,
+		cache TEXT NOT NULL DEFAULT '', ref_host TEXT NOT NULL DEFAULT '',
+		client TEXT NOT NULL DEFAULT '', robot INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	ins := func(kind, target string) {
+		if _, err := db.Exec(`INSERT INTO requests (ts, day, hour, kind, target, client, status)
+			VALUES (?,?,?,?,?,'browser',200)`,
+			testNow.Unix(), testNow.UTC().Format("2006-01-02"), testNow.UTC().Hour(), kind, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins("page", "/realms")
+	ins("page", "/")
+	ins("api", "")
+	ins("mcp", "")
+	db.Close()
+
+	s, err := Open(path, 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+
+	// The two old 'page' rows are documents now.
+	docs, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Kind: "document", Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if docs.Totals.Requests != 2 {
+		t.Errorf("documents = %d, want 2; pre-beacon page rows were not reclassified", docs.Totals.Requests)
+	}
+	pages, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Kind: "page", Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages.Totals.Requests != 0 {
+		t.Errorf("page views = %d, want 0; history cannot contain page views that were never reported",
+			pages.Totals.Requests)
+	}
+	// Nothing else was touched.
+	all, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.Totals.Requests != 4 {
+		t.Errorf("total = %d, want 4; the reclassification must move rows, not delete them", all.Totals.Requests)
+	}
+
+	// And it is one-shot: a beacon row written afterwards stays a page view.
+	s.Record(rec(testNow, func(r *Record) { r.Kind = "page"; r.PageKind = "listing"; r.Target = "/apps" }))
+	s.Flush()
+	again, err := Open(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	after, err := again.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Kind: "page", Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Totals.Requests != 1 {
+		t.Errorf("page views after reopen = %d, want 1; the reclassification must not run twice",
+			after.Totals.Requests)
+	}
+}
+
+// The correction must not depend on deploy order.
+//
+// The first version ran only when the page_kind column was newly added, which
+// is true on a database that jumps straight to this build and false on one that
+// already took the column-adding build. Deploy those in the wrong order and the
+// fix skips silently, forever, on exactly the database that needs it.
+func TestReclassifyRunsOnADatabaseThatAlreadyHasTheColumn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "already.db")
+
+	// The schema as it stands *after* the column-adding build has run, holding
+	// rows it classified under the old meaning.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE requests (
+		ts INTEGER NOT NULL, day TEXT NOT NULL, hour INTEGER NOT NULL,
+		visitor TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+		entity_kind TEXT NOT NULL DEFAULT '', entity TEXT NOT NULL DEFAULT '',
+		page_kind TEXT NOT NULL DEFAULT '',
+		method TEXT NOT NULL DEFAULT '', route TEXT NOT NULL DEFAULT '',
+		target TEXT NOT NULL DEFAULT '', network TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '',
+		status INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0,
+		dur_ms REAL NOT NULL DEFAULT 0, app_ms REAL NOT NULL DEFAULT 0,
+		cache TEXT NOT NULL DEFAULT '', ref_host TEXT NOT NULL DEFAULT '',
+		client TEXT NOT NULL DEFAULT '', robot INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	// Two pre-beacon rows: kind page, no page_kind. And one real beacon row.
+	if _, err := db.Exec(`INSERT INTO requests (ts, day, hour, kind, target, page_kind, client, status) VALUES
+		(?,?,?,'page','/realms','','browser',200),
+		(?,?,?,'page','/','','browser',200),
+		(?,?,?,'page','/apps','listing','browser',200)`,
+		testNow.Unix(), testNow.UTC().Format("2006-01-02"), testNow.UTC().Hour(),
+		testNow.Unix(), testNow.UTC().Format("2006-01-02"), testNow.UTC().Hour(),
+		testNow.Unix(), testNow.UTC().Format("2006-01-02"), testNow.UTC().Hour()); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s, err := Open(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	pages, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Kind: "page", Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the row the beacon actually wrote survives as a page view.
+	if pages.Totals.Requests != 1 {
+		t.Errorf("page views = %d, want 1; the correction skipped a database that already had the column",
+			pages.Totals.Requests)
+	}
+	docs, err := s.Report(Query{Window: ParseWindow("24h"), Who: WhoAll, Kind: "document", Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if docs.Totals.Requests != 2 {
+		t.Errorf("documents = %d, want 2", docs.Totals.Requests)
+	}
+}
