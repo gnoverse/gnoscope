@@ -256,3 +256,42 @@ func readmeLead(body string) string {
 }
 
 var mdLink = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+
+// PackageImports returns what each of the given packages imports.
+//
+// The directory uses it to answer "what kind of thing is this" without asking
+// a human. A realm's imports are the least guessable signal it carries: a
+// keyword in a path is a name somebody chose, and a name can be anything, but
+// `gno.land/p/nt/grc20/v0` in the import list is the chain's own record that
+// this realm handles a fungible token. Measured on mainnet 2026-09-29, that is
+// what separates `wbubble` and `demo/defi/grc20factory` from the realms that
+// merely sound financial.
+func (d *DB) PackageImports(network string, paths []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(paths) == 0 {
+		return out, nil
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	args := make([]any, 0, len(paths))
+	for _, p := range paths {
+		args = append(args, p)
+	}
+	rows, err := d.db.Query(`
+		SELECT package_path, import_path FROM dependencies
+		WHERE `+d.networkFilter("network", network)+`
+		  AND package_path IN (`+sqlPlaceholders(len(paths))+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var path, imp string
+		if err := rows.Scan(&path, &imp); err != nil {
+			return nil, err
+		}
+		out[path] = append(out[path], imp)
+	}
+	return out, rows.Err()
+}
