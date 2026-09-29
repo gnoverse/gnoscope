@@ -1090,6 +1090,28 @@ footer a:hover { color: var(--accent); }
    the shape of the last minute of the chain is visible from any page. Empty
    blocks stay as stubs on purpose: a chain ticking over with nothing in it is a
    fact worth seeing, not one to hide. */
+/* The block strip on /blocks: the live train's idiom at page scale.
+   Two channels, because a reader of this page has two questions and they are
+   not the same one. Height is how busy the block was (log, so one 40-tx deploy
+   block does not flatten every ordinary one to a stub); colour is who proposed
+   it, which is what makes a rotation visible as a rotation and a validator
+   that stopped taking its turn visible as a missing stripe. */
+.bstrip { display: flex; align-items: flex-end; gap: 1px; height: 64px; width: 100%;
+  padding: 6px 0 0; overflow: hidden; }
+.bstrip a { flex: 1 1 0; min-width: 2px; display: block; min-height: 3px; border-radius: 1px;
+  background: currentColor; opacity: .55; }
+.bstrip a:hover { opacity: 1; outline: 1px solid var(--fg); outline-offset: 1px; }
+.bstrip a.has-txs { opacity: .9; }
+/* A block that took more than twice the median to arrive. The chain stalling
+   for nine seconds is the single most interesting thing this strip can show,
+   and it is invisible in a picture whose only axes are txs and proposer. */
+.bstrip a.slow { box-shadow: inset 0 0 0 1px var(--amber); }
+.bstrip-axis { display: flex; justify-content: space-between; color: var(--fg2);
+  font-size: 11px; padding-top: 4px; }
+.bstrip-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-top: 10px; font-size: 12px; }
+.bstrip-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.bstrip-legend i { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 9px; }
+.bstrip-legend .bl-n { color: var(--fg2); }
 .live-train { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; flex-shrink: 0; }
 .live-train i { display: block; width: 3px; min-height: 3px; border-radius: 1px; background: currentColor; opacity: 0.3; }
 .live-train i.txs { opacity: 0.85; }
@@ -1501,6 +1523,15 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-blocks"><main>
     <div id="blocks-stats" class="stats-bar" style="display:none"></div>
     <div id="blocks-filter" style="display:none; padding: 8px 0; margin-bottom: 4px"></div>
+    <div class="section" id="blocks-strip-section" style="display:none">
+      <div class="section-title" id="blocks-strip-title">the last blocks, drawn</div>
+      <div class="section-sub">one bar per block, oldest left. height is how many transactions it
+        carried (log, so a deploy burst does not flatten everything beside it) and colour is which
+        validator proposed it. an amber edge is a block that took more than twice the median to
+        arrive. the filter below does not apply here: an empty block is most of what this picture
+        is about.</div>
+      <div id="blocks-strip"></div>
+    </div>
     <div class="section"><div class="section-title">recent blocks</div>
     <table><thead><tr><th>height</th><th>time</th><th>txs</th><th>proposer</th><th>hash</th></tr></thead><tbody id="blocks-list"></tbody></table></div>
   </main></div>
@@ -6247,6 +6278,8 @@ async function loadBlocks() {
   const filterBar = document.getElementById('blocks-filter');
   statsBar.style.display = 'none';
   filterBar.style.display = 'none';
+  const stripSection = document.getElementById('blocks-strip-section');
+  if (stripSection) stripSection.style.display = 'none';
   try {
     await apiSWR('blocks?limit=500', (data, swrMeta) => {
       _blocksCache = data;
@@ -6277,12 +6310,159 @@ async function loadBlocks() {
       const label = el('label', { style: { display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--fg2)', fontSize: '13px', cursor: 'pointer' } });
       label.appendChild(cb); label.appendChild(document.createTextNode('only blocks with transactions'));
       filterBar.appendChild(label);
+      renderBlockStrip();
       renderBlockRows();
     });
   } catch (err) {
     console.error(err);
     failRows(clear('blocks-list'), 5, err, loadBlocks);
   }
+}
+
+// The last N blocks, drawn. 120 is about 6.5 minutes of mainnet at a 3.3s
+// block time: long enough to show a lull, a burst or a validator skipping its
+// turn, short enough that every bar is still wide enough to aim at.
+const BLOCK_STRIP_N = 120;
+
+// Most gno blocks are empty, so the baseline is what the strip is mostly made
+// of: at 3px it was a row of specks and the picture read as a handful of
+// spikes floating over nothing. 8px is a ribbon, and the busy blocks still
+// stand well clear of it. Log above that, like the header's live train and for
+// the same reason: one 40-tx deploy block must not flatten every ordinary one.
+function blockStripHeight(txs, max) {
+  if (!txs) return 8;
+  const top = Math.max(2, max || 2);
+  return Math.max(18, Math.round(18 + 46 * Math.log10(1 + txs) / Math.log10(1 + top)));
+}
+
+// Colour by proposer, assigned over the window's proposers sorted by address.
+//
+// Sorted rather than first-seen: first-seen reassigns every colour the moment
+// the newest block came from a different validator, which on a page that
+// repaints from cache and then from the network means the picture changes
+// under the reader for no reason. Sorted, a validator joining or leaving shifts
+// only the colours after it.
+function blockStripColors(blocks) {
+  const addrs = [...new Set(blocks.map(b => b.proposer_address_raw).filter(Boolean))].sort();
+  const by = {};
+  addrs.forEach((a, i) => { by[a] = SERIES_PALETTE[i % SERIES_PALETTE.length]; });
+  return by;
+}
+
+// One strip for one chain's blocks, oldest first.
+//
+// Per chain and never merged, even though the table above happily interleaves
+// them: the caption's headline number is the median gap between blocks, and
+// over three chains merged by timestamp that median describes nothing that
+// exists. A picture whose axis is time has to be drawn per timeline.
+function blockStripFor(network, blocks) {
+  const wrap = el('div', { style: { marginTop: '10px' } });
+  const colors = blockStripColors(blocks);
+  const maxTxs = blocks.reduce((m, b) => Math.max(m, b.num_txs || 0), 0);
+
+  // Gaps between consecutive blocks, and their median, so "slow" means slow
+  // for this chain rather than slow against a number baked in here.
+  const gaps = [];
+  for (let i = 1; i < blocks.length; i++) {
+    const d = (Date.parse(blocks[i].time) - Date.parse(blocks[i - 1].time)) / 1000;
+    gaps.push(d >= 0 ? d : 0);
+  }
+  const sorted = [...gaps].sort((a, b) => a - b);
+  const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+
+  if (getNetwork() === 'all') {
+    wrap.appendChild(el('div', { style: { fontSize: '12px', color: 'var(--fg2)' } },
+      el('span', { style: { color: netColor(network) } }, network)));
+  }
+
+  const strip = el('div', { className: 'bstrip' });
+  const counts = {};
+  blocks.forEach((b, i) => {
+    const txs = b.num_txs || 0;
+    counts[b.proposer_address_raw] = (counts[b.proposer_address_raw] || 0) + 1;
+    const gap = i === 0 ? null : gaps[i - 1];
+    const bar = el('a', {
+      style: { height: blockStripHeight(txs, maxTxs) + 'px', color: colors[b.proposer_address_raw] || 'var(--fg2)' },
+      onclick: () => navigate('/block/' + b.height + netSuffix(b.network)),
+    });
+    if (txs > 0) bar.classList.add('has-txs');
+    if (median > 0 && gap !== null && gap > median * 2) bar.classList.add('slow');
+    bar.title = fmtNum(b.height) + ' \u00b7 ' + txs + (txs === 1 ? ' tx' : ' txs')
+      + ' \u00b7 ' + (_proposerMonikers[b.proposer_address_raw] || truncAddr(b.proposer_address_raw))
+      + ' \u00b7 ' + shortAge(b.time) + ' ago'
+      + (gap === null ? '' : ' \u00b7 +' + gap.toFixed(1) + 's');
+    strip.appendChild(bar);
+  });
+  wrap.appendChild(strip);
+
+  const axis = el('div', { className: 'bstrip-axis' });
+  axis.appendChild(el('span', {}, fmtNum(blocks[0].height)));
+  axis.appendChild(el('span', {}, (median ? 'median ' + median.toFixed(1) + 's between blocks \u00b7 ' : '')
+    + 'peak ' + fmtNum(maxTxs) + (maxTxs === 1 ? ' tx' : ' txs') + ' in a block'));
+  axis.appendChild(el('span', {}, fmtNum(blocks[blocks.length - 1].height)));
+  wrap.appendChild(axis);
+
+  // Busiest proposer first: the question a legend on this page answers is who
+  // is carrying the window, and alphabetical order answers a different one.
+  const legend = el('div', { className: 'bstrip-legend' });
+  Object.keys(counts).sort((a, b) => counts[b] - counts[a]).forEach(addr => {
+    const swatch = el('i', { style: { background: colors[addr] || 'var(--fg2)' } });
+    // proposerEl, so a moniker that lands after this paint patches itself in.
+    legend.appendChild(el('span', {}, swatch, proposerEl(addr),
+      el('span', { className: 'bl-n' }, String(counts[addr]))));
+  });
+  wrap.appendChild(legend);
+  return wrap;
+}
+
+// Rebuilt from scratch on every call: this runs from an apiSWR render (cached
+// pass, then fresh pass) and again on every live block, and appending would
+// give a strip that grows without bound.
+function renderBlockStrip() {
+  const section = document.getElementById('blocks-strip-section');
+  const body = clear('blocks-strip');
+  if (!section) return;
+  // Shown before the bars are built, not after: the count below is taken from
+  // the container's width, and a display:none container measures zero. Hidden
+  // again at the bottom if there turns out to be nothing to draw.
+  section.style.display = '';
+
+  // How many bars fit. A bar floors at 2px plus a 1px gap, and past that the
+  // flexbox stops shrinking and the strip overflows to the right, silently
+  // clipping the newest blocks: the half a reader came for. So the window
+  // shortens instead of the picture lying about where it ends.
+  const room = Math.floor((body.clientWidth || 900) / 3);
+  const want = Math.max(20, Math.min(BLOCK_STRIP_N, room));
+
+  // _blocksCache is newest-first and, in all-networks mode, interleaved. Group
+  // first and take each chain's own last N from its own group: slicing before
+  // grouping would give a chain a window of whatever share of the merge it
+  // happened to win.
+  //
+  // The key is not `b.network` alone. /api/blocks sets that field per row only
+  // in all-networks mode and the live feed always sets it, so keying on it raw
+  // split one chain into an unnamed strip of 500 API rows plus a second one
+  // holding the handful of blocks that had arrived live. Fall back the way
+  // netSuffix does.
+  const sel = getNetwork();
+  const groups = new Map();
+  for (const b of (_blocksCache || [])) {
+    const k = sel !== 'all' ? sel : (b.network || '');
+    if (!groups.has(k)) groups.set(k, []);
+    const g = groups.get(k);
+    if (g.length < want) g.push(b);
+  }
+
+  let drawn = 0;
+  for (const [network, blocks] of groups) {
+    if (blocks.length < 2) continue;
+    body.appendChild(blockStripFor(network, blocks.slice().reverse()));
+    drawn = Math.max(drawn, blocks.length);
+  }
+  if (!drawn) { section.style.display = 'none'; return; }
+  // Named from what was actually drawn, so a chain with only forty blocks
+  // indexed does not get a heading claiming a hundred and twenty.
+  document.getElementById('blocks-strip-title').textContent = 'the last ' + drawn + ' blocks, drawn';
 }
 
 function renderBlockRows() {
@@ -21068,6 +21248,8 @@ function onLiveBlock(block, network) {
     const at = _blocksCache.findIndex(b => (Date.parse(b.time) || 0) <= ts);
     _blocksCache.splice(at === -1 ? _blocksCache.length : at, 0,
       Object.assign({ network: network }, block));
+    // The strip reads from the cache, so it follows the live feed for free.
+    renderBlockStrip();
   }
 
   // A live row is a row: the filter applies to it too.
@@ -22196,6 +22378,16 @@ function loadDashboards() {
   }
   section.charts.forEach(c => renderDashChart(c, gen));
 }
+
+// The block strip picks its length from the width it has, so a resize changes
+// how many blocks it should be drawing, not just how wide each bar is.
+let _bstripResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_bstripResizeTimer);
+  _bstripResizeTimer = setTimeout(() => {
+    if (document.getElementById('view-blocks')?.classList.contains('active')) renderBlockStrip();
+  }, 150);
+});
 
 let _dashResizeTimer = null;
 window.addEventListener('resize', () => {
