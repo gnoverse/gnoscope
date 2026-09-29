@@ -15743,6 +15743,38 @@ function renderRealmUsage(host, detail, usage, gen) {
 async function loadRealmDetail(path, initialTab) {
   const header = clear('realm-header');
   skeletonBlock(header);
+  // One token per *load*, as opposed to `gen` below which is one per *paint*.
+  //
+  // apiSWR calls its render more than once: cached data first if there is any,
+  // then again when the required paths land, then a third time when a slow
+  // optional one does. That is right for the header and the info table, which
+  // are drawn from those payloads and have to show the new values.
+  //
+  // It is wrong for the three tabs below that fetch their own data. `calls`,
+  // `events` and `deps` depend on the realm path and on nothing in `inert` or
+  // `assets`, so repainting because the inert read finally answered used to
+  // re-issue all four of their requests for an identical result. Measured on
+  // production 2026-09-29: /api/deps twice per direction, /api/realm/usage
+  // twice, on a page whose inert read takes ten seconds and guarantees the
+  // extra paint.
+  //
+  // So those tabs are set up on the first paint of a load and left alone
+  // afterwards. Their containers are deliberately not cleared on a repaint
+  // either: clearing without refetching would strand the skeleton they had
+  // already replaced.
+  // `painted` is scoped to this call, so it is already per-load; no counter
+  // needed.
+  let painted = false;
+  // Bumped once per load, not once per paint.
+  //
+  // `gen` answers "is this still the realm the reader is looking at", which is
+  // a property of the load: every paint in one load is the same realm. Bumping
+  // it per paint meant the background loaders started on one paint had their
+  // own generation invalidated by the next one, so their responses arrived,
+  // saw gen !== _detailGen, and silently dropped. With the loaders running on
+  // the first paint only, that left the calls tab showing its skeleton
+  // forever, which usage-treemap.spec.js caught immediately.
+  const gen = ++_detailGen;
   try {
     // Fetched together, not as two sequential awaits: route() can run twice
     // back-to-back on initial page load (see loadGovDAO's comment on the
@@ -15763,8 +15795,19 @@ async function loadRealmDetail(path, initialTab) {
       { path: 'inert/package/' + path.replace('gno.land/', ''), fallback: null },
       { path: 'assets?realm=' + encodeURIComponent(path), fallback: null },
     ], ([detail, inert, issued], swrMeta) => {
-      const gen = ++_detailGen;
-      destroyDetailCharts();
+      // Stale paints still happen: a newer loadRealmDetail may have started
+      // while this one's fetch was in flight, and it owns the DOM now.
+      if (gen !== _detailGen) return;
+      // False on every paint after the first one of this load. Never a
+      // substitute for `gen`, which guards against the reader navigating away
+      // entirely; this one only says "the tabs below are already set up".
+      const firstPaint = !painted;
+      painted = true;
+      // Paired with the tab setup below, which is first-paint-only: the charts
+      // live in those tabs, so destroying them on a repaint that will not
+      // redraw them leaves the registry empty and the canvases orphaned.
+      // detail-charts.spec.js counts the registry and caught exactly that.
+      if (firstPaint) destroyDetailCharts();
       header.textContent = '';
       const titleRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', margin: '16px 0 8px' } },
         el('h2', { style: { margin: 0 } }, detail.path));
@@ -16114,336 +16157,348 @@ async function loadRealmDetail(path, initialTab) {
       // cannot answer, and the filters reach the aggregates too: narrowing to
       // one function and reading "12 unique callers" means twelve addresses
       // called *that*.
-      const calls = clear('tab-calls'); if (activeTab === 'calls') calls.classList.add('active'); else calls.classList.remove('active');
-      skeletonRows(calls, 5, 4);
-      _usageFilter = usageFilterFromURL();
-      _usageTreemapBy = usageTreemapByFromURL();
-      loadRealmUsage(calls, detail, gen);
+      const calls = document.getElementById('tab-calls');
+      if (activeTab === 'calls') calls.classList.add('active'); else calls.classList.remove('active');
+      if (firstPaint) {
+        calls.textContent = '';
+        skeletonRows(calls, 5, 4);
+        _usageFilter = usageFilterFromURL();
+        _usageTreemapBy = usageTreemapByFromURL();
+        loadRealmUsage(calls, detail, gen);
+      }
       // Events tab (loaded from indexer)
-      const eventsEl = clear('tab-events'); if (activeTab === 'events') eventsEl.classList.add('active'); else eventsEl.classList.remove('active');
-      skeletonRows(eventsEl, 4, 3);
-      (async () => {
-        try {
-          const eventsPath = path.replace('gno.land/', '');
-          const evData = await api('events/' + eventsPath);
-          if (gen !== _detailGen) return;
-          // The strip counts events, not the transactions carrying them: the
-          // table below has one row per event, and a realm emitting six of them
-          // in one transaction has six rows, not one.
-          setTabCount('events', (evData || []).reduce((n, item) => n + (item.events || []).length, 0));
-          eventsEl.textContent = '';
-          // /api/events returns every event carrying this pkg_path, which
-          // includes the chain's storage bookkeeping (see isStorageEvent).
-          // Those are hidden here by default, so count both halves first: the
-          // chart and the empty state are about what the realm itself emitted,
-          // and the toggle below needs to say how many rows it would add.
-          let evStorageCount = 0, evGnoCount = 0, evGnoTxCount = 0;
-          for (const item of evData) {
-            let n = 0;
-            for (const ev of (item.events || [])) {
-              if (isStorageEvent(ev)) evStorageCount++; else { evGnoCount++; n++; }
+      const eventsEl = document.getElementById('tab-events');
+      if (activeTab === 'events') eventsEl.classList.add('active'); else eventsEl.classList.remove('active');
+      if (firstPaint) {
+        eventsEl.textContent = '';
+        skeletonRows(eventsEl, 4, 3);
+        (async () => {
+          try {
+            const eventsPath = path.replace('gno.land/', '');
+            const evData = await api('events/' + eventsPath);
+            if (gen !== _detailGen) return;
+            // The strip counts events, not the transactions carrying them: the
+            // table below has one row per event, and a realm emitting six of them
+            // in one transaction has six rows, not one.
+            setTabCount('events', (evData || []).reduce((n, item) => n + (item.events || []).length, 0));
+            eventsEl.textContent = '';
+            // /api/events returns every event carrying this pkg_path, which
+            // includes the chain's storage bookkeeping (see isStorageEvent).
+            // Those are hidden here by default, so count both halves first: the
+            // chart and the empty state are about what the realm itself emitted,
+            // and the toggle below needs to say how many rows it would add.
+            let evStorageCount = 0, evGnoCount = 0, evGnoTxCount = 0;
+            for (const item of evData) {
+              let n = 0;
+              for (const ev of (item.events || [])) {
+                if (isStorageEvent(ev)) evStorageCount++; else { evGnoCount++; n++; }
+              }
+              if (n) evGnoTxCount++;
             }
-            if (n) evGnoTxCount++;
-          }
-          if (!evGnoCount) {
-            eventsEl.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } },
-              evStorageCount
-                ? 'no events emitted by this realm (' + fmtNum(evStorageCount) + ' storage deposits, see the storage tab)'
-                : 'no events emitted by this realm'));
-            return;
-          }
-          // Event mix over time. The rows are nested (one transaction, many
-          // events), and the type is the interesting axis: a realm emitting
-          // Transfer all day is a different animal from one emitting a dozen
-          // kinds, and the table cannot say which without being read end to
-          // end. Storage events are left out: the chain posts one per
-          // state-changing transaction, so charting them draws the transaction
-          // count a second time in a taller stack.
-          const evRows = [];
-          for (const item of evData) {
-            for (const ev of (item.events || [])) {
-              if (isStorageEvent(ev)) continue;
-              evRows.push({ t: item.block_time, k: ev.type || ev.__typename || 'event' });
+            if (!evGnoCount) {
+              eventsEl.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } },
+                evStorageCount
+                  ? 'no events emitted by this realm (' + fmtNum(evStorageCount) + ' storage deposits, see the storage tab)'
+                  : 'no events emitted by this realm'));
+              return;
             }
-          }
-          const evTotals = new Map();
-          for (const r of evRows) evTotals.set(r.k, (evTotals.get(r.k) || 0) + 1);
-          const evRanked = [...evTotals.entries()].sort((x, y) => y[1] - x[1]).map(e => e[0]);
-          const evKept = evRanked.slice(0, SERIES_PALETTE.length - 1);
-          const evFolded = evRanked.length > evKept.length;
-          if (evFolded) for (const r of evRows) if (!evKept.includes(r.k)) r.k = 'other';
-          const evBuckets = bucketCounts(evRows, r => r.t, r => r.k);
-          if (evBuckets && evRows.length >= CHART_MIN_POINTS) {
-            const evNames = evFolded ? evKept.concat(['other']) : evKept;
-            detailChart(eventsEl, _detailCharts, {
-              title: 'events, per ' + evBuckets.unit,
-              note: fmtNum(evRows.length) + ' events over ' + fmtNum(evGnoTxCount) + ' transactions' +
-                (evFolded ? ', types past the top ' + evKept.length + ' folded into "other"' : ''),
-              data: {
-                labels: evBuckets.labels,
-                datasets: evNames.map((n, i) => ({
-                  label: n,
-                  data: seriesData(evBuckets, n),
-                  backgroundColor: SERIES_PALETTE[i % SERIES_PALETTE.length] + 'aa',
-                  borderColor: SERIES_PALETTE[i % SERIES_PALETTE.length],
-                  borderWidth: 1,
-                })),
-              },
-              scales: {
-                x: chartAxis({ stacked: true }),
-                y: chartAxis({ stacked: true, integer: true, title: 'events' }),
-              },
-            });
-          }
-          // Hidden by default rather than dropped: on a realm whose whole
-          // point is what it costs to store, the raw deposit stream beside the
-          // call that caused it is occasionally the thing you came for.
-          let evShowStorage = urlParam('storage') === '1';
-          const evTblWrap = el('div');
-          const renderEvTable = () => {
-            evTblWrap.textContent = '';
-            const evTbl = el('table');
-            evTbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'tx'), el('th', {}, 'type'), el('th', {}, 'attributes'), el('th', {}, 'block'))));
-            const evBody = el('tbody');
+            // Event mix over time. The rows are nested (one transaction, many
+            // events), and the type is the interesting axis: a realm emitting
+            // Transfer all day is a different animal from one emitting a dozen
+            // kinds, and the table cannot say which without being read end to
+            // end. Storage events are left out: the chain posts one per
+            // state-changing transaction, so charting them draws the transaction
+            // count a second time in a taller stack.
+            const evRows = [];
             for (const item of evData) {
               for (const ev of (item.events || [])) {
-                if (!evShowStorage && isStorageEvent(ev)) continue;
-                const attrStr = (ev.attrs || []).map(a => a.key + '=' + a.value).join(', ');
-                evBody.appendChild(el('tr', {},
-                  el('td', {}, txLink(item.tx_hash, item.block_height, null, { showBlock: false })),
-                  el('td', {}, badge('realm', ev.type || ev.__typename || 'event')),
-                  el('td', {}, attrStr ? linkify(attrStr) : el('span', {}, '-')),
-                  el('td', {}, blockWithAge(item.block_height, item.block_time))
-                ));
+                if (isStorageEvent(ev)) continue;
+                evRows.push({ t: item.block_time, k: ev.type || ev.__typename || 'event' });
               }
             }
-            evTbl.appendChild(evBody); evTblWrap.appendChild(evTbl);
-          };
-          if (evStorageCount) {
-            const evCb = document.createElement('input'); evCb.type = 'checkbox';
-            evCb.checked = evShowStorage;
-            evCb.addEventListener('change', () => {
-              evShowStorage = evCb.checked;
-              urlSetParam('storage', evCb.checked ? '1' : '');
-              renderEvTable();
-            });
-            const evLabel = el('label', { style: { display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--fg2)', fontSize: '13px', cursor: 'pointer' } });
-            evLabel.appendChild(evCb);
-            evLabel.appendChild(document.createTextNode('show ' + fmtNum(evStorageCount) + ' storage events'));
-            evLabel.title = 'StorageDepositEvent / StorageUnlockEvent: the chain’s own bookkeeping, one per state-changing transaction. The storage tab reads them properly.';
-            eventsEl.appendChild(el('div', { style: { marginBottom: '8px' } }, evLabel));
-          }
-          eventsEl.appendChild(evTblWrap);
-          renderEvTable();
-        } catch (err) {
-          if (gen !== _detailGen) return;
-          eventsEl.textContent = '';
-          eventsEl.appendChild(el('div', { style: { color: 'var(--red)' } }, 'Error loading events: ' + err.message));
-        }
-      })();
-      // Storage tab (loaded from indexer)
-      const storageEl = clear('tab-storage'); if (activeTab === 'storage') storageEl.classList.add('active'); else storageEl.classList.remove('active');
-      skeletonBlock(storageEl);
-      (async () => {
-        // /api/storage refuses the all-networks case, and it is right to: storage
-        // figures are denominated amounts, so blending chains would be
-        // meaningless. Asking anyway turned every realm page view in the default
-        // mode into a 400 and a console error, and told the reader "something
-        // broke" when the real state is "pick a chain first".
-        if (getNetwork() === 'all') {
-          storageEl.textContent = '';
-          storageEl.appendChild(el('div', { style: { color: 'var(--fg2)' } },
-            'storage is denominated per chain — select a specific network to see it'));
-          return;
-        }
-        try {
-          const storagePath = path.replace('gno.land/', '');
-          const sData = await api('storage/' + storagePath);
-          if (gen !== _detailGen) return;
-          storageEl.textContent = '';
-          const st = sData.storage || {};
-          const gs = sData.gas || {};
-          setTabCount('storage', (st.entries || []).length);
-          // Stats bar
-          const sStats = el('div', { className: 'stats-bar' });
-          sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'net storage'), el('span', { className: 'value' }, fmtNum(st.net_bytes || 0) + ' bytes')));
-          sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'deposited'), el('span', { className: 'value' }, fmtNum(st.total_bytes_deposited || 0) + ' bytes')));
-          sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'deposit fee'), el('span', { className: 'value' }, fmtNum(st.total_fee_deposited || 0) + ' ugnot')));
-          // Only when there is something to refund, so the common realm (which
-          // has never freed a byte) is not given two stats reading zero. When
-          // there is, gross deposits alone are the wrong number to leave a
-          // reader holding: r/gnoland/wugnot had paid 610,466,700 ugnot and got
-          // 491,770,200 back as of 2026-09-21, so its storage has cost it
-          // 118,696,500.
-          if (st.total_fee_refunded) {
-            sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'refunded'), el('span', { className: 'value' }, fmtNum(st.total_fee_refunded) + ' ugnot')));
-            sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'net fee'), el('span', { className: 'value' }, fmtNum((st.total_fee_deposited || 0) - st.total_fee_refunded) + ' ugnot')));
-          }
-          sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'total gas used'), el('span', { className: 'value' }, fmtNum(gs.total_gas_used || 0))));
-          sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'total gas fee'), el('span', { className: 'value' }, fmtNum(gs.total_gas_fee || 0) + ' ugnot')));
-          sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'txs'), el('span', { className: 'value' }, fmtNum(gs.tx_count || 0))));
-          storageEl.appendChild(sStats);
-          // Storage evolution. No extra request: bytes_delta is already signed
-          // (the chain emits an unlock's as negative, and #255 stopped us
-          // flipping it), so a running sum over the entries in chronological
-          // order lands exactly on net_bytes. The table below answers "which
-          // transaction"; this answers "is it growing, and since when", which
-          // is the question 4819 rows of r/gnoland/wugnot cannot.
-          const stBuckets = bucketCounts(st.entries || [],
-            e => e.block_time,
-            e => (e.bytes_delta < 0 ? 'released' : 'added'),
-            e => e.bytes_delta);
-          if (stBuckets && (st.entries || []).length >= CHART_MIN_POINTS) {
-            const added = seriesData(stBuckets, 'added');
-            const released = seriesData(stBuckets, 'released');
-            const held = runningTotal(added.map((v, i) => v + released[i]));
-            const note = [fmtNum((st.entries || []).length) + ' storage events'];
-            // The curve is only the whole realm when every event is in it. A
-            // row whose block_time never got filled in cannot be placed on a
-            // time axis, and silently dropping it would leave a line that
-            // stops short of the net figure printed right above it.
-            if (stBuckets.dropped) note.push(fmtNum(stBuckets.dropped) + ' with no block time, not plotted');
-            else note.push('the line is the running total, ending at ' + fmtBytes(st.net_bytes || 0));
-            detailChart(storageEl, _detailCharts, {
-              title: 'storage evolution, per ' + stBuckets.unit,
-              note: note.join(' \u00b7 '),
-              data: {
-                labels: stBuckets.labels,
-                datasets: [
-                  { label: 'bytes added', data: added, backgroundColor: 'rgba(78,205,196,0.55)', borderColor: '#4ecdc4', borderWidth: 1, yAxisID: 'y', order: 3 },
-                  { label: 'bytes released', data: released, backgroundColor: 'rgba(255,107,107,0.55)', borderColor: '#ff6b6b', borderWidth: 1, yAxisID: 'y', order: 3 },
-                  {
-                    label: 'net bytes held', data: held, type: 'line', yAxisID: 'y1',
-                    borderColor: '#ffd43b', backgroundColor: 'rgba(255,212,59,0.08)',
-                    borderWidth: 2, tension: 0.2, fill: true, order: 1,
-                  },
-                ],
-              },
-              scales: {
-                x: chartAxis({ stacked: true }),
-                y: chartAxis({ stacked: true, title: 'change', format: signedBytes }),
-                y1: chartAxis({ position: 'right', grid: false, title: 'held', format: signedBytes }),
-              },
-            });
-          }
-          // Gas, on the same axis of time. Failed transactions are stacked
-          // separately rather than dropped: they burn gas and pay a fee like
-          // any other, and a realm whose reverts cost more than its successes
-          // is exactly what this should be able to show.
-          const gasRows = [];
-          for (const e of (gs.entries || [])) {
-            gasRows.push({ t: e.block_time, k: e.success ? 'used' : 'failed', v: e.gas_used });
-            gasRows.push({ t: e.block_time, k: 'fee', v: e.gas_fee });
-          }
-          const gsBuckets = bucketCounts(gasRows, r => r.t, r => r.k, r => r.v);
-          if (gsBuckets && (gs.entries || []).length >= CHART_MIN_POINTS) {
-            detailChart(storageEl, _detailCharts, {
-              title: 'gas burned, per ' + gsBuckets.unit,
-              note: fmtNum(gs.tx_count || 0) + ' transactions \u00b7 ' + fmtNum(gs.total_gas_used || 0) +
-                ' gas \u00b7 ' + fmtNum(gs.total_gas_fee || 0) + ' ugnot in fees',
-              data: {
-                labels: gsBuckets.labels,
-                datasets: [
-                  { label: 'gas used', data: seriesData(gsBuckets, 'used'), backgroundColor: 'rgba(78,205,196,0.55)', borderColor: '#4ecdc4', borderWidth: 1, yAxisID: 'y', order: 3 },
-                  { label: 'gas used, failed', data: seriesData(gsBuckets, 'failed'), backgroundColor: 'rgba(255,107,107,0.55)', borderColor: '#ff6b6b', borderWidth: 1, yAxisID: 'y', order: 3 },
-                  {
-                    label: 'fees paid, cumulative (ugnot)', data: runningTotal(seriesData(gsBuckets, 'fee')),
-                    type: 'line', yAxisID: 'y1', borderColor: '#ffd43b',
-                    backgroundColor: 'rgba(255,212,59,0.08)', borderWidth: 2, tension: 0.2, fill: true, order: 1,
-                  },
-                ],
-              },
-              scales: {
-                x: chartAxis({ stacked: true }),
-                y: chartAxis({ stacked: true, title: 'gas' }),
-                y1: chartAxis({ position: 'right', grid: false, title: 'ugnot' }),
-              },
-            });
-          }
-          // Storage events table
-          if ((st.entries || []).length) {
-            storageEl.appendChild(el('div', { className: 'section-title', style: { marginTop: '16px' } }, 'storage events'));
-            const stTbl = el('table');
-            stTbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'tx'), el('th', {}, 'type'), el('th', {}, 'bytes'), el('th', {}, 'fee'), el('th', {}, 'block'))));
-            const stBody = el('tbody');
-            // Storage events from the same call (e.g. a multicall posting
-            // several times at once) share a block and a tx; span those
-            // columns across the group instead of repeating them per row.
-            const stSpans = rowSpans(st.entries, e => e.tx_hash);
-            st.entries.forEach((e, i) => {
-              stBody.appendChild(el('tr', {},
-                spanTd(stSpans, i, txLink(e.tx_hash, e.block_height, null, { showBlock: false })),
-                el('td', {}, badge(e.type === 'deposit' ? 'pkg' : 'ok', e.type)),
-                el('td', {}, fmtNum(e.bytes_delta)),
-                // Signed like the bytes column beside it, for the same reason:
-                // an unlock's fee is money coming back, and printed bare it is
-                // indistinguishable from money going out, so the column no
-                // longer visibly adds up to its own total row.
-                el('td', {}, fmtNum(e.type === 'unlock' ? -e.fee_amount : e.fee_amount) + ' ' + (e.fee_denom || '')),
-                spanTd(stSpans, i, blockWithAge(e.block_height, e.block_time))
-              ));
-            });
-            // Total row.
-            //
-            // bytes_delta arrives signed, so summing it straight gives the net
-            // figure. fee_amount does not: an unlock row carries its *refund*,
-            // and it is positive. Adding it to the deposits totalled money paid
-            // plus money returned, a quantity that describes nothing: on
-            // 2026-09-21 r/gnoland/wugnot read 1,102,236,900 ugnot here against
-            // a real cost of 118,696,500, on a page whose stats bar said
-            // 610,466,700 three rows above. Same family as #255, one layer up.
-            const totalBytes = st.entries.reduce((s, e) => s + e.bytes_delta, 0);
-            const totalFee = st.entries.reduce((s, e) => s + (e.type === 'unlock' ? -e.fee_amount : e.fee_amount), 0);
-            stBody.appendChild(el('tr', { className: 'total-row' },
-              el('td', {}, ''), el('td', {}, 'total'),
-              el('td', {}, fmtNum(totalBytes)),
-              el('td', {}, fmtNum(totalFee) + ' ugnot'), el('td', {}, '')
-            ));
-            stTbl.appendChild(stBody); storageEl.appendChild(stTbl);
-
-          }
-          // Gas usage table
-          if ((gs.entries || []).length) {
-            storageEl.appendChild(el('div', { className: 'section-title', style: { marginTop: '24px' } }, 'gas usage per transaction'));
-            const gsTbl = el('table');
-            gsTbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'tx'), el('th', {}, 'function'), el('th', {}, 'gas used'), el('th', {}, 'gas wanted'), el('th', {}, 'fee'), el('th', {}, 'status'), el('th', {}, 'block'))));
-            const gsBody = el('tbody');
-            for (const e of gs.entries) {
-              const pct = e.gas_wanted > 0 ? (e.gas_used / e.gas_wanted * 100).toFixed(0) + '%' : '-';
-              gsBody.appendChild(el('tr', {},
-                el('td', {}, txLink(e.tx_hash, e.block_height, null, { showBlock: false })),
-                el('td', {}, e.func ? funcSpan(e.func) : '-'),
-                el('td', {}, fmtNum(e.gas_used) + ' (' + pct + ')'),
-                el('td', {}, fmtNum(e.gas_wanted)),
-                el('td', {}, fmtNum(e.gas_fee) + ' ugnot'),
-                el('td', {}, statusBadge(e.success)),
-                el('td', {}, blockWithAge(e.block_height, e.block_time))
-              ));
+            const evTotals = new Map();
+            for (const r of evRows) evTotals.set(r.k, (evTotals.get(r.k) || 0) + 1);
+            const evRanked = [...evTotals.entries()].sort((x, y) => y[1] - x[1]).map(e => e[0]);
+            const evKept = evRanked.slice(0, SERIES_PALETTE.length - 1);
+            const evFolded = evRanked.length > evKept.length;
+            if (evFolded) for (const r of evRows) if (!evKept.includes(r.k)) r.k = 'other';
+            const evBuckets = bucketCounts(evRows, r => r.t, r => r.k);
+            if (evBuckets && evRows.length >= CHART_MIN_POINTS) {
+              const evNames = evFolded ? evKept.concat(['other']) : evKept;
+              detailChart(eventsEl, _detailCharts, {
+                title: 'events, per ' + evBuckets.unit,
+                note: fmtNum(evRows.length) + ' events over ' + fmtNum(evGnoTxCount) + ' transactions' +
+                  (evFolded ? ', types past the top ' + evKept.length + ' folded into "other"' : ''),
+                data: {
+                  labels: evBuckets.labels,
+                  datasets: evNames.map((n, i) => ({
+                    label: n,
+                    data: seriesData(evBuckets, n),
+                    backgroundColor: SERIES_PALETTE[i % SERIES_PALETTE.length] + 'aa',
+                    borderColor: SERIES_PALETTE[i % SERIES_PALETTE.length],
+                    borderWidth: 1,
+                  })),
+                },
+                scales: {
+                  x: chartAxis({ stacked: true }),
+                  y: chartAxis({ stacked: true, integer: true, title: 'events' }),
+                },
+              });
             }
-            // Total row
-            const tGasUsed = gs.entries.reduce((s, e) => s + e.gas_used, 0);
-            const tGasWanted = gs.entries.reduce((s, e) => s + e.gas_wanted, 0);
-            const tGasFee = gs.entries.reduce((s, e) => s + e.gas_fee, 0);
-            const tPct = tGasWanted > 0 ? (tGasUsed / tGasWanted * 100).toFixed(0) + '%' : '-';
-            gsBody.appendChild(el('tr', { className: 'total-row' },
-              el('td', {}, ''), el('td', {}, 'total'),
-              el('td', {}, fmtNum(tGasUsed) + ' (' + tPct + ')'),
-              el('td', {}, fmtNum(tGasWanted)),
-              el('td', {}, fmtNum(tGasFee) + ' ugnot'),
-              el('td', {}, ''), el('td', {}, '')
-            ));
-            gsTbl.appendChild(gsBody); storageEl.appendChild(gsTbl);
+            // Hidden by default rather than dropped: on a realm whose whole
+            // point is what it costs to store, the raw deposit stream beside the
+            // call that caused it is occasionally the thing you came for.
+            let evShowStorage = urlParam('storage') === '1';
+            const evTblWrap = el('div');
+            const renderEvTable = () => {
+              evTblWrap.textContent = '';
+              const evTbl = el('table');
+              evTbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'tx'), el('th', {}, 'type'), el('th', {}, 'attributes'), el('th', {}, 'block'))));
+              const evBody = el('tbody');
+              for (const item of evData) {
+                for (const ev of (item.events || [])) {
+                  if (!evShowStorage && isStorageEvent(ev)) continue;
+                  const attrStr = (ev.attrs || []).map(a => a.key + '=' + a.value).join(', ');
+                  evBody.appendChild(el('tr', {},
+                    el('td', {}, txLink(item.tx_hash, item.block_height, null, { showBlock: false })),
+                    el('td', {}, badge('realm', ev.type || ev.__typename || 'event')),
+                    el('td', {}, attrStr ? linkify(attrStr) : el('span', {}, '-')),
+                    el('td', {}, blockWithAge(item.block_height, item.block_time))
+                  ));
+                }
+              }
+              evTbl.appendChild(evBody); evTblWrap.appendChild(evTbl);
+            };
+            if (evStorageCount) {
+              const evCb = document.createElement('input'); evCb.type = 'checkbox';
+              evCb.checked = evShowStorage;
+              evCb.addEventListener('change', () => {
+                evShowStorage = evCb.checked;
+                urlSetParam('storage', evCb.checked ? '1' : '');
+                renderEvTable();
+              });
+              const evLabel = el('label', { style: { display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--fg2)', fontSize: '13px', cursor: 'pointer' } });
+              evLabel.appendChild(evCb);
+              evLabel.appendChild(document.createTextNode('show ' + fmtNum(evStorageCount) + ' storage events'));
+              evLabel.title = 'StorageDepositEvent / StorageUnlockEvent: the chain’s own bookkeeping, one per state-changing transaction. The storage tab reads them properly.';
+              eventsEl.appendChild(el('div', { style: { marginBottom: '8px' } }, evLabel));
+            }
+            eventsEl.appendChild(evTblWrap);
+            renderEvTable();
+          } catch (err) {
+            if (gen !== _detailGen) return;
+            eventsEl.textContent = '';
+            eventsEl.appendChild(el('div', { style: { color: 'var(--red)' } }, 'Error loading events: ' + err.message));
+          }
+        })();
+      }
+      // Storage tab (loaded from indexer)
+      const storageEl = document.getElementById('tab-storage');
+      if (activeTab === 'storage') storageEl.classList.add('active'); else storageEl.classList.remove('active');
+      if (firstPaint) {
+        storageEl.textContent = '';
+        skeletonBlock(storageEl);
+        (async () => {
+          // /api/storage refuses the all-networks case, and it is right to: storage
+          // figures are denominated amounts, so blending chains would be
+          // meaningless. Asking anyway turned every realm page view in the default
+          // mode into a 400 and a console error, and told the reader "something
+          // broke" when the real state is "pick a chain first".
+          if (getNetwork() === 'all') {
+            storageEl.textContent = '';
+            storageEl.appendChild(el('div', { style: { color: 'var(--fg2)' } },
+              'storage is denominated per chain — select a specific network to see it'));
+            return;
+          }
+          try {
+            const storagePath = path.replace('gno.land/', '');
+            const sData = await api('storage/' + storagePath);
+            if (gen !== _detailGen) return;
+            storageEl.textContent = '';
+            const st = sData.storage || {};
+            const gs = sData.gas || {};
+            setTabCount('storage', (st.entries || []).length);
+            // Stats bar
+            const sStats = el('div', { className: 'stats-bar' });
+            sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'net storage'), el('span', { className: 'value' }, fmtNum(st.net_bytes || 0) + ' bytes')));
+            sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'deposited'), el('span', { className: 'value' }, fmtNum(st.total_bytes_deposited || 0) + ' bytes')));
+            sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'deposit fee'), el('span', { className: 'value' }, fmtNum(st.total_fee_deposited || 0) + ' ugnot')));
+            // Only when there is something to refund, so the common realm (which
+            // has never freed a byte) is not given two stats reading zero. When
+            // there is, gross deposits alone are the wrong number to leave a
+            // reader holding: r/gnoland/wugnot had paid 610,466,700 ugnot and got
+            // 491,770,200 back as of 2026-09-21, so its storage has cost it
+            // 118,696,500.
+            if (st.total_fee_refunded) {
+              sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'refunded'), el('span', { className: 'value' }, fmtNum(st.total_fee_refunded) + ' ugnot')));
+              sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'net fee'), el('span', { className: 'value' }, fmtNum((st.total_fee_deposited || 0) - st.total_fee_refunded) + ' ugnot')));
+            }
+            sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'total gas used'), el('span', { className: 'value' }, fmtNum(gs.total_gas_used || 0))));
+            sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'total gas fee'), el('span', { className: 'value' }, fmtNum(gs.total_gas_fee || 0) + ' ugnot')));
+            sStats.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'txs'), el('span', { className: 'value' }, fmtNum(gs.tx_count || 0))));
+            storageEl.appendChild(sStats);
+            // Storage evolution. No extra request: bytes_delta is already signed
+            // (the chain emits an unlock's as negative, and #255 stopped us
+            // flipping it), so a running sum over the entries in chronological
+            // order lands exactly on net_bytes. The table below answers "which
+            // transaction"; this answers "is it growing, and since when", which
+            // is the question 4819 rows of r/gnoland/wugnot cannot.
+            const stBuckets = bucketCounts(st.entries || [],
+              e => e.block_time,
+              e => (e.bytes_delta < 0 ? 'released' : 'added'),
+              e => e.bytes_delta);
+            if (stBuckets && (st.entries || []).length >= CHART_MIN_POINTS) {
+              const added = seriesData(stBuckets, 'added');
+              const released = seriesData(stBuckets, 'released');
+              const held = runningTotal(added.map((v, i) => v + released[i]));
+              const note = [fmtNum((st.entries || []).length) + ' storage events'];
+              // The curve is only the whole realm when every event is in it. A
+              // row whose block_time never got filled in cannot be placed on a
+              // time axis, and silently dropping it would leave a line that
+              // stops short of the net figure printed right above it.
+              if (stBuckets.dropped) note.push(fmtNum(stBuckets.dropped) + ' with no block time, not plotted');
+              else note.push('the line is the running total, ending at ' + fmtBytes(st.net_bytes || 0));
+              detailChart(storageEl, _detailCharts, {
+                title: 'storage evolution, per ' + stBuckets.unit,
+                note: note.join(' \u00b7 '),
+                data: {
+                  labels: stBuckets.labels,
+                  datasets: [
+                    { label: 'bytes added', data: added, backgroundColor: 'rgba(78,205,196,0.55)', borderColor: '#4ecdc4', borderWidth: 1, yAxisID: 'y', order: 3 },
+                    { label: 'bytes released', data: released, backgroundColor: 'rgba(255,107,107,0.55)', borderColor: '#ff6b6b', borderWidth: 1, yAxisID: 'y', order: 3 },
+                    {
+                      label: 'net bytes held', data: held, type: 'line', yAxisID: 'y1',
+                      borderColor: '#ffd43b', backgroundColor: 'rgba(255,212,59,0.08)',
+                      borderWidth: 2, tension: 0.2, fill: true, order: 1,
+                    },
+                  ],
+                },
+                scales: {
+                  x: chartAxis({ stacked: true }),
+                  y: chartAxis({ stacked: true, title: 'change', format: signedBytes }),
+                  y1: chartAxis({ position: 'right', grid: false, title: 'held', format: signedBytes }),
+                },
+              });
+            }
+            // Gas, on the same axis of time. Failed transactions are stacked
+            // separately rather than dropped: they burn gas and pay a fee like
+            // any other, and a realm whose reverts cost more than its successes
+            // is exactly what this should be able to show.
+            const gasRows = [];
+            for (const e of (gs.entries || [])) {
+              gasRows.push({ t: e.block_time, k: e.success ? 'used' : 'failed', v: e.gas_used });
+              gasRows.push({ t: e.block_time, k: 'fee', v: e.gas_fee });
+            }
+            const gsBuckets = bucketCounts(gasRows, r => r.t, r => r.k, r => r.v);
+            if (gsBuckets && (gs.entries || []).length >= CHART_MIN_POINTS) {
+              detailChart(storageEl, _detailCharts, {
+                title: 'gas burned, per ' + gsBuckets.unit,
+                note: fmtNum(gs.tx_count || 0) + ' transactions \u00b7 ' + fmtNum(gs.total_gas_used || 0) +
+                  ' gas \u00b7 ' + fmtNum(gs.total_gas_fee || 0) + ' ugnot in fees',
+                data: {
+                  labels: gsBuckets.labels,
+                  datasets: [
+                    { label: 'gas used', data: seriesData(gsBuckets, 'used'), backgroundColor: 'rgba(78,205,196,0.55)', borderColor: '#4ecdc4', borderWidth: 1, yAxisID: 'y', order: 3 },
+                    { label: 'gas used, failed', data: seriesData(gsBuckets, 'failed'), backgroundColor: 'rgba(255,107,107,0.55)', borderColor: '#ff6b6b', borderWidth: 1, yAxisID: 'y', order: 3 },
+                    {
+                      label: 'fees paid, cumulative (ugnot)', data: runningTotal(seriesData(gsBuckets, 'fee')),
+                      type: 'line', yAxisID: 'y1', borderColor: '#ffd43b',
+                      backgroundColor: 'rgba(255,212,59,0.08)', borderWidth: 2, tension: 0.2, fill: true, order: 1,
+                    },
+                  ],
+                },
+                scales: {
+                  x: chartAxis({ stacked: true }),
+                  y: chartAxis({ stacked: true, title: 'gas' }),
+                  y1: chartAxis({ position: 'right', grid: false, title: 'ugnot' }),
+                },
+              });
+            }
+            // Storage events table
+            if ((st.entries || []).length) {
+              storageEl.appendChild(el('div', { className: 'section-title', style: { marginTop: '16px' } }, 'storage events'));
+              const stTbl = el('table');
+              stTbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'tx'), el('th', {}, 'type'), el('th', {}, 'bytes'), el('th', {}, 'fee'), el('th', {}, 'block'))));
+              const stBody = el('tbody');
+              // Storage events from the same call (e.g. a multicall posting
+              // several times at once) share a block and a tx; span those
+              // columns across the group instead of repeating them per row.
+              const stSpans = rowSpans(st.entries, e => e.tx_hash);
+              st.entries.forEach((e, i) => {
+                stBody.appendChild(el('tr', {},
+                  spanTd(stSpans, i, txLink(e.tx_hash, e.block_height, null, { showBlock: false })),
+                  el('td', {}, badge(e.type === 'deposit' ? 'pkg' : 'ok', e.type)),
+                  el('td', {}, fmtNum(e.bytes_delta)),
+                  // Signed like the bytes column beside it, for the same reason:
+                  // an unlock's fee is money coming back, and printed bare it is
+                  // indistinguishable from money going out, so the column no
+                  // longer visibly adds up to its own total row.
+                  el('td', {}, fmtNum(e.type === 'unlock' ? -e.fee_amount : e.fee_amount) + ' ' + (e.fee_denom || '')),
+                  spanTd(stSpans, i, blockWithAge(e.block_height, e.block_time))
+                ));
+              });
+              // Total row.
+              //
+              // bytes_delta arrives signed, so summing it straight gives the net
+              // figure. fee_amount does not: an unlock row carries its *refund*,
+              // and it is positive. Adding it to the deposits totalled money paid
+              // plus money returned, a quantity that describes nothing: on
+              // 2026-09-21 r/gnoland/wugnot read 1,102,236,900 ugnot here against
+              // a real cost of 118,696,500, on a page whose stats bar said
+              // 610,466,700 three rows above. Same family as #255, one layer up.
+              const totalBytes = st.entries.reduce((s, e) => s + e.bytes_delta, 0);
+              const totalFee = st.entries.reduce((s, e) => s + (e.type === 'unlock' ? -e.fee_amount : e.fee_amount), 0);
+              stBody.appendChild(el('tr', { className: 'total-row' },
+                el('td', {}, ''), el('td', {}, 'total'),
+                el('td', {}, fmtNum(totalBytes)),
+                el('td', {}, fmtNum(totalFee) + ' ugnot'), el('td', {}, '')
+              ));
+              stTbl.appendChild(stBody); storageEl.appendChild(stTbl);
 
+            }
+            // Gas usage table
+            if ((gs.entries || []).length) {
+              storageEl.appendChild(el('div', { className: 'section-title', style: { marginTop: '24px' } }, 'gas usage per transaction'));
+              const gsTbl = el('table');
+              gsTbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'tx'), el('th', {}, 'function'), el('th', {}, 'gas used'), el('th', {}, 'gas wanted'), el('th', {}, 'fee'), el('th', {}, 'status'), el('th', {}, 'block'))));
+              const gsBody = el('tbody');
+              for (const e of gs.entries) {
+                const pct = e.gas_wanted > 0 ? (e.gas_used / e.gas_wanted * 100).toFixed(0) + '%' : '-';
+                gsBody.appendChild(el('tr', {},
+                  el('td', {}, txLink(e.tx_hash, e.block_height, null, { showBlock: false })),
+                  el('td', {}, e.func ? funcSpan(e.func) : '-'),
+                  el('td', {}, fmtNum(e.gas_used) + ' (' + pct + ')'),
+                  el('td', {}, fmtNum(e.gas_wanted)),
+                  el('td', {}, fmtNum(e.gas_fee) + ' ugnot'),
+                  el('td', {}, statusBadge(e.success)),
+                  el('td', {}, blockWithAge(e.block_height, e.block_time))
+                ));
+              }
+              // Total row
+              const tGasUsed = gs.entries.reduce((s, e) => s + e.gas_used, 0);
+              const tGasWanted = gs.entries.reduce((s, e) => s + e.gas_wanted, 0);
+              const tGasFee = gs.entries.reduce((s, e) => s + e.gas_fee, 0);
+              const tPct = tGasWanted > 0 ? (tGasUsed / tGasWanted * 100).toFixed(0) + '%' : '-';
+              gsBody.appendChild(el('tr', { className: 'total-row' },
+                el('td', {}, ''), el('td', {}, 'total'),
+                el('td', {}, fmtNum(tGasUsed) + ' (' + tPct + ')'),
+                el('td', {}, fmtNum(tGasWanted)),
+                el('td', {}, fmtNum(tGasFee) + ' ugnot'),
+                el('td', {}, ''), el('td', {}, '')
+              ));
+              gsTbl.appendChild(gsBody); storageEl.appendChild(gsTbl);
+
+            }
+            if (!(st.entries || []).length && !(gs.entries || []).length) {
+              storageEl.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } }, 'no storage or gas data for this realm'));
+            }
+          } catch (err) {
+            if (gen !== _detailGen) return;
+            storageEl.textContent = '';
+            storageEl.appendChild(el('div', { style: { color: 'var(--red)' } }, 'Error: ' + err.message));
           }
-          if (!(st.entries || []).length && !(gs.entries || []).length) {
-            storageEl.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } }, 'no storage or gas data for this realm'));
-          }
-        } catch (err) {
-          if (gen !== _detailGen) return;
-          storageEl.textContent = '';
-          storageEl.appendChild(el('div', { style: { color: 'var(--red)' } }, 'Error: ' + err.message));
-        }
-      })();
+        })();
+      }
       // Deps: the graph and the two lists, one tab, both drawn from the same
       // two dependency queries.
       //
@@ -16456,60 +16511,77 @@ async function loadRealmDetail(path, initialTab) {
       // Defi. Emptied and shown or hidden like every other tab, but filled only
       // on demand: see tabLoaders above. A deep link straight to it counts as
       // demand.
-      const defiEl = clear('tab-defi');
-      if (activeTab === 'defi') { defiEl.classList.add('active'); tabLoaders.defi(); } else defiEl.classList.remove('active');
-      const stateEl = clear('tab-state');
-      if (activeTab === 'state') { stateEl.classList.add('active'); tabLoaders.state(); } else stateEl.classList.remove('active');
-      const depsEl = clear('tab-deps'); if (activeTab === 'deps') depsEl.classList.add('active'); else depsEl.classList.remove('active');
-      skeletonBlock(depsEl);
-      const depsPath = path.replace('gno.land/', '');
-      // Before the fetch, not after: a link that says "sized by gas, shared
-      // callers" needs the caller data, and restoring the controls afterwards
-      // would draw the default graph and then throw it away.
-      depGraphApplyURL(new URLSearchParams(window.location.search));
-      (async () => {
-        let imports, dependents;
-        try {
-          [imports, dependents] = await Promise.all([api('deps/' + depsPath), api('deps/' + depsPath + '?dir=dependents')]);
-        } catch (err) {
+      //
+      // Set up on the first paint of a load only, for the same reason as the
+      // tabs above: a repaint that cleared the container and started the
+      // loader again would throw away a result that had already arrived and
+      // ask for an identical one. Worse here than above, because these two
+      // are the expensive pair (defi reconstructs every transfer leg, state
+      // resolves the object graph over RPC).
+      const defiEl = document.getElementById('tab-defi');
+      const stateEl = document.getElementById('tab-state');
+      if (activeTab === 'defi') defiEl.classList.add('active'); else defiEl.classList.remove('active');
+      if (activeTab === 'state') stateEl.classList.add('active'); else stateEl.classList.remove('active');
+      if (firstPaint) {
+        defiEl.textContent = '';
+        stateEl.textContent = '';
+        if (activeTab === 'defi') tabLoaders.defi();
+        if (activeTab === 'state') tabLoaders.state();
+      }
+      const depsEl = document.getElementById('tab-deps');
+      if (activeTab === 'deps') depsEl.classList.add('active'); else depsEl.classList.remove('active');
+      if (firstPaint) {
+        depsEl.textContent = '';
+        skeletonBlock(depsEl);
+        const depsPath = path.replace('gno.land/', '');
+        // Before the fetch, not after: a link that says "sized by gas, shared
+        // callers" needs the caller data, and restoring the controls afterwards
+        // would draw the default graph and then throw it away.
+        depGraphApplyURL(new URLSearchParams(window.location.search));
+        (async () => {
+          let imports, dependents;
+          try {
+            [imports, dependents] = await Promise.all([api('deps/' + depsPath), api('deps/' + depsPath + '?dir=dependents')]);
+          } catch (err) {
+            if (gen !== _detailGen) return;
+            depsEl.textContent = '';
+            depsEl.appendChild(el('div', { style: { color: 'var(--red)' } }, 'Error loading dependencies: ' + err.message));
+            return;
+          }
           if (gen !== _detailGen) return;
           depsEl.textContent = '';
-          depsEl.appendChild(el('div', { style: { color: 'var(--red)' } }, 'Error loading dependencies: ' + err.message));
-          return;
-        }
-        if (gen !== _detailGen) return;
-        depsEl.textContent = '';
-        // Graph first, lists second. The picture answers "what is this realm
-        // wired into" at a glance; the lists answer "which ones exactly", and
-        // reading them is the follow-up question, not the opening one.
-        //
-        // Both containers are built here rather than sitting in the static
-        // markup because `clear('tab-deps')` empties this element on every
-        // render, so anything the graph code looks up by id has to be put back
-        // before renderDepGraph runs.
-        depsEl.appendChild(el('div', { id: 'dep-graph-controls' }));
-        depsEl.appendChild(el('div', { id: 'dep-graph' }));
-        const grid = el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' } });
-        grid.appendChild(buildDepTree('imports (what this uses)', imports, path,
-          'what each of these imports in turn'));
-        grid.appendChild(buildDepTree('dependents (what uses this)', dependents, path,
-          'what else depends on each of these'));
-        depsEl.appendChild(grid);
-        // Through reloadDepGraph rather than straight into renderDepGraph:
-        // every control here is sticky across realms, like the dashboards'
-        // picker, so arriving on a new realm with 7d or caller mode still
-        // selected has to fetch that realm's answer before the first paint
-        // instead of drawing the wrong graph and then jumping.
-        _depGraph.imports = imports;
-        _depGraph.dependents = dependents;
-        _depGraph.center = path;
-        // The chain this realm is actually on, which is not always the one the
-        // reader has selected: in "all networks" mode the endpoints that refuse
-        // to blend resolve to the first configured chain, and this path may not
-        // live there at all.
-        _depGraph.network = detail.network || null;
-        reloadDepGraph();
-      })();
+          // Graph first, lists second. The picture answers "what is this realm
+          // wired into" at a glance; the lists answer "which ones exactly", and
+          // reading them is the follow-up question, not the opening one.
+          //
+          // Both containers are built here rather than sitting in the static
+          // markup because `clear('tab-deps')` empties this element on every
+          // render, so anything the graph code looks up by id has to be put back
+          // before renderDepGraph runs.
+          depsEl.appendChild(el('div', { id: 'dep-graph-controls' }));
+          depsEl.appendChild(el('div', { id: 'dep-graph' }));
+          const grid = el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' } });
+          grid.appendChild(buildDepTree('imports (what this uses)', imports, path,
+            'what each of these imports in turn'));
+          grid.appendChild(buildDepTree('dependents (what uses this)', dependents, path,
+            'what else depends on each of these'));
+          depsEl.appendChild(grid);
+          // Through reloadDepGraph rather than straight into renderDepGraph:
+          // every control here is sticky across realms, like the dashboards'
+          // picker, so arriving on a new realm with 7d or caller mode still
+          // selected has to fetch that realm's answer before the first paint
+          // instead of drawing the wrong graph and then jumping.
+          _depGraph.imports = imports;
+          _depGraph.dependents = dependents;
+          _depGraph.center = path;
+          // The chain this realm is actually on, which is not always the one the
+          // reader has selected: in "all networks" mode the endpoints that refuse
+          // to blend resolve to the first configured chain, and this path may not
+          // live there at all.
+          _depGraph.network = detail.network || null;
+          reloadDepGraph();
+        })();
+      }
     });
   } catch (err) {
     header.textContent = '';
