@@ -16,6 +16,8 @@ One static binary and one SQLite file. No runtime dependencies.
 | `-block-history-days` | `90` | days of block history to backfill. `0` backfills the full chain; a negative value stores no blocks at all |
 | `-analytics-script` | — | URL of an analytics script to load in the frontend. Empty serves no third-party script at all |
 | `-gnoshot` | — | base URL of a [gnoshot](https://github.com/gnoverse/gnoshot) capture service. Empty draws no realm screenshots at all |
+| `-traffic-db` | — | SQLite path for the request log, e.g. `gnoscope-traffic.db`. Empty records nothing |
+| `-traffic-retention-days` | `30` | days of request rows to keep. `0` keeps them forever |
 
 ## Configuration
 
@@ -134,6 +136,84 @@ rather than of the provider:
   `/realms?network=mainnet` and `/realms?network=pearl` arrive as one page. Per
   network figures need the provider's own parameter allow-list, not a code
   change here.
+
+## The request log and /traffic
+
+`-analytics-script` above is a browser-shaped instrument. It sees a person
+opening a page, and it is blind to `/api/*`, to `/mcp`, to crawlers, to every
+4xx and 5xx, and it drops the query string, so every network collapses into one
+row. The request log is the server's own answer to the same question.
+
+```
+gnoscope -traffic-db /root/gnoscope-traffic.db -traffic-retention-days 30
+```
+
+Off by default: an explorer somebody runs locally should not start writing a
+record of its own use without being asked.
+
+**Its own database file, never a table in `-db`.** The chain index is ~1.7 GB
+that is rebuilt from the chain when it is wrong; traffic is small, not
+reconstructible from anywhere, and has a retention policy. Sharing one file
+would put reader behaviour inside every backup of the index and tie a retention
+delete to its write lock.
+
+### What is recorded, and what is refused
+
+One row per served request: the matched route *pattern* (so the column is
+bounded by the routing table rather than by whatever URLs a crawler invents),
+the wildcard part of the path, the network, the status, wire bytes, total and
+handler duration, cache state, the MCP tool name, the referer **host**, and a
+four-way client class.
+
+What never reaches disk: the IP, the user-agent string, the referer path, the
+query string, and any request body. The stored identity is
+`HMAC(key-of-the-day, ip + ua)`, truncated to 16 hex characters. The key is 32
+bytes from `crypto/rand`, lives only in process memory, is replaced at the first
+request after midnight UTC, and is never written anywhere, so nobody, including
+whoever holds the database file, can reverse an id to an address or link
+yesterday's rows to today's.
+
+The deliberate cost: a reader active across midnight is counted twice, and
+"returning visitor over a week" is unanswerable. Neither is worth keeping an
+address on disk for.
+
+### Reading it
+
+`GET /api/traffic?window=24h|7d|30d|90d&network=&kind=&bots=1&limit=` returns
+the whole dashboard in one response: totals, a time series, and top-N
+breakdowns by page, realm, API route, MCP tool, network, client class, referer
+host, status and cache state, plus the slowest routes ranked by p95.
+
+**Public, and aggregates only.** There is no endpoint that returns a request
+row, and adding one would undo the design above: three rows carrying a visitor
+id, a timestamp and a referer re-identify a reader that the hashing went to some
+trouble not to keep.
+
+Self-declared crawlers are stored but excluded from the default view, because a
+crawler is real load and is not a reader. `bots=1` brings them back.
+
+`GET /api/traffic/health` reports the writer itself. **`dropped` climbing is the
+one number worth alerting on**: the buffer is capped at 50,000 unflushed rows,
+and past that records are discarded rather than allowed to grow without bound,
+so a climbing `dropped` means the dashboard is now understating traffic.
+
+### The other services on the host
+
+This covers gnoscope and nothing else. Everything else behind the same reverse
+proxy needs the proxy's own access log:
+
+```
+log {
+  output file /var/log/caddy/<site>.log {
+    roll_size 50MiB
+    roll_keep 10
+  }
+  format json
+}
+```
+
+Set `roll_size`/`roll_keep` when you add it, not after: an access log with no
+rotation is the one that reaches 141 MB unnoticed.
 
 ## Choosing network IDs
 

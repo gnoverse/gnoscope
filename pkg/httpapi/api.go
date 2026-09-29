@@ -23,6 +23,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/registry"
 	"github.com/gnoverse/gnoscope/pkg/store"
 	"github.com/gnoverse/gnoscope/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/traffic"
 )
 
 type API struct {
@@ -55,6 +56,11 @@ type API struct {
 	// wraps this. Nil in the tools and tests that run no counter, and every use
 	// of it is nil-safe.
 	views *ViewCounter
+
+	// traffic records one row per served request, in its own database file. Nil
+	// when -traffic-db is unset, and every use of it is nil-safe: an explorer
+	// that does not want a request log should not need a second build.
+	traffic *traffic.Store
 
 	// syncHealth is how the sanity page answers "are our sync passes
 	// succeeding", which chain liveness cannot: a chain can be producing
@@ -156,6 +162,18 @@ func emptyNotNull(data any) any {
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
+	// A server error used to reach the reader and nobody else. Nine call sites
+	// answer 500 and not one of them logged, so the only account of a failure
+	// was in a response body that had already been sent to the person least
+	// able to act on it. WithAccessLog records *that* a route 500s; this is the
+	// only place that knows *why*.
+	//
+	// 5xx only: a 400 or a 404 is the request being wrong, which is the
+	// reader's business and not an operator's, and logging those would bury the
+	// real failures under scanner traffic.
+	if code >= 500 {
+		log.Printf("http %d: %s", code, msg)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
@@ -963,6 +981,8 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/realm/usage/{path...}", a.HandleRealmUsage)
 	mux.HandleFunc("GET /api/realm/{path...}", a.HandleRealm)
 	mux.HandleFunc("GET /api/views", a.HandleViews)
+	mux.HandleFunc("GET /api/traffic", a.HandleTraffic)
+	mux.HandleFunc("GET /api/traffic/health", a.HandleTrafficHealth)
 	mux.HandleFunc("GET /api/packages", a.HandlePackages)
 	mux.HandleFunc("GET /api/packages/facets", a.HandlePackageFacets)
 	// {hash...}, not {hash}: roughly a third of gno transaction hashes are

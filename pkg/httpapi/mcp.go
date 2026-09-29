@@ -488,6 +488,11 @@ func (s *MCPServer) callTool(ctx context.Context, m jsonrpcMessage) *jsonrpcResp
 	if err := json.Unmarshal(m.Params, &p); err != nil {
 		return rpcFail(m.ID, rpcInvalidParams, "could not parse tools/call params: "+err.Error())
 	}
+	// Named on the access-log row before the lookup, so an unknown tool is
+	// visible in the traffic dashboard too: what agents ask for and do not get
+	// is the half that says which tool to write next.
+	NoteMCPTool(ctx, p.Name)
+
 	tool, ok := mcpTools[p.Name]
 	if !ok {
 		return rpcFail(m.ID, rpcInvalidParams, "unknown tool: "+p.Name)
