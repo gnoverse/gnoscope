@@ -29,9 +29,8 @@ type NetworkConfig struct {
 	// taken of, and the only thing that can answer "what does this realm look
 	// like". A network without one simply gets no pictures.
 	//
-	// Verified 2026-09-22: https://gno.land and
-	// https://pearl.testnets.gno.land both answer 200 on /r/gov/dao;
-	// sapphire has no gnoweb host that resolves, which is why it has none here.
+	// Verified 2026-09-29: https://gno.land and
+	// https://onyx.testnets.gno.land both answer 200.
 	GnowebURL string `json:"gnoweb,omitempty"`
 }
 
@@ -66,16 +65,18 @@ const implicitConfigFile = "networks.json"
 // defaultNetworkID names the network when -indexer is passed without -network.
 const defaultNetworkID = "default"
 
-// The out-of-the-box networks: mainnet-ish plus the current public testnets.
-// Testnets are named after gemstones and are retired as new ones launch — topaz
-// was here and its endpoints no longer resolve — so this list needs revisiting
-// whenever the next stone ships. A network that disappears degrades to a per-
-// network circuit breaker rather than breaking startup.
+// The out-of-the-box networks: mainnet plus the current public testnet.
+// Testnets are named after gemstones and are retired as new ones launch, and
+// retirement is not a redirect: the whole *.testnets.gno.land subtree for a
+// dead stone stops resolving, so a stale entry here is a network that can never
+// come back. Measured 2026-09-29: topaz, sapphire and pearl all NXDOMAIN, onyx-1
+// answers at height 46k. This list needs revisiting whenever the next stone
+// ships. A network that disappears degrades to a per-network circuit breaker
+// rather than breaking startup.
 var defaultConfig = &AppConfig{
 	Networks: []NetworkConfig{
 		{ID: "gnoland1", IndexerURL: "https://indexer.gno.land/graphql/query", RPCURL: "https://rpc.gno.land", GnowebURL: "https://gno.land"},
-		{ID: "pearl", IndexerURL: "https://indexer.pearl.testnets.gno.land/graphql/query", RPCURL: "https://rpc.pearl.testnets.gno.land", GnowebURL: "https://pearl.testnets.gno.land"},
-		{ID: "sapphire", IndexerURL: "https://indexer.sapphire.testnets.gno.land/graphql/query", RPCURL: "https://rpc.sapphire.testnets.gno.land"},
+		{ID: "onyx", IndexerURL: "https://indexer.onyx.testnets.gno.land/graphql/query", RPCURL: "https://rpc.onyx.testnets.gno.land", GnowebURL: "https://onyx.testnets.gno.land"},
 	},
 }
 

@@ -27,10 +27,10 @@ set -e
 DB="${DB:-gnoscope.db}"
 OUT="${OUT:-docs/images}"
 PORT="${PORT:-8899}"
-# pearl, not topaz: topaz was retired months ago and its endpoints are NXDOMAIN,
+# onyx, not pearl: pearl was retired and its endpoints are NXDOMAIN (2026-09-29),
 # so the default selected a network the config no longer lists and the UI
 # rendered an empty selector.
-NETWORK="${NETWORK:-pearl}"
+NETWORK="${NETWORK:-onyx}"
 CONFIG="${CONFIG:-testdata/screenshots-networks.json}"
 WIDTH="${WIDTH:-1400}"
 HEIGHT="${HEIGHT:-900}"

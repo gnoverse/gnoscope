@@ -33,7 +33,7 @@ Combining `-config` with the single-network flags is an error, as is passing
 resulting network IDs:
 
 ```
-networks [pearl sapphire] (from config file)
+networks [mainnet onyx] (from config file)
 ```
 
 Check that line, or `/api/networks`, after any config change. A wrongly configured
@@ -46,14 +46,14 @@ chain.
 {
   "networks": [
     {
-      "id": "pearl",
-      "indexer": "https://indexer.pearl.testnets.gno.land/graphql/query",
-      "rpc": "https://rpc.pearl.testnets.gno.land"
+      "id": "onyx",
+      "indexer": "https://indexer.onyx.testnets.gno.land/graphql/query",
+      "rpc": "https://rpc.onyx.testnets.gno.land"
     },
     {
-      "id": "sapphire",
-      "indexer": "https://indexer.sapphire.testnets.gno.land/graphql/query",
-      "rpc": "https://rpc.sapphire.testnets.gno.land"
+      "id": "mainnet",
+      "indexer": "https://indexer.gno.land/graphql/query",
+      "rpc": "https://rpc.gno.land"
     }
   ]
 }
@@ -133,7 +133,7 @@ rather than of the provider:
   realm page use `replaceState` and are correctly *not* counted as separate
   views.
 - **The network is in the query string, and query strings are dropped.**
-  `/realms?network=mainnet` and `/realms?network=pearl` arrive as one page. Per
+  `/realms?network=mainnet` and `/realms?network=onyx` arrive as one page. Per
   network figures need the provider's own parameter allow-list, not a code
   change here.
 
@@ -361,7 +361,7 @@ gnoscope -gnoshot http://127.0.0.1:8890
 Three things worth knowing before turning it on:
 
 - **A network needs a `gnoweb` in its config** to be photographable. The
-  built-in defaults set it for `gnoland1` and `pearl`; a network without one
+  built-in defaults set it for `gnoland1` and `onyx`; a network without one
   simply gets no pictures, rather than an error on every row.
 - **The proxy is on this origin on purpose.** A listing opens fifty thumbnails,
   and pointing them at another host costs a DNS lookup and a TLS handshake

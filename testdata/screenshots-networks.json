@@ -1,14 +1,16 @@
 {
   "networks": [
     {
-      "id": "pearl",
-      "indexer": "https://indexer.pearl.testnets.gno.land/graphql/query",
-      "rpc": "https://rpc.pearl.testnets.gno.land"
+      "id": "onyx",
+      "indexer": "https://indexer.onyx.testnets.gno.land/graphql/query",
+      "rpc": "https://rpc.onyx.testnets.gno.land",
+      "gnoweb": "https://onyx.testnets.gno.land"
     },
     {
       "id": "gnoland1",
       "indexer": "https://indexer.gno.land/graphql/query",
-      "rpc": "https://rpc.gno.land"
+      "rpc": "https://rpc.gno.land",
+      "gnoweb": "https://gno.land"
     }
   ]
 }
