@@ -15,10 +15,17 @@ test('the lab index offers gnohub and nothing else claims to be finished', async
   await page.goto('/lab' + NET);
   await settle(page);
 
-  await expect(page.locator('.gh-lab-card-title')).toContainText('gnohub');
-  await expect(page.locator('.gh-lab-card-title .badge')).toHaveText('experimental');
+  // gnohub is the first card, and the assertion that matters is the second
+  // one: *every* card here says experimental, however many there are. The
+  // index used to hold exactly one, so an unscoped locator said both things
+  // at once; it stopped compiling the moment a second card arrived.
+  const titles = page.locator('.gh-lab-card-title');
+  await expect(titles.first()).toContainText('gnohub');
+  const badges = page.locator('.gh-lab-card-title .badge');
+  expect(await badges.count()).toBe(await titles.count());
+  for (const b of await badges.all()) await expect(b).toHaveText('experimental');
 
-  await page.locator('.gh-lab-card-foot a').click();
+  await page.locator('.gh-lab-card').first().locator('.gh-lab-card-foot a').click();
   await expect(page).toHaveURL(/\/gnohub/);
   expect(w.jsErrors).toEqual([]);
   expect(unexpected(w.failedRequests)).toEqual([]);
