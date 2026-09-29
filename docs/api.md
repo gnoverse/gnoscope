@@ -365,7 +365,10 @@ A value is only comparable inside one denom: ranking 4,000 GNOT against 4,000
 units of a token with eighteen decimals would sort by nothing. So `hot_flows`
 takes the largest few of each asset, merges them, and orders the result
 newest-first. Each row carries its own unit, and nothing here converts between
-assets, because nothing here knows a price.
+assets. `/api/prices` does know a price for six of them, and says how much
+that price is worth trusting; `/api/pulse` deliberately does not reach for it,
+because a ranking that silently mixed a priced token with an unpriced one would
+be ordered by nothing again.
 
 ### Both ends of a transfer are resolved, and a miss is not a claim
 
@@ -976,6 +979,7 @@ incomparable.
 |---|---|
 | `GET /api/assets` | every asset seen on a network: supply, mints, burns, holders, transfer counts, first and last seen, plus registry metadata. `?realm=<package path>` narrows it to one realm |
 | `GET /api/assets/search` | `?q=` over the event key, for the search box. No balance reconstruction |
+| `GET /api/prices` | every asset priced in USD, with the route, the measured depth and the caveats. See below |
 | `GET /api/asset/{token...}` | one asset: top holders, recent transfers, a daily supply series, the other assets its realm issues, the issuing package, and the ledger window every figure was computed over. Single network |
 
 Built from the `Transfer` events the chain already emits, which were flowing
@@ -1367,6 +1371,104 @@ Each facet's counts honour the *other* facet and not itself. Picking a namespace
 narrows the kind counts, because otherwise the control describes a listing the
 reader is not looking at; picking a kind leaves every kind still counted,
 because otherwise there is no way to see what switching would give you.
+
+### Prices
+
+```
+GET /api/prices?network=<id>
+```
+
+Every indexed asset, priced in USD where a price exists, with the route it came
+through, the depth behind it and the caveats that apply. The reason this is a
+separate endpoint rather than four more columns on `/api/assets` is that a price
+on gno.land needs more room to be qualified than to be stated.
+
+**What was measured, 2026-09-29, against mainnet.** There are **five** liquidity
+pools on the entire chain, all on GnoSwap v1. One holds $759,104; the rest hold
+$5,687, $92, $78 and $47. Six of 28 indexed assets touch a pool. The chain has
+no USD oracle, so the dollar leg comes from GNOT's price on Kraken (24h VWAP)
+and KuCoin, both public and keyless.
+
+**The tier is the load-bearing field**, and it is derived from measured slippage
+rather than from an opinion. GnoSwap's own `router.DrySwapRoute` is asked to
+quote a buy at $10 / $100 / $1,000 / $10,000, and the answer is compared with
+what the pool's spot price promised:
+
+| token | $10 | $100 | $1,000 | $10,000 | tier |
+|---|---|---|---|---|---|
+| GNS | 0.45% | 0.45% | 0.46% | 0.52% | `market` |
+| BUBBLE | 0.59% | 1.84% | 16.06% | 69.93% | `thin` |
+| PERUN | 18.66% | 68.65% | 95.61% | 99.54% | `decorative` |
+| GNOMIC | 21.44% | 71.32% | 96.61% | 99.66% | `decorative` |
+
+`market` is under 2% at $10,000, `indicative` under 5% at $1,000, `thin` under
+5% at $100, `decorative` anything worse, and `none` means no route to wugnot at
+all. A rung the router refused to quote counts as a failure at that size.
+
+GNOMIC is why the tier exists. Its supply times its price is **$582,003**, and
+the entire market backing that figure is **$47**.
+
+### The TWAP exists and is the spot price
+
+`pool.OracleConsult(poolPath, secondsAgo)` is the Uniswap V3 time-weighted
+average price, GnoSwap shipped it, and it returns a number. That number is the
+current tick.
+
+`GetSlot0` reports `observationCardinality = 1` on all five pools, so there is
+one stored observation and no history to average. The oracle answers the same
+tick for a 1-second window and a 30-minute one, and errors past roughly 45
+minutes:
+
+```
+OracleConsult(wugnot/GNS:3000, 1s)    -> 13902   (= GetSlot0Tick)
+OracleConsult(wugnot/GNS:3000, 1800s) -> 13902
+OracleConsult(wugnot/GNS:3000, 2700s) -> 0, [GNOSWAP-POOL-025] target timestamp before oldest observation
+```
+
+So no manipulation-resistant price exists anywhere on this chain, and every
+response carries `twap_available: false` plus a `twap-is-spot` warning saying so.
+One permissionless `IncreaseObservationCardinalityNext` call per pool would fix
+it. The field is computed rather than hardcoded, so the day somebody makes that
+call the answer changes on its own.
+
+### Base units are exact, whole tokens are a guess
+
+A pool encodes a ratio between **base units**, so `usd_per_base_unit` needs no
+`Decimals()` and cannot be wrong about one. `usd_per_token` divides it by a
+decimals value that, for most tokens here, nobody has confirmed: only 2 of 7
+tokens tested answered `Decimals()` (`gns` and `gnomic` yes; `wugnot`, `wbubble`,
+`grc20factory`, `xgns` and `padv3` no). Where it is unconfirmed the response
+assumes 6, sets `decimals_known: false` and attaches a `decimals-unknown`
+warning. The anchor itself is safe from this: ugnot's 6 decimals are a chain
+constant, not a token's claim.
+
+### Warnings are data, with a paragraph each
+
+Every quote carries a `warnings[]` of `{code, short, explain, severity}`, ordered
+alarm first. `short` is what fits in a badge and `explain` is the paragraph the
+frontend hangs off a `title=`. The codes: `no-onchain-oracle`, `twap-is-spot`,
+`spot-not-average`, `single-venue`, `thin-pool`, `route-disagreement`,
+`anchor-disagreement`, `decimals-unknown`, `unverified-token`,
+`fdv-not-marketcap`.
+
+None of them is unconditional. A verified token with confirmed decimals and one
+route does not collect the three that exist to flag their absence, and a token
+with no price at all carries **no** warnings: the tier already says the only true
+thing there is to say. A caveat that fires on every row is a caveat nobody reads.
+
+### Two traps worth knowing if you call GnoSwap directly
+
+- **`routeArr` is not the pool path.** `DrySwapRoute` takes an ordered route
+  whose first token must equal `inputToken`, so the direction matters and the
+  pool's own stored token order is irrelevant. Passing the pool path where the
+  route runs the other way returns `("0","0")` plus `[GNOSWAP-ROUTER-014]`,
+  which reads as 100% slippage and quietly buries a healthy pool. This cost one
+  entire wrong measurement table.
+- **There is no way to enumerate pools.** `GetPools()` returns a read-only tree
+  whose contents `vm/qeval` cannot iterate, and the pool realm's `Render` prints
+  a count and not a list. Discovery here is a probe: `ExistsPoolPath` over every
+  fungible-token pair at every fee tier, both orders, cached for 30 minutes.
+  Roughly 420 reads on today's mainnet, about 6 seconds at 32-way concurrency.
 
 ### Symbol search
 

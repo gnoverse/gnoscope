@@ -89,18 +89,149 @@ test('an asset that emits a bare symbol admits its realm is unknown', async ({ p
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
 });
 
-test('the page refuses to show a price', async ({ page }) => {
+// --- prices, and the caveats that outweigh them ------------------------------
+//
+// This file used to assert that the page refused to show a price at all, which
+// was right while GNOT had no market. It has one now, so the assertion moved:
+// the page shows a price and must never show one unqualified.
+
+// The four tiers, as the server computes them from measured slippage. GNOMIC is
+// the case the whole feature exists for: a six-figure paper value over a pool
+// holding under fifty dollars.
+const PRICES = {
+  network: 'alpha',
+  pool_count: 5,
+  priced_count: 2,
+  asset_count: 3,
+  twap_available: false,
+  computed_at: '2026-09-29T17:00:00Z',
+  anchor: {
+    usd_per_gnot: 0.070707,
+    spread_pct: 0.56,
+    sources: [
+      { venue: 'Kraken', pair: 'GNOT/USD', usd: 0.070707, kind: 'vwap-24h', volume_24h: 1091173 },
+      { venue: 'KuCoin', pair: 'GNOT/USDT', usd: 0.07072, kind: 'last' },
+    ],
+  },
+  quotes: [
+    {
+      token: 'gno.land/r/gnoswap/gns.GNS.0000000', symbol: 'GNS', tier: 'market',
+      tier_label: 'market', tier_explain: 'A $10,000 trade against this pool settles within 2% of the price shown.',
+      usd_per_base_unit: '0.000000017608929525', usd_per_token: 0.01760893,
+      decimals: 6, decimals_known: true, fdv_usd: 1903377,
+      route: [{ pool_path: 'w:g:3000', from: 'gno.land/r/gnoland/wugnot.wugnot', to: 'gno.land/r/gnoswap/gns.GNS', fee: 3000, tvl_usd: 759104 }],
+      route_count: 1, route_spread_pct: 0,
+      depth: [
+        { notional_usd: 10, slippage_pct: 0.45, quoted: true },
+        { notional_usd: 10000, slippage_pct: 0.52, quoted: true },
+      ],
+      warnings: [
+        { code: 'twap-is-spot', short: 'no time-weighted price exists', severity: 'alarm', explain: 'Every pool reports observationCardinality = 1, so the oracle answers the spot tick.' },
+        { code: 'no-onchain-oracle', short: 'USD leg is off-chain', severity: 'caution', explain: 'gno.land has no price oracle.' },
+      ],
+    },
+    {
+      token: 'COVID', symbol: 'COVID', tier: 'decorative',
+      tier_label: 'decorative', tier_explain: 'There is effectively no market here.',
+      usd_per_base_unit: '0.000000027734209154', usd_per_token: 0.02773421,
+      decimals: 6, decimals_known: false, fdv_usd: 582003,
+      route: [{ pool_path: 'w:c:3000', from: 'gno.land/r/gnoland/wugnot.wugnot', to: 'COVID', fee: 3000, tvl_usd: 47 }],
+      route_count: 1, route_spread_pct: 0,
+      depth: [{ notional_usd: 10, slippage_pct: 21.44, quoted: true }],
+      warnings: [
+        { code: 'thin-pool', short: 'thin market', severity: 'alarm', explain: 'The shallowest pool on this route holds $47.' },
+        { code: 'decimals-unknown', short: 'decimals assumed', severity: 'caution', explain: 'This token exposes no Decimals().' },
+      ],
+    },
+    {
+      token: 'gno.land/r/gnoswap/gnft.GNFT.0000000', symbol: 'GNFT', tier: 'none',
+      tier_label: 'no market', tier_explain: 'No GnoSwap pool routes this token to wugnot.',
+      usd_per_base_unit: '', usd_per_token: 0, decimals: 6, decimals_known: false,
+      route: [], route_count: 0, route_spread_pct: 0, depth: [], warnings: [],
+    },
+  ],
+};
+
+async function stubPrices(page, body) {
+  await page.route('**/api/prices*', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }));
+}
+
+test('a price never appears without the tier that says what it is worth', async ({ page }) => {
   const seen = watch(page);
   await stubAssets(page);
+  await stubPrices(page, PRICES);
 
   await page.goto('/grc20');
   await settle(page);
 
-  // Not a style preference: GNOT is unlisted and there is no oracle on chain,
-  // so any money column here would be invented. The page says why.
-  await expect(page.locator('.view.active')).toContainText('no price or market value');
+  const gns = page.locator('#grc20-list tr', { hasText: 'GNS' }).first();
+  await expect(gns).toContainText('$0.0176');
+  await expect(gns.locator('.px-tier-market')).toContainText('market');
+
+  // The one that matters: a six-figure paper value backed by a $47 pool is not
+  // allowed to render the same way a real price does.
+  const covid = page.locator('#grc20-list tr', { hasText: 'COVID' });
+  await expect(covid.locator('.px-tier-decorative')).toContainText('decorative');
+
+  // Every tier badge carries its argument on hover, not just its label.
+  const explain = await gns.locator('.px-tier-market').getAttribute('title');
+  expect(explain).toContain('settles within 2%');
 
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+  expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);
+});
+
+test('a token with no pool says no market, which is not zero', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await stubPrices(page, PRICES);
+
+  await page.goto('/grc20');
+  await settle(page);
+
+  const row = page.locator('#grc20-list tr', { hasText: 'GNFT' });
+  await expect(row.locator('.px-tier-none')).toContainText('no market');
+  // $0.00 would be a claim about its value. An absence of a market is not one.
+  await expect(row).not.toContainText('$0.00');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
+test('the page says out loud that no time-weighted price exists on this chain', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await stubPrices(page, PRICES);
+
+  await page.goto('/grc20');
+  await settle(page);
+
+  const banner = page.locator('#grc20-price-banner');
+  await expect(banner).toContainText('No manipulation-resistant price exists');
+  await expect(banner).toContainText('5 liquidity pools on this entire chain');
+  await expect(banner).toContainText('GNOT at $0.07');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+  expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);
+});
+
+test('a network with no RPC says why the prices are missing, and stays quiet', async ({ page }) => {
+  const seen = watch(page);
+  await stubAssets(page);
+  await stubPrices(page, { network: 'alpha', unavailable: 'no verified RPC endpoint for network alpha' });
+
+  await page.goto('/grc20');
+  await settle(page);
+
+  // "This server could not find out" and "this chain has no market" look
+  // identical as an empty column and mean opposite things.
+  await expect(page.locator('#grc20-price-banner')).toContainText('no verified RPC endpoint');
+  await expect(page.locator('#grc20-list tr', { hasText: 'GNS' }).first()).not.toContainText('$');
+
+  // The column is supplementary. It must not put a red line in the console of
+  // every page load on a network that has no RPC, which is most of them.
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+  expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);
 });
 
 // --- the per-asset page ------------------------------------------------------
