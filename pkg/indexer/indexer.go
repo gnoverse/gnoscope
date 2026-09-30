@@ -509,7 +509,7 @@ const probeTimeout = 10 * time.Second
 // Without it, "furthest along wins" means "whoever is ahead by one block wins",
 // and on mainnet that is never the primary. Measured 2026-09-30, three probes a
 // couple of seconds apart: indexer.gno.land answered 445027/445028/445029 while
-// indexer.onbloc.xyz answered 445030/445030/445031 — a steady lead of one to
+// indexer.onbloc.xyz answered 445030/445030/445031, a steady lead of one to
 // three blocks. So the pool sat on the alternate essentially all of the time,
 // and `indexer` vs `indexers` in the network config decided nothing at all.
 //

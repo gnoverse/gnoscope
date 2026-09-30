@@ -7295,7 +7295,7 @@ async function loadAssetDetail(token) {
 // Compact, and that is the whole point of the line. It used to print the scaled
 // figure at full precision, which in a locale that groups with spaces and marks
 // decimals with a comma put "1 333 000 221 686 563" directly above
-// "= 1 333 000 221,686563 GNOT" — the same sixteen digits twice, differing by
+// "= 1 333 000 221,686563 GNOT": the same sixteen digits twice, differing by
 // one glyph in the middle. moul read the supply column as repeating itself, and
 // he was reading it correctly. "≈ 1.33B GNOT" cannot be mistaken for the line
 // above it, and the exact scaled value moves into the title, where the one
@@ -7988,7 +7988,7 @@ function assetAmount(a, raw, opts) {
   // over the transfer ledger, and the ledger starts where sync started: burn a
   // token minted before that and the subtraction goes under zero. Live on
   // mainnet 2026-09-30 for WUGNOT (-2,377,176,640,553) and GNOMIC
-  // (-9,201,752,283). Marked rather than hidden — the number IS what this index
+  // (-9,201,752,283). Marked rather than hidden, because the number IS what this index
   // computed, and suppressing it would leave a reader with no way to tell a
   // partial ledger from a real supply of zero.
   if (opts.supply && raw < 0) {
@@ -8114,7 +8114,7 @@ function unifiedAssetTable(assets, f) {
     el('th', {}, 'realm'),
     el('th', { title: 'price per whole token in US dollars, routed through GnoSwap and anchored on GNOT’s price on real exchanges. the badge says how much weight it carries' }, 'price'),
     el('th', { title: 'value pooled against this token on GnoSwap, both sides of every pool it sits in. this is the column that separates a real price from a decorative one' }, 'tvl'),
-    el('th', { title: 'for a grc20, mints minus burns over this index’s transfer ledger — a window, not a chain total, which is why one can read as negative. for the native coin, what the chain itself reports, with its locked share beside it. an nft has none' }, 'supply'),
+    el('th', { title: 'for a grc20, mints minus burns over this index’s transfer ledger: a window, not a chain total, which is why one can read as negative. for the native coin, what the chain itself reports, with its locked share beside it. an nft has none' }, 'supply'),
     el('th', { title: 'how the two kinds count holders is NOT the same. hover the marker on a native row' }, 'holders'),
     el('th', { title: 'how the two kinds count transfers is NOT the same. hover the marker on a native row' }, 'transfers'),
     el('th', {}, '24h'))));
@@ -8582,9 +8582,9 @@ function loadNFTs() {
 // different chain. A cumulative share curve says which, and nothing else here
 // does.
 //
-// Over the rows shown, not over the chain. The ranking is already a prefix —
-// gno cannot enumerate accounts and the position replay has its own guard — so
-// the axis is labelled as a share of what this page ranks, and the "top N"
+// Over the rows shown, not over the chain. The ranking is already a prefix,
+// because gno cannot enumerate accounts and the position replay has its own
+// guard, so the axis is labelled as a share of what this page ranks, and the "top N"
 // control moves the curve rather than extending it.
 function concentrationChart(container, holders) {
   const priced = holders.filter(h => h.usd_value > 0);

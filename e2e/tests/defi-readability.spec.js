@@ -12,12 +12,12 @@ import { settle, unexpected, watch } from './helpers.js';
 // produced it on mainnet.
 
 // A 50-character "symbol" is not hypothetical: TokenKeyParts used to split the
-// event key from the right, so `.../bubble.BUBBLE` — a key with no trailing id —
+// event key from the right, so `.../bubble.BUBBLE`, a key with no trailing id,
 // parsed as realm "gno" and symbol "land/r/g1leu8d2…/bubble". The split is fixed
 // in pkg/store; this keeps the page from being at its mercy.
 const LONG_SYMBOL = 'land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubble';
 // What the cell is allowed to show: the first 17 characters and an ellipsis.
-// Matching the row on this rather than on the symbol is itself the assertion —
+// Matching the row on this rather than on the symbol is itself the assertion:
 // a row still findable by its full 50-character text is a row still printing it.
 const LONG_SHOWN = LONG_SYMBOL.slice(0, 17);
 
@@ -133,7 +133,7 @@ test('the supply column does not print the same figure twice', async ({ page }) 
   // The exact base units lead, because that is what the chain holds.
   expect(text).toContain('1,333,000,221,686,563');
   // The whole-token line is compact. Printed at full precision it was
-  // "1 333 000 221,686563" — the same sixteen digits, one glyph apart.
+  // "1 333 000 221,686563", the same sixteen digits, one glyph apart.
   expect(text).toMatch(/≈\s*1\.33B GNOT/);
   const scaled = text.split('\n').find(l => l.includes('≈')) || '';
   expect(scaled.replace(/[^0-9]/g, ''), 'the scaled line repeats the raw digits')

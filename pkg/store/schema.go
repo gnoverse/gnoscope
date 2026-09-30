@@ -1561,7 +1561,7 @@ func migrateBankSendUgnot(db *sql.DB) error {
 // pkg_path is computed once at insert and never revisited, so fixing the split
 // alone leaves every row already on disk carrying "gno" as its realm. On
 // mainnet 2026-09-30 that was every transfer of
-// gno.land/r/g1leu8d2.../bubble.BUBBLE — a token whose key has no trailing id.
+// gno.land/r/g1leu8d2.../bubble.BUBBLE, a token whose key has no trailing id.
 //
 // Keyed on the distinct token rather than row by row: there are tens of tokens
 // and hundreds of thousands of transfers, and a token's path is a property of
