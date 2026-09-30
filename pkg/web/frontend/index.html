@@ -4358,10 +4358,10 @@ function route() {
   // page the reader has already left.
   if (view !== 'cartography' && typeof window.unloadCartography === 'function') window.unloadCartography();
   if (view !== 'dashboards' && typeof destroyDashCharts === 'function') destroyDashCharts();
-  // The defi charts live on four pages that share one registry, so leaving any
+  // The defi charts live on five pages that share one registry, so leaving any
   // of them must tear down whatever was drawing, or the next render lands on a
   // canvas that is no longer in the document.
-  if (view !== 'defi' && view !== 'coins' && view !== 'grc20' && view !== 'nfts' && typeof destroyDefiCharts === 'function') destroyDefiCharts();
+  if (!DEFI_CHART_VIEWS.has(view) && typeof destroyDefiCharts === 'function') destroyDefiCharts();
   if (view !== 'realm-detail' && view !== 'address-detail' && view !== 'asset-detail' && typeof destroyDetailCharts === 'function') destroyDetailCharts();
   switch (view) {
     case 'home': loadHome(); break;
@@ -7291,11 +7291,26 @@ async function loadAssetDetail(token) {
 // on the page by a power of ten and the result still looks like a plausible
 // supply. Most tokens have no curated entry, and for those the raw units are
 // the only honest reading.
+//
+// Compact, and that is the whole point of the line. It used to print the scaled
+// figure at full precision, which in a locale that groups with spaces and marks
+// decimals with a comma put "1 333 000 221 686 563" directly above
+// "= 1 333 000 221,686563 GNOT" — the same sixteen digits twice, differing by
+// one glyph in the middle. moul read the supply column as repeating itself, and
+// he was reading it correctly. "≈ 1.33B GNOT" cannot be mistaken for the line
+// above it, and the exact scaled value moves into the title, where the one
+// reader in a hundred who wants six decimal places can still get them.
 function tokenScaledEl(v, decimals, symbol) {
   if (!decimals || typeof v !== 'number' || v === 0) return null;
   const scaled = v / Math.pow(10, decimals);
-  return el('div', { style: { color: 'var(--fg2)', fontSize: '11px' } },
-    '= ' + scaled.toLocaleString(undefined, { maximumFractionDigits: decimals }) + ' ' + (symbol || ''));
+  // en-US fixed, not the reader's locale: a space-grouped, comma-marked number
+  // is what made the two lines indistinguishable in the first place, and this
+  // one sits in a tooltip beside a raw figure it must stay readable against.
+  const exact = scaled.toLocaleString('en-US', { maximumFractionDigits: decimals });
+  return el('div', {
+    style: { color: 'var(--fg2)', fontSize: '11px' },
+    title: exact + ' ' + (symbol || '') + ', from a curated decimals of ' + decimals,
+  }, '\u2248 ' + fmtCompact(scaled) + ' ' + (symbol || ''));
 }
 
 function assetStat(label, value, sub) {
@@ -7916,10 +7931,24 @@ function basisCell(node, basis) {
 // human's claim in a merged pull request is the only thing separating the real
 // one from a lookalike. Its absence is not an accusation, only the absence of a
 // check, which is what the tooltip says.
+// A symbol is whatever the realm put in the event, so it is attacker-controlled
+// and unbounded. One 50-character symbol on mainnet widened the asset column to
+// 456px and pushed the whole /defi table into horizontal overflow, which is the
+// shape of bug worth making structurally impossible rather than fixing once:
+// the key split that produced it is fixed, and this is what stops the next one.
+// 18 characters clears every real symbol on mainnet (MOULTEST is 8, COL3333 is
+// 7); the full value stays in the title and in the page it links to.
+const ASSET_SYMBOL_MAX = 18;
+function shortSymbol(sym) {
+  return sym.length > ASSET_SYMBOL_MAX ? sym.slice(0, ASSET_SYMBOL_MAX - 1) + '\u2026' : sym;
+}
+
 function assetLabel(a) {
   const wrap = el('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } });
+  const symbol = String(a.display_symbol || a.symbol || a.token || '');
   const link = el('a', { href: assetPath(a.token), style: { fontWeight: 'bold' } },
-    a.display_symbol || a.symbol || a.token);
+    shortSymbol(symbol));
+  if (symbol.length > ASSET_SYMBOL_MAX) link.title = symbol;
   link.addEventListener('click', (e) => { e.preventDefault(); navigate(assetPath(a.token)); });
   wrap.appendChild(link);
   wrap.appendChild(assetKindBadge(a.kind));
@@ -7954,6 +7983,23 @@ function assetAmount(a, raw, opts) {
   // for most tokens here nobody has confirmed. Same order the asset page uses.
   const wrap = el('span', {});
   wrap.appendChild(document.createTextNode(fmtTokenUnits(raw)));
+  // A negative supply is arithmetic, not a balance, and it is the one figure on
+  // this page that proves itself wrong out loud. Supply is mints minus burns
+  // over the transfer ledger, and the ledger starts where sync started: burn a
+  // token minted before that and the subtraction goes under zero. Live on
+  // mainnet 2026-09-30 for WUGNOT (-2,377,176,640,553) and GNOMIC
+  // (-9,201,752,283). Marked rather than hidden — the number IS what this index
+  // computed, and suppressing it would leave a reader with no way to tell a
+  // partial ledger from a real supply of zero.
+  if (opts.supply && raw < 0) {
+    wrap.appendChild(el('sup', {
+      className: 'basis-mark',
+      title: 'NOT a supply. this is mints minus burns over the transfer ledger, '
+        + 'and the ledger starts where this index started reading the chain. a burn of tokens '
+        + 'minted before that window subtracts from a total it never added to, which is how the '
+        + 'figure goes negative. the asset’s own page states the window it was computed over.',
+    }, '\u2217'));
+  }
   const scaled = a.decimals > 0 ? tokenScaledEl(raw, a.decimals, a.display_symbol || a.symbol) : null;
   if (scaled) wrap.appendChild(scaled);
   return wrap;
@@ -8068,7 +8114,7 @@ function unifiedAssetTable(assets, f) {
     el('th', {}, 'realm'),
     el('th', { title: 'price per whole token in US dollars, routed through GnoSwap and anchored on GNOT’s price on real exchanges. the badge says how much weight it carries' }, 'price'),
     el('th', { title: 'value pooled against this token on GnoSwap, both sides of every pool it sits in. this is the column that separates a real price from a decorative one' }, 'tvl'),
-    el('th', { title: 'for a grc20, the replayed supply. for the native coin, what the chain reports, with its locked share beside it. an nft has none' }, 'supply'),
+    el('th', { title: 'for a grc20, mints minus burns over this index’s transfer ledger — a window, not a chain total, which is why one can read as negative. for the native coin, what the chain itself reports, with its locked share beside it. an nft has none' }, 'supply'),
     el('th', { title: 'how the two kinds count holders is NOT the same. hover the marker on a native row' }, 'holders'),
     el('th', { title: 'how the two kinds count transfers is NOT the same. hover the marker on a native row' }, 'transfers'),
     el('th', {}, '24h'))));
@@ -8162,6 +8208,10 @@ function assetListSection(container, assets, f, opts) {
 // same table, which is how they drifted into three different mental models.
 
 let _defiCharts = [];
+// The views that draw into _defiCharts. Named once rather than spelled out at
+// the route guard, because a page added to the section and forgotten there
+// leaks a chart onto a canvas that has left the document.
+const DEFI_CHART_VIEWS = new Set(['defi', 'coins', 'grc20', 'nfts', 'holders']);
 function destroyDefiCharts() {
   _defiCharts.forEach(c => { try { c.destroy(); } catch (e) { /* already gone */ } });
   _defiCharts = [];
@@ -8186,15 +8236,31 @@ function pricedTotal(assets) {
   return { usd, priced };
 }
 
-// activityChart draws the three transfer series.
+// The three transfer series, and which field each one reads. One table because
+// the chart, the metric controls and the section pages all have to agree on
+// what "this page's kind" means, and three copies of that mapping is how a
+// section page ends up drawing someone else's line.
+const ACTIVITY_SERIES = {
+  native: { label: 'native', field: 'native_transfers', color: '#4ecdc4' },
+  grc20: { label: 'grc20', field: 'grc20_transfers', color: '#ff6b6b' },
+  grc721: { label: 'nft', field: 'grc721_transfers', color: '#ffd93d' },
+};
+
+// activityChart draws the transfer series, all three or just one.
 //
 // Three rather than one stacked total, and that is not a style choice: the
 // native count is BankMsgSend only while the grc20 count includes
 // realm-internal moves, so adding them produces a number that means nothing.
 // Drawn apart, a reader can see which line is which measurement.
-function activityChart(container, points, metric) {
+//
+// `kind` narrows it to a single series for /coins, /grc20 and /nfts, which had
+// no chart at all: every headline on those pages was a single number with no
+// shape behind it, and the one chart that existed lived on /defi where the
+// reader had already left.
+function activityChart(container, points, metric, kind) {
   if (!points || points.length < 2) return;
   const labels = points.map(p => p.time);
+  const kinds = kind ? [kind] : ['native', 'grc20', 'grc721'];
   const spec = metric === 'volume'
     ? {
       title: 'native value moved per day, in GNOT',
@@ -8205,13 +8271,24 @@ function activityChart(container, points, metric) {
       }],
     }
     : {
-      title: 'transfers per day, by kind',
-      note: 'three series, not one total: the native count is BankMsgSend only and the grc20 count includes moves inside a realm call, so adding them would sum two different measurements.',
-      datasets: [
-        { label: 'native', data: points.map(p => p.native_transfers || 0), borderColor: '#4ecdc4', tension: .25 },
-        { label: 'grc20', data: points.map(p => p.grc20_transfers || 0), borderColor: '#ff6b6b', tension: .25 },
-        { label: 'nft', data: points.map(p => p.grc721_transfers || 0), borderColor: '#ffd93d', tension: .25 },
-      ],
+      title: kind
+        ? ACTIVITY_SERIES[kind].label + ' transfers per day'
+        : 'transfers per day, by kind',
+      note: kind === 'native'
+        ? 'BankMsgSend only. ugnot a realm moves inside a call is not a bank send and never appears in this line, so it under-counts movement where the grc20 series does not.'
+        : kind === 'grc20'
+          ? 'every Transfer event, including moves a realm makes inside a call. that is a wider definition than the native line on /coins uses, which is why the two are never summed.'
+          : kind === 'grc721'
+            ? 'one point per item moved. an nft transfer carries no amount, so a count is the only series this ledger can honestly draw.'
+            : 'three series, not one total: the native count is BankMsgSend only and the grc20 count includes moves inside a realm call, so adding them would sum two different measurements.',
+      datasets: kinds.map(k => ({
+        label: ACTIVITY_SERIES[k].label,
+        data: points.map(p => p[ACTIVITY_SERIES[k].field] || 0),
+        borderColor: ACTIVITY_SERIES[k].color,
+        backgroundColor: kind ? 'rgba(78,205,196,.10)' : undefined,
+        fill: !!kind,
+        tension: .25,
+      })),
     };
   detailChart(container, _defiCharts, {
     type: 'line', height: 240, title: spec.title, note: spec.note,
@@ -8222,7 +8299,7 @@ function activityChart(container, points, metric) {
 
 // activitySection wraps the chart in its window and metric controls, which is
 // the "filters on the graphs" half of what this page was missing.
-function activitySection(container, network) {
+function activitySection(container, network, kind) {
   const sec = el('div', { className: 'section' });
   sec.appendChild(el('div', { className: 'section-title' }, 'activity'));
   const controls = el('div', { className: 'asset-filters' });
@@ -8249,9 +8326,14 @@ function activitySection(container, network) {
     controls.appendChild(group);
   };
   chipRow([[7, '7d'], [30, '30d'], [90, '90d']], 'days');
-  chipRow([['transfers', 'transfers'], ['volume', 'gnot moved']], 'metric', {
-    volume: 'native only: a grc20’s amounts are in its own units, so there is no shared value axis to draw them on',
-  });
+  // The value axis is native-only, so the metric switch is offered only where
+  // it can answer. On /grc20 and /nfts a "gnot moved" chip would draw a series
+  // belonging to a different page.
+  if (!kind || kind === 'native') {
+    chipRow([['transfers', 'transfers'], ['volume', 'gnot moved']], 'metric', {
+      volume: 'native only: a grc20’s amounts are in its own units, so there is no shared value axis to draw them on',
+    });
+  }
 
   let draw = async () => {
     destroyDefiCharts();
@@ -8265,7 +8347,7 @@ function activitySection(container, network) {
         body.appendChild(el('div', { className: 'section-sub' }, 'no movement in this window'));
         return;
       }
-      activityChart(body, points, state.metric);
+      activityChart(body, points, state.metric, kind);
     } catch (err) {
       failBlock(body, err, draw);
     }
@@ -8439,14 +8521,24 @@ function sectionStats(container, assets, kind) {
 // assetSectionPage is /coins, /grc20 and /nfts.
 async function assetSectionPage(slot, kind, title, blurb) {
   const container = clear(slot);
+  destroyDefiCharts();
   skeletonBlock(container);
   await apiSWR(['assets', { path: 'bankstats', fallback: {} }], ([assetsResp, bank]) => {
+    // The cached pass and the fresh pass each rebuild this container, and the
+    // charts the previous one registered are attached to nodes that are about
+    // to be thrown away. Same reason loadDefi does it.
+    destroyDefiCharts();
     container.textContent = '';
     const assets = (assetsResp && assetsResp.assets) || [];
 
     container.appendChild(el('div', { className: 'section-title' }, title));
     container.appendChild(el('div', { className: 'section-sub' }, blurb));
     sectionStats(container, assets, kind);
+
+    // The shape behind the headline. These pages shipped with the tiles and
+    // the table and no chart at all, so the /defi home was the only page on the
+    // whole section that drew anything over time.
+    activitySection(container, assetsResp && assetsResp.network, kind);
 
     const sec = el('div', { className: 'section' });
     container.appendChild(sec);
@@ -8482,12 +8574,65 @@ function loadNFTs() {
 
 // --- /holders: who holds what, across every asset ----------------------------
 
+// concentrationChart is the one series this ranking can honestly draw.
+//
+// /holders is the fourth page of the defi section and was the only one with no
+// picture at all, which on a leaderboard is the picture: "the top address holds
+// most of it" and "the top fifty hold it evenly" are the same table and a
+// different chain. A cumulative share curve says which, and nothing else here
+// does.
+//
+// Over the rows shown, not over the chain. The ranking is already a prefix —
+// gno cannot enumerate accounts and the position replay has its own guard — so
+// the axis is labelled as a share of what this page ranks, and the "top N"
+// control moves the curve rather than extending it.
+function concentrationChart(container, holders) {
+  const priced = holders.filter(h => h.usd_value > 0);
+  // Two points is a straight line between two addresses, which asserts a shape
+  // it has not measured.
+  if (priced.length < 4) return;
+  const total = priced.reduce((s, h) => s + h.usd_value, 0);
+  if (!(total > 0)) return;
+
+  let running = 0;
+  const data = priced.map(h => {
+    running += h.usd_value;
+    return (running / total) * 100;
+  });
+  const sec = el('div', { className: 'section' });
+  sec.appendChild(el('div', { className: 'section-title' }, 'concentration'));
+  container.appendChild(sec);
+  detailChart(sec, _defiCharts, {
+    type: 'line', height: 200,
+    title: 'cumulative share of the ranked value, richest first',
+    note: 'of the ' + fmtNum(priced.length) + ' addresses this page could value, not of the chain: '
+      + 'gno cannot enumerate accounts, so every ranking here is a prefix. a curve that reaches the top early '
+      + 'is a concentrated holding; a straight diagonal is an even one.',
+    data: {
+      labels: priced.map((_, i) => String(i + 1)),
+      datasets: [{
+        label: '% of ranked value',
+        data,
+        borderColor: '#4ecdc4', backgroundColor: 'rgba(78,205,196,.15)', fill: true, tension: .2,
+      }],
+    },
+    scales: {
+      x: chartAxis({ maxTicks: 10 }),
+      y: chartAxis({ format: v => Math.round(v) + '%' }),
+    },
+  });
+}
+
+
 async function loadHolders() {
   const container = clear('holders-content');
   skeletonBlock(container);
   const state = { limit: 25, native: true, token: '' };
 
   const draw = async () => {
+    // Every control on this page calls draw() again and rebuilds the container,
+    // so the concentration chart's canvas is about to leave the document.
+    destroyDefiCharts();
     container.textContent = '';
     skeletonBlock(container);
     let data;
@@ -8547,6 +8692,8 @@ async function loadHolders() {
     nativeToggle.addEventListener('click', () => { state.native = !state.native; draw(); });
     controls.appendChild(nativeToggle);
     container.appendChild(controls);
+
+    concentrationChart(container, data.holders || []);
 
     const tbl = el('table');
     tbl.appendChild(el('thead', {}, el('tr', {},
