@@ -16,11 +16,21 @@ func TestTokenKeyParts(t *testing.T) {
 		{"gno.land/r/gnoland/wugnot.wugnot.0000000", "gno.land/r/gnoland/wugnot", "wugnot"},
 		{"gno.land/r/gnoswap/gns.GNS.0000000", "gno.land/r/gnoswap/gns", "GNS"},
 		{"gno.land/r/gnoswap/gov/xgns.xGNS.0000000", "gno.land/r/gnoswap/gov/xgns", "xGNS"},
+		// No trailing id. Live on mainnet 2026-09-30, and the case that broke
+		// the old right-to-left split: three dot-separated pieces, so it took
+		// "gno" as the realm and the rest of the path as the symbol.
+		{"gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubble.BUBBLE",
+			"gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubble", "BUBBLE"},
+		{"gno.land/r/demo/foo.BAR", "gno.land/r/demo/foo", "BAR"},
 		// Two live mainnet tokens emit a bare symbol instead. Inventing a realm
 		// path from one would put "COVID" in a column headed "realm".
 		{"COVID", "", "COVID"},
 		{"META", "", "META"},
 		{"", "", ""},
+		// A bare realm path carries no symbol to take, so it stays whole rather
+		// than donating its last segment to the symbol column.
+		{"gno.land/r/demo/foo", "", "gno.land/r/demo/foo"},
+		{"ugnot", "", "ugnot"},
 	}
 	for _, tt := range tests {
 		gotPath, gotName := TokenKeyParts(tt.key)

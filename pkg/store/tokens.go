@@ -86,18 +86,34 @@ type TokenHolder struct {
 
 // TokenKeyParts splits the event key into its realm path and token name.
 //
-// The key is usually `<path>.<name>.<id>`, and the path itself contains dots
-// ("gno.land/..."), so this splits from the right rather than the left.
+// The key is `<path>.<name>` with an optional `.<id>`, and the path itself
+// contains dots ("gno.land/..."), so neither end of the string can be counted
+// on. The slash is what can: a realm path always has one and nothing after the
+// last one does, so the last slash marks where the dots start meaning
+// something.
+//
+// Counting dots from the right instead was wrong and shipped that way. A key
+// without the trailing id has exactly three dot-separated pieces, so
+// "gno.land/r/g1leu8d2…/bubble.BUBBLE" (live on mainnet, measured 2026-09-30)
+// took `parts[:len-2]` = ["gno"] as its realm and the whole rest of the path as
+// its symbol. That row then rendered a 50-character "symbol", which widened the
+// asset column to 456px and pushed every /defi table into horizontal overflow.
 func TokenKeyParts(key string) (pkgPath, name string) {
-	// Not every token emits the triple. Measured on mainnet 2026-09-20, two
+	// Not every token emits a path at all. Measured on mainnet 2026-09-20, two
 	// live tokens (COVID, META) put a bare symbol in the attribute instead. For
 	// those the symbol is all that is known, and inventing a realm path from it
 	// would put "COVID" in a column headed "realm".
-	parts := strings.Split(key, ".")
-	if len(parts) < 3 || !strings.Contains(key, "/") {
+	slash := strings.LastIndex(key, "/")
+	if slash < 0 {
 		return "", key
 	}
-	return strings.Join(parts[:len(parts)-2], "."), parts[len(parts)-2]
+	// After the last slash: `<pkg-name>.<SYMBOL>` and maybe `.<id>`. Anything
+	// with no dot there is a bare path and carries no symbol to take.
+	parts := strings.Split(key[slash+1:], ".")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", key
+	}
+	return key[:slash+1] + parts[0], parts[1]
 }
 
 // ParseTokenValue reads a Transfer event's value attribute.
@@ -172,7 +188,12 @@ func (d *DB) TokenSummaries(network string) ([]TokenSummary, error) {
 		}
 		t.Supply = t.Minted - t.Burned
 		t.Fungible = fungible == 1
-		_, t.Symbol = TokenKeyParts(t.Token)
+		// Both halves from the key, not the stored pkg_path. The column is
+		// written once at insert, so a row inserted before a fix to the split
+		// keeps the wrong realm forever; migrateTokenPkgPath repairs the column
+		// for the queries that filter on it, and this makes the list correct
+		// whether or not that has run.
+		t.PkgPath, t.Symbol = TokenKeyParts(t.Token)
 		if !t.Fungible {
 			// Zero would read as a balance. It is the absence of one.
 			t.Supply = 0
