@@ -190,6 +190,11 @@ func NewDB(path string) (*DB, error) {
 		return nil, fmt.Errorf("migrate bank send ugnot: %w", err)
 	}
 
+	if err := migrateTokenPkgPath(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate token pkg_path: %w", err)
+	}
+
 	d := &DB{db: db}
 
 	// Refresh the planner's statistics in the background.
@@ -1547,6 +1552,68 @@ func migrateBankSendUgnot(db *sql.DB) error {
 	}
 
 	log.Printf("bank_sends: parsed ugnot for %d distinct amounts", len(amounts))
+	return nil
+}
+
+// migrateTokenPkgPath repairs token_transfers rows whose stored realm path was
+// derived by the broken right-to-left key split (see TokenKeyParts).
+//
+// pkg_path is computed once at insert and never revisited, so fixing the split
+// alone leaves every row already on disk carrying "gno" as its realm. On
+// mainnet 2026-09-30 that was every transfer of
+// gno.land/r/g1leu8d2.../bubble.BUBBLE — a token whose key has no trailing id.
+//
+// Keyed on the distinct token rather than row by row: there are tens of tokens
+// and hundreds of thousands of transfers, and a token's path is a property of
+// its key. Idempotent, so it costs one indexed scan on a healthy database.
+func migrateTokenPkgPath(db *sql.DB) error {
+	rows, err := db.Query(`SELECT DISTINCT token, pkg_path FROM token_transfers`)
+	if err != nil {
+		// A database predating the table has nothing to repair.
+		return nil
+	}
+	type fix struct{ token, want string }
+	var fixes []fix
+	for rows.Next() {
+		var token, stored string
+		if err := rows.Scan(&token, &stored); err != nil {
+			rows.Close()
+			return err
+		}
+		if want, _ := TokenKeyParts(token); want != stored {
+			fixes = append(fixes, fix{token, want})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(fixes) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`UPDATE token_transfers SET pkg_path = ? WHERE token = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, f := range fixes {
+		if _, err := stmt.Exec(f.want, f.token); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	log.Printf("token_transfers: repaired pkg_path for %d tokens", len(fixes))
 	return nil
 }
 
