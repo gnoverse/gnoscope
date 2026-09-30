@@ -503,6 +503,23 @@ const endpointProbeInterval = 2 * time.Minute
 // slow answer is itself a reason to prefer someone else.
 const probeTimeout = 10 * time.Second
 
+// endpointLead is how many blocks ahead of the configured primary a pool member
+// has to be before the pool moves to it.
+//
+// Without it, "furthest along wins" means "whoever is ahead by one block wins",
+// and on mainnet that is never the primary. Measured 2026-09-30, three probes a
+// couple of seconds apart: indexer.gno.land answered 445027/445028/445029 while
+// indexer.onbloc.xyz answered 445030/445030/445031 — a steady lead of one to
+// three blocks. So the pool sat on the alternate essentially all of the time,
+// and `indexer` vs `indexers` in the network config decided nothing at all.
+//
+// 30 blocks is ~105s at the 3.54s/block measured on gnoland-1 the same day:
+// two orders of magnitude above the jitter, and three orders below the 36,000
+// blocks that made this pool exist in the first place. A member that is
+// genuinely stalled crosses it inside two minutes; one that is merely a hop
+// closer to the validators never does.
+const endpointLead = 30
+
 // endpointState is what a probe learns about one endpoint.
 type endpointState struct {
 	index       int
@@ -600,8 +617,17 @@ func (c *Client) selectEndpoint(ctx context.Context) {
 		}
 	}
 
-	chosen, chosenTip := -1, -1
-	for _, st := range states {
+	// Two passes, and the second is what keeps configured order meaningful.
+	//
+	// The first finds the highest tip anyone can prove. The second takes the
+	// EARLIEST endpoint in configured order that is within endpointLead of it,
+	// so a member that is ahead by a few blocks of ordinary propagation jitter
+	// does not displace the operator's stated primary, and one that is properly
+	// stalled still does. Picking the maximum outright made the first entry in
+	// `indexers` decorative; see endpointLead for the measurement.
+	best := -1
+	eligible := make([]bool, len(states))
+	for i, st := range states {
 		if st.err != nil {
 			continue
 		}
@@ -611,8 +637,16 @@ func (c *Client) selectEndpoint(ctx context.Context) {
 		if known != "" && st.fingerprint != "" && st.fingerprint != known {
 			continue
 		}
-		if st.tip > chosenTip {
-			chosen, chosenTip = st.index, st.tip
+		eligible[i] = true
+		if st.tip > best {
+			best = st.tip
+		}
+	}
+	chosen := -1
+	for i, st := range states {
+		if eligible[i] && st.tip >= best-endpointLead {
+			chosen = st.index
+			break
 		}
 	}
 	if chosen < 0 {

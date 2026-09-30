@@ -41,6 +41,43 @@ func TestPoolPrefersTheEndpointFurthestAlong(t *testing.T) {
 	}
 }
 
+// The other half of the same rule, and the one that was missing: a member ahead
+// by ordinary propagation jitter must NOT displace the configured primary.
+//
+// Measured on mainnet 2026-09-30, indexer.onbloc.xyz ran one to three blocks
+// ahead of indexer.gno.land continuously. With a strict "highest tip wins" the
+// pool therefore sat on the alternate essentially always, and the order of
+// `indexer` / `indexers` in the network config decided nothing. See
+// endpointLead.
+func TestPoolKeepsThePrimaryWhenTheLeadIsJitter(t *testing.T) {
+	primary, _ := NewFake(t)
+	primary.SeedChain(1, 445027)
+	alternate, _ := NewFake(t)
+	alternate.SeedChain(1, 445030)
+
+	c := NewClient(primary.URL, alternate.URL)
+	c.selectEndpoint(context.Background())
+
+	if got := c.activeURL(); got != primary.URL {
+		t.Errorf("pool chose %q over the configured primary for a 3-block lead; want %q", got, primary.URL)
+	}
+}
+
+// And the boundary: one block past the tolerance and the pool moves.
+func TestPoolLeavesThePrimaryOnceTheLeadIsReal(t *testing.T) {
+	primary, _ := NewFake(t)
+	primary.SeedChain(1, 445027)
+	alternate, _ := NewFake(t)
+	alternate.SeedChain(1, 445027+endpointLead+1)
+
+	c := NewClient(primary.URL, alternate.URL)
+	c.selectEndpoint(context.Background())
+
+	if got := c.activeURL(); got != alternate.URL {
+		t.Errorf("pool stayed on %q while the alternate was %d blocks ahead", got, endpointLead+1)
+	}
+}
+
 // The error-driven half: an endpoint that is simply down is skipped.
 func TestPoolFailsOverFromADeadEndpoint(t *testing.T) {
 	dead, _ := NewFake(t)
