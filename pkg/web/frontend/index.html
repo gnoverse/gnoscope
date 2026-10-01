@@ -17579,7 +17579,7 @@ function renderAddressIdentity(container, ident, addr, network, deploys) {
         ? 'no ugnot in the bank'
         : 'no bank account at all, so it has never held ugnot');
       r.append('. a GRC20 balance is realm state, counted separately · ');
-      r.appendChild(tabLink('the holdings tab →', 'holdings'));
+      r.appendChild(tabLink('the defi tab →', 'defi'));
     }
     if (ident.chain.account_number) {
       row('account no.', fmtNum(ident.chain.account_number),
@@ -17885,7 +17885,7 @@ function renderSessions(container, sessions) {
 const ADDRESS_TAB_ICONS = {
   overview: () => icon('pulse'),
   transactions: () => icon('list'),
-  holdings: () => icon('coin'),
+  defi: () => icon('coin'),
   deploys: () => icon('bubbles'),
   sessions: () => icon('call'),
   achievements: () => icon('info'),
@@ -18082,7 +18082,10 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
   }
 
   // --- the strip ---
-  const requested = urlParam('tab') || urlTab;
+  // `holdings` was this tab's name until the defi tab replaced it. Old links
+  // and bookmarks land on its successor rather than on the overview.
+  const asked = urlParam('tab') || urlTab;
+  const requested = asked === 'holdings' ? 'defi' : asked;
   const spec = [
     { id: 'overview', build: (pane) => renderAddressOverview(pane, addr, data, txs, d) },
     // Second, because for a validator it is the reason anyone opened the page.
@@ -18097,7 +18100,7 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
     // Deliberately uncounted, like the realm page's defi tab and for the same
     // reason: the number would need the fetch that opening the tab is what
     // pays for, so counting it here would undo the deferral.
-    { id: 'holdings', build: (pane) => loadDefiInto(addressDefiCtx(addr, pane, whatData?.chain?.vesting), pane, gen) },
+    { id: 'defi', build: (pane) => loadAddressDefi(addr, pane, gen, whatData?.chain?.vesting) },
     { id: 'deploys', count: pkgs.length, when: pkgs.length > 0, build: (pane) => renderAddressDeploys(pane, pkgs) },
     { id: 'sessions', count: sessionCount, when: sessionCount > 0, build: (pane) => renderSessions(pane, sessionsData) },
     { id: 'achievements', build: (pane) => loadAddressAchievements(addr, pane) },
@@ -19419,7 +19422,6 @@ function loadDefiInto(ctx, into, gen) {
       'balances are denominated per chain — select a specific network to see them'));
     return;
   }
-  _defiTableRows = ctx.path ? DEFI_TABLE_ROWS : DEFI_TABLE_ROWS_ADDRESS;
   skeletonBlock(into);
   (async () => {
     let d;
@@ -19432,49 +19434,431 @@ function loadDefiInto(ctx, into, gen) {
       return;
     }
     if (gen !== _detailGen) return;
+    // The curves are drawn from the server's per-asset series, never from the
+    // page of legs below them. The address tab already has it; the realm tab
+    // asks for it on the realm's own account. Best-effort: without it the
+    // charts fall back to the legs on the page and say that is what they are.
+    if (ctx.series === undefined && d.address) {
+      try {
+        ctx.series = (await api('address/' + d.address + '/defi?limit=0')).series || null;
+      } catch (err) {
+        ctx.series = null;
+      }
+      if (gen !== _detailGen) return;
+    }
     into.textContent = '';
     renderRealmDefi(into, d, ctx);
   })();
 }
 
-// DEFI_FLOWS_PAGE matches coinFlowMaxLimit in pkg/httpapi/defi.go, the largest
-// page the endpoint will serve. Asking for the maximum rather than the default
-// means every realm on mainnet today arrives whole in the first request, and
-// only a realm past 5,000 transfer legs ever sees the pager below.
-const DEFI_FLOWS_PAGE = 5000;
-
-// DEFI_TABLE_ROWS is how many of those legs the table *draws*.
+// --- The address page's defi tab: one picture of an account's money ----------
 //
-// Separate from the fetch on purpose. Everything a reader reads off this tab
-// except the table itself is computed over every leg, server-side: the balance,
-// the reconstruction, the curve, the counterparty collapse. The table is the one
-// part nobody reads end to end and the only part that costs a DOM node per row.
+// The holdings tab drew a native ledger and a GRC20 ledger side by side and left
+// the reader to add them up. For an account that trades, that left the one
+// question that mattered unanswered: g1qyfled… made 273 router calls and its
+// page never once said "swapped GNS for WUGNOT". This tab answers it in order:
+// what the account is worth now, what that is made of, how it got here, and
+// every transaction that moved any of it, one row per transaction with both
+// sides of a swap on it.
 //
-// Measured 2026-09-23 on r/g1leu8.../bubblerumble3 at 4,252 legs: 589,923 DOM
-// nodes for the defi tab against 375,138 for the storage tab on the same realm,
-// and it scales linearly with a realm that grew 1,200 legs in a day. Drawing 250
-// and offering the rest costs no correctness, which is the whole reason it is
-// safe to do.
-const DEFI_TABLE_ROWS = 250;
-
-// On an address page the same table starts far shorter, and the reason is that
-// it is no longer the only place those legs appear.
+// Everything above the history table is computed server-side over every leg
+// (/api/address/<addr>/defi), and the table is paged by the server. Nothing here
+// fetches a ledger to sum it: that is the shape the old tab had, and it grows
+// without bound on exactly the accounts this tab is for.
 //
-// A realm page has one money tab and nothing else that lists a transfer, so 250
-// rows is the answer to "show me the history". An address page has a
-// transactions tab listing the same movements from the signer's side, so the
-// long table here is a second copy of it: measured on mainnet the moment this
-// shipped, `/address/g1manfred…?tab=holdings` came to 11,728px, thirteen
-// screens, on a page whose whole point was to stop being eleven. The figures
-// above it are computed over every leg either way, and "show more" is one click
-// for a reader who wants the rest.
-const DEFI_TABLE_ROWS_ADDRESS = 25;
+// The ledgers the holdings tab drew (the native reconciliation, the money graph,
+// the per-token tables) are still below, under their own heading: they answer
+// "is this history complete", which is a different question and still worth
+// asking.
 
-// How many rows the table is currently drawing, reset every time the tab is
-// opened for a different render. Module-level rather than threaded through,
-// because "show more" is a property of this one view rather than of the data,
-// and reopening the tab should start it short again.
-let _defiTableRows = DEFI_TABLE_ROWS;
+// DEFI_HISTORY_PAGE is one page of the unified history. Matches the server's
+// default; its ceiling is 100.
+const DEFI_HISTORY_PAGE = 25;
+
+// One colour per named asset band, in the order the server ranks them, and grey
+// for "other". Fixed rather than hashed so GNOT is the same colour on every
+// account that holds it first.
+const DEFI_BANDS = ['#4dabf7', '#ffd43b', '#51cf66', '#ff922b', '#cc5de8', '#20c997'];
+const DEFI_OTHER = '#868e96';
+
+// The action badge reuses the message-kind palette rather than inventing one,
+// so "swap" and "call" read as related and "send" looks like a send everywhere.
+const DEFI_ACTION_BADGE = {
+  'swap': 'call', 'wrap': 'run', 'unwrap': 'run',
+  'add liquidity': 'deploy', 'remove liquidity': 'deploy',
+  'claim': 'ok', 'stake': 'enable', 'unstake': 'enable',
+  'send': 'send', 'receive': 'realm',
+};
+
+function loadAddressDefi(addr, pane, gen, vesting) {
+  // Denominated figures: a blended view would add two chains' coins. Same
+  // refusal the ledgers below make.
+  if (getNetwork() === 'all') {
+    pane.appendChild(el('div', { style: { color: 'var(--fg2)' } },
+      'balances are denominated per chain: select a specific network to see them'));
+    return;
+  }
+  skeletonBlock(pane);
+  (async () => {
+    let d;
+    try {
+      d = await api(addressDefiPath(addr, 0));
+    } catch (err) {
+      if (gen !== _detailGen) return;
+      pane.textContent = '';
+      pane.appendChild(el('div', { style: { color: 'var(--red)' } }, 'Error loading defi: ' + err.message));
+      return;
+    }
+    if (gen !== _detailGen) return;
+    pane.textContent = '';
+    renderAddressDefi(pane, d, addr, gen, vesting);
+  })();
+}
+
+function addressDefiPath(addr, offset) {
+  return 'address/' + addr + '/defi?limit=' + DEFI_HISTORY_PAGE + (offset ? '&offset=' + offset : '');
+}
+
+// fmtUSDValue is fmtUSD for an amount rather than a price: whole dollars once
+// it is large enough that cents are noise, and "$0" for zero rather than
+// nothing, because a position worth nothing is still a position.
+function fmtUSDValue(v) {
+  const a = Math.abs(v || 0);
+  const sign = v < 0 ? '-' : '';
+  if (a === 0) return '$0';
+  if (a >= 1000) return sign + '$' + fmtNum(Math.round(a));
+  if (a >= 0.01) return sign + '$' + a.toFixed(2);
+  return sign + '<$0.01';
+}
+
+// defiAmount prints a base-unit amount in the token's own units when its
+// decimals are known, and as raw base units otherwise, saying which. Dividing
+// by a guessed decimals value would print a different number wearing the right
+// shape; the rest of the site keeps raw units for the same reason.
+function defiAmount(units, decimals) {
+  if (decimals > 0) {
+    const v = units / Math.pow(10, decimals);
+    const abs = Math.abs(v);
+    const digits = abs >= 1000 ? 0 : abs >= 1 ? 2 : 6;
+    return v.toLocaleString(undefined, { maximumFractionDigits: digits });
+  }
+  return el('span', { title: 'raw base units: this token’s decimals are not confirmed, so it is not scaled' },
+    fmtNum(units), el('span', { style: { color: 'var(--fg2)', fontSize: '11px' } }, ' u'));
+}
+
+function defiAssetLink(token, symbol) {
+  if (token === 'ugnot') return link(symbol || 'GNOT', () => navigate(assetPath('ugnot')));
+  return link(symbol || token, () => navigate(assetPath(token)));
+}
+
+function renderAddressDefi(into, d, addr, gen, vesting) {
+  const assets = d.assets || [];
+
+  // --- the tiles ---
+  const stats = el('div', { className: 'stats-bar' });
+  const stat = (label, value, title) => {
+    const cell = el('div', { className: 'stat' },
+      el('span', { className: 'label' }, label), el('span', { className: 'value' }, value));
+    if (title) cell.title = title;
+    stats.appendChild(cell);
+  };
+  stat('value', fmtUSDValue(d.total_usd || 0),
+    'every priced asset at today’s prices'
+    + (d.unpriced_assets ? ', leaving out ' + fmtNum(d.unpriced_assets) + ' with no price' : '')
+    + (d.balance_known ? '' : '. the native balance could not be read, so GNOT is not in it'));
+  stat('assets', fmtNum(assets.length) + (d.unpriced_assets ? ' (' + fmtNum(d.unpriced_assets) + ' unpriced)' : ''));
+  stat('transactions', fmtNum(d.history_total || 0), 'every transaction that moved an asset in or out of this account');
+  if (d.fees_ugnot) stat('gas paid', fmtGnotAmount(d.fees_ugnot), 'the fees this account paid on the transactions it signed');
+  if (d.first_activity) stat('active since', d.first_activity.slice(0, 10));
+  into.appendChild(stats);
+
+  if (!d.balance_known) {
+    into.appendChild(el('div', { className: 'detail-chart-note', style: { color: 'var(--amber)' } },
+      'the chain did not answer for this account’s native balance, so GNOT is missing from the total and the curve below. reload to retry.'));
+  }
+  if (d.prices_unavailable) {
+    into.appendChild(el('div', { className: 'detail-chart-note' }, 'prices unavailable: ' + d.prices_unavailable));
+  }
+
+  // An account nothing ever moved through still gets its ledgers below: a pure
+  // genesis allocation is exactly the case the reconciliation exists to name.
+  if (!assets.length && !(d.history_total > 0)) {
+    into.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } },
+      'no asset has ever moved through this account'));
+  } else {
+    defiAllocationEl(into, d);
+    const chartBox = el('div');
+    into.appendChild(chartBox);
+    defiValueChart(chartBox, d, vesting);
+    into.appendChild(defiPositionsEl(d));
+    const hist = el('div');
+    into.appendChild(hist);
+    defiHistoryEl(hist, d, addr, gen);
+  }
+
+  // The ledgers, under their own heading and only fetched once this tab is
+  // open, which it is. They now page too: see DEFI_FLOWS_PAGE.
+  into.appendChild(el('div', { className: 'section-title', style: { marginTop: '28px' } }, 'ledgers'));
+  into.appendChild(el('div', { className: 'detail-chart-note' },
+    'the native and GRC20 ledgers the history above is built from, and whether they add up to what the chain says.'));
+  const ledgers = el('div');
+  into.appendChild(ledgers);
+  const ctx = addressDefiCtx(addr, ledgers, vesting);
+  ctx.series = d.series;
+  loadDefiInto(ctx, ledgers, gen);
+}
+
+// defiAllocationEl is one bar, split by what each priced asset is worth. It is
+// the answer to "what is this account made of" before any table.
+function defiAllocationEl(into, d) {
+  const priced = (d.assets || []).filter(a => a.priced && a.usd_value > 0);
+  const total = priced.reduce((s, a) => s + a.usd_value, 0);
+  if (!(total > 0)) return;
+  const bar = el('div', { style: { display: 'flex', height: '14px', borderRadius: '4px', overflow: 'hidden', margin: '14px 0 6px' } });
+  const legend = el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 14px', fontSize: '12px', color: 'var(--fg2)' } });
+  priced.forEach((a, i) => {
+    const color = i < DEFI_BANDS.length ? DEFI_BANDS[i] : DEFI_OTHER;
+    const share = a.usd_value / total;
+    const seg = el('div', { style: { width: (share * 100) + '%', background: color, minWidth: share > 0 ? '2px' : '0' } });
+    seg.title = a.symbol + ': ' + fmtUSDValue(a.usd_value) + ' (' + (share * 100).toFixed(1) + '%)';
+    bar.appendChild(seg);
+    if (share >= 0.001) {
+      legend.appendChild(el('span', {},
+        el('span', { style: { display: 'inline-block', width: '9px', height: '9px', borderRadius: '2px', background: color, marginRight: '5px' } }),
+        a.symbol + ' ' + (share * 100).toFixed(share < 0.01 ? 2 : 1) + '%'));
+    }
+  });
+  into.appendChild(bar);
+  into.appendChild(legend);
+}
+
+// defiValueChart is the consolidated value over time, stacked by asset.
+//
+// Valued at today's prices, and the note says so in the first words: the chain
+// has no price history this explorer reads, so this is "how the holdings
+// changed", not "what the account was worth that day". The two differ by
+// exactly the price moves, which for a trader is most of the story, and
+// printing the line without that sentence would be the worse mistake.
+function defiValueChart(into, d, vesting) {
+  const s = d.series;
+  if (!s || !(s.labels || []).length || !(s.assets || []).length) return;
+  if (s.labels.length < 2) return;
+  // GNOT can be most of an account by an order of magnitude (a genesis
+  // allocation usually is), which flattens every other band into the axis.
+  // "Excluding GNOT" is the view where a trader's activity is visible at all.
+  const hasNative = s.assets.some(a => a.token === 'ugnot');
+  const exNative = hasNative && urlParam('value') === 'ex-gnot';
+  into.textContent = '';
+  if (hasNative && s.assets.length > 1) {
+    const seg = el('div', { className: 'dash-seg', style: { marginTop: '14px' } });
+    [['all', 'all assets'], ['ex-gnot', 'excluding GNOT']].forEach(([id, label]) => {
+      const on = (id === 'ex-gnot') === exNative;
+      const b = el('button', { type: 'button', className: on ? 'on' : '' }, label);
+      b.addEventListener('click', () => {
+        urlSetParam('value', id === 'all' ? '' : id);
+        defiValueChart(into, d, vesting);
+      });
+      seg.appendChild(b);
+    });
+    into.appendChild(seg);
+  }
+  const bands = s.assets.filter(a => !(exNative && a.token === 'ugnot'));
+  const datasets = bands.map(a => {
+    const i = s.assets.indexOf(a);
+    const color = a.token === 'other' ? DEFI_OTHER : DEFI_BANDS[i % DEFI_BANDS.length];
+    return {
+      label: a.symbol, data: a.usd, type: 'line', fill: true, stack: 'v',
+      borderColor: color, backgroundColor: color + '55', borderWidth: 1, tension: 0.15, pointRadius: 0,
+    };
+  });
+  const note = ['valued at today’s prices' + (s.priced_at ? ' (' + s.priced_at.slice(0, 16).replace('T', ' ') + ' UTC)' : '')
+    + ', so the curve shows how the holdings changed, not what they were worth at the time'];
+  note.push('walked back from today’s balances through every recorded transfer');
+  if (s.native_start_ugnot > 0 && !exNative) {
+    // The vesting schedule is the evidence: only genesis can set one, so with
+    // it the starting balance can be named rather than hedged.
+    note.push(fmtGnotAmount(s.native_start_ugnot) + ' of the native balance has no recorded arrival, so the line starts with it: '
+      + (vesting ? 'this account carries a vesting schedule, which only genesis sets, so that is its genesis allocation'
+                 : 'most likely a genesis allocation, or a send not indexed here'));
+  }
+  detailChart(into, _detailCharts, {
+    title: 'consolidated value' + (exNative ? ', excluding GNOT' : '') + ', per ' + s.unit,
+    note: note.join(' · '),
+    height: 260,
+    data: { labels: s.labels, datasets },
+    scales: {
+      x: chartAxis({}),
+      y: chartAxis({ stacked: true, title: 'usd', format: v => fmtUSDValue(v) }),
+    },
+  });
+}
+
+function defiTierEl(tier) {
+  if (!tier) return null;
+  return el('span', { className: 'px-tier px-tier-' + tier, style: { marginLeft: '6px' } }, tier);
+}
+
+function defiPositionsEl(d) {
+  const section = el('div');
+  section.appendChild(el('div', { className: 'section-title', style: { marginTop: '18px' } }, 'positions'));
+  const tbl = el('table', { id: 'defi-positions' });
+  tbl.appendChild(el('thead', {}, el('tr', {},
+    el('th', {}, 'asset'), el('th', {}, 'kind'), el('th', {}, 'balance'),
+    el('th', {}, 'price'), el('th', {}, 'value'), el('th', {}, 'share'))));
+  const body = el('tbody');
+  const total = d.total_usd || 0;
+  for (const a of (d.assets || [])) {
+    const sym = el('span', {}, defiAssetLink(a.token, a.symbol));
+    if (a.verified) sym.appendChild(el('span', { title: 'verified in the registry', style: { marginLeft: '4px', color: 'var(--green)' } }, '✓'));
+    if (a.source === 'ledger') {
+      sym.title = 'replayed from the transfer ledger, which starts at '
+        + (d.token_ledger_from || '').slice(0, 10) + ': a floor if anything arrived before that';
+    }
+    body.appendChild(el('tr', {},
+      el('td', {}, sym),
+      el('td', {}, badge(a.kind === 'native' ? 'ok' : a.kind === 'grc721' ? 'deploy' : 'realm', a.kind)),
+      el('td', {}, a.fungible ? defiAmount(a.balance, a.decimals) : fmtNum(a.balance) + (a.balance === 1 ? ' item' : ' items')),
+      el('td', {}, a.priced ? el('span', {}, fmtUSD(a.usd_price), defiTierEl(a.tier))
+        : el('span', { style: { color: 'var(--fg2)' } }, a.fungible ? 'no price' : 'n/a')),
+      el('td', {}, a.priced ? fmtUSDValue(a.usd_value) : ''),
+      el('td', {}, a.priced && total > 0 ? ((a.usd_value / total) * 100).toFixed(1) + '%' : '')));
+  }
+  tbl.appendChild(body);
+  section.appendChild(tbl);
+  return section;
+}
+
+// defiLegEl is one asset's movement inside a transaction: signed, in the
+// token's units, with today's dollar value behind a hover.
+function defiLegEl(l) {
+  const out = l.delta < 0 || (l.delta === 0 && l.items < 0);
+  const color = out ? 'var(--red)' : 'var(--green)';
+  const span = el('span', { style: { color, whiteSpace: 'nowrap' } });
+  span.append(out ? '−' : '+');
+  if (l.delta === 0) {
+    span.append(fmtNum(Math.abs(l.items)) + ' ');
+  } else {
+    span.append(defiAmount(Math.abs(l.delta), l.decimals), ' ');
+  }
+  span.appendChild(defiAssetLink(l.token, l.symbol));
+  if (l.priced) span.title = fmtUSDValue(Math.abs(l.usd)) + ' at today’s price';
+  return span;
+}
+
+// defiFee prints a gas fee at a precision that does not round a real fee to
+// "0 GNOT", which fmtGnotAmount's two decimals do to every plain send.
+function defiFee(ugnot) {
+  const g = ugnot / 1e6;
+  return (g >= 0.01 ? g.toFixed(2) : g.toFixed(4)) + ' GNOT';
+}
+
+function defiCallsEl(calls) {
+  if (!(calls || []).length) return el('span', { style: { color: 'var(--fg2)' } }, 'transfer');
+  // Collapsed by realm: a claim is six CollectFee and six CollectReward to the
+  // same two realms, and twelve rows of that is a wall, not information.
+  const byRealm = new Map();
+  for (const c of calls) {
+    if (!byRealm.has(c.pkg_path)) byRealm.set(c.pkg_path, new Map());
+    const fns = byRealm.get(c.pkg_path);
+    fns.set(c.func, (fns.get(c.func) || 0) + 1);
+  }
+  const wrap = el('span', { className: 'truncate' });
+  let first = true;
+  for (const [pkg, fns] of byRealm) {
+    if (!first) wrap.append(', ');
+    first = false;
+    wrap.appendChild(realmPathEl(pkg));
+    const parts = [];
+    for (const [fn, n] of fns) parts.push(fn + (n > 1 ? ' ×' + n : ''));
+    wrap.append('.' + parts.join(', '));
+  }
+  return wrap;
+}
+
+function defiHistoryEl(into, d, addr, gen) {
+  into.textContent = '';
+  into.appendChild(el('div', { className: 'section-title', style: { marginTop: '18px' } }, 'history'));
+  const rows = d.history || [];
+  if (!rows.length) {
+    into.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } }, 'no transaction moved an asset in or out of this account'));
+    return;
+  }
+  const tbl = el('table', { id: 'defi-history' });
+  tbl.appendChild(el('thead', {}, el('tr', {},
+    el('th', {}, 'tx'), el('th', {}, 'action'), el('th', {}, 'moved'),
+    el('th', { title: 'priced legs at today’s prices' }, 'value'), el('th', {}, 'via'),
+    el('th', {}, 'fee'), el('th', {}, 'block'))));
+  const body = el('tbody');
+  for (const h of rows) {
+    const moved = el('span', { style: { display: 'inline-flex', flexWrap: 'wrap', gap: '2px 10px' } });
+    for (const l of h.legs || []) moved.appendChild(defiLegEl(l));
+    let value = '';
+    if (h.in_usd || h.out_usd) {
+      // Both sides when both exist: the gap between them is the spread, the
+      // fee or the price impact, and netting it away would hide it.
+      value = h.in_usd && h.out_usd
+        ? fmtUSDValue(h.out_usd) + ' → ' + fmtUSDValue(h.in_usd)
+        : fmtUSDValue(h.in_usd || -h.out_usd);
+    }
+    body.appendChild(el('tr', {},
+      el('td', {}, txLink(h.tx_hash, h.block_height, d.network, { showBlock: false })),
+      el('td', {}, badge(DEFI_ACTION_BADGE[h.action] || 'session', h.action)),
+      el('td', {}, moved),
+      el('td', { style: { whiteSpace: 'nowrap' } }, value),
+      el('td', {}, defiCallsEl(h.calls)),
+      el('td', { style: { whiteSpace: 'nowrap', color: 'var(--fg2)' } }, h.fee_ugnot ? defiFee(h.fee_ugnot) : ''),
+      el('td', {}, blockWithAge(h.block_height, h.block_time))));
+  }
+  tbl.appendChild(body);
+  into.appendChild(tbl);
+
+  // Paged by the server, one page in the DOM at a time. The figures above are
+  // over every transaction whichever page this is.
+  const page = Math.floor((d.history_offset || 0) / DEFI_HISTORY_PAGE);
+  const total = d.history_total || 0;
+  const pages = Math.ceil(total / DEFI_HISTORY_PAGE);
+  if (pages <= 1) return;
+  const nav = el('div', { className: 'pager' });
+  const go = async (p, btn) => {
+    btn.disabled = true;
+    let next;
+    try {
+      next = await api(addressDefiPath(addr, p * DEFI_HISTORY_PAGE));
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'could not load: ' + err.message;
+      return;
+    }
+    if (gen !== _detailGen) return;
+    d.history = next.history;
+    d.history_offset = next.history_offset;
+    d.history_total = next.history_total;
+    defiHistoryEl(into, d, addr, gen);
+  };
+  const prev = el('button', { className: 'pager-btn' }, '← newer');
+  prev.disabled = page <= 0;
+  prev.onclick = () => go(page - 1, prev);
+  const next = el('button', { className: 'pager-btn' }, 'older →');
+  next.disabled = page >= pages - 1;
+  next.onclick = () => go(page + 1, next);
+  nav.appendChild(prev);
+  nav.appendChild(el('span', { className: 'pager-info' },
+    'page ' + (page + 1) + ' / ' + fmtNum(pages) + ' (' + fmtNum(total) + ' transactions)'));
+  nav.appendChild(next);
+  into.appendChild(nav);
+}
+
+// DEFI_FLOWS_PAGE is one page of each ledger table, and the whole of what the
+// browser holds of it.
+//
+// It used to be 5,000, coinFlowMaxLimit in pkg/httpapi/defi.go, so that a realm's
+// whole history arrived in one request and the curves above the table could be
+// summed from it in the browser. That is a document that grows with the realm,
+// handed to every reader: 528 KB for g1qyfled… on 2026-10-01, and the ceiling
+// was the only thing stopping a whale. The curves now come from the server's
+// per-asset series (/api/address/<addr>/defi), so the table is free to be what
+// a table is, one page at a time, with prev and next going back to the server.
+const DEFI_FLOWS_PAGE = 50;
 
 // A defi context says which account the renderer below is drawing, where to
 // page it from, and what a redraw replaces.
@@ -19511,6 +19895,50 @@ function defiPath(ctx, offset) {
   return ctx.base
     + '?flows_limit=' + DEFI_FLOWS_PAGE + (offset ? '&flows_offset=' + offset : '')
     + '&token_flows_limit=' + DEFI_FLOWS_PAGE;
+}
+
+// defiSeriesBalance finds one asset's curve in the server series, or null.
+function defiSeriesBalance(series, token) {
+  if (!series) return null;
+  return (series.balances || []).find(b => b.token === token) || null;
+}
+
+// defiBalanceChart draws one asset's balance from the server series: bars for
+// the net movement in each bucket, the line for what was held at its end.
+// Computed over every leg the account ever had, whichever page the table below
+// is showing.
+function defiBalanceChart(into, series, b, title, fmt) {
+  const moved = b.delta;
+  // Enough marks to be a curve: buckets where anything moved, either way. Net
+  // zero is still movement.
+  const active = moved ? moved.filter((v, i) => v !== 0 || (b.in || [])[i] || (b.out || [])[i]).length : 0;
+  if (active < CHART_MIN_POINTS) return false;
+  const fmtv = fmt || (v => fmtNum(v));
+  detailChart(into, _detailCharts, {
+    title: title + ', per ' + (b.unit || series.unit),
+    note: 'over every transfer this account ever had, from the server · walked back from today’s balance, so the line ends at '
+      + fmtv(b.balance[b.balance.length - 1] || 0),
+    data: {
+      labels: b.labels || series.labels,
+      datasets: [
+        // Gross, from the server's own halves: a bucket that received 900 and
+        // sent 400 draws both bars, not one of 500.
+        { label: 'received', data: b.in || moved.map(v => (v > 0 ? v : 0)), backgroundColor: 'rgba(78,205,196,0.55)', borderColor: '#4ecdc4', borderWidth: 1, yAxisID: 'y', order: 3 },
+        { label: 'sent', data: (b.out || moved.map(v => (v < 0 ? -v : 0))).map(v => -v), backgroundColor: 'rgba(255,107,107,0.55)', borderColor: '#ff6b6b', borderWidth: 1, yAxisID: 'y', order: 3 },
+        {
+          label: 'balance held', data: b.balance, type: 'line', yAxisID: 'y1',
+          borderColor: '#ffd43b', backgroundColor: 'rgba(255,212,59,0.08)',
+          borderWidth: 2, tension: 0.2, fill: true, order: 1,
+        },
+      ],
+    },
+    scales: {
+      x: chartAxis({ stacked: true }),
+      y: chartAxis({ stacked: true, title: 'movement', format: fmtv }),
+      y1: chartAxis({ position: 'right', grid: false, title: 'held', format: fmtv }),
+    },
+  });
+  return true;
 }
 
 // defiTokenFlowsPath pages the GRC20 half alone.
@@ -19636,8 +20064,10 @@ function renderRealmDefi(into, d, ctx) {
   // summed forward. Both land in the same place when the history is complete,
   // but only the anchor is right when it is not: a capped query would otherwise
   // draw a curve ending somewhere the realm has never been.
-  const asc = banker.slice().reverse();
-  const buckets = bucketCounts(asc, f => f.block_time,
+  const nativeSeries = defiSeriesBalance(ctx && ctx.series, 'ugnot');
+  const asc = nativeSeries ? [] : banker.slice().reverse();
+  if (nativeSeries) defiBalanceChart(into, ctx.series, nativeSeries, 'native balance', signedGnot);
+  const buckets = nativeSeries ? null : bucketCounts(asc, f => f.block_time,
     f => (f.amount < 0 ? 'sent' : 'received'), f => f.amount);
   if (buckets && asc.length >= CHART_MIN_POINTS) {
     const received = seriesData(buckets, 'received');
@@ -19647,7 +20077,7 @@ function renderRealmDefi(into, d, ctx) {
     const held = runningTotal(received.map((v, i) => v + sent[i])).map(v => v + before);
     const chartNote = [fmtNum(asc.length) + ' transfers plotted'];
     if (d.flows_total > flows.length) {
-      chartNote.push('the ' + fmtNum(flows.length) + ' most recent of ' + fmtNum(d.flows_total));
+      chartNote.push('only the ' + fmtNum(flows.length) + ' on this page of ' + fmtNum(d.flows_total) + ': the full series could not be read');
     }
     if (buckets.dropped) chartNote.push(fmtNum(buckets.dropped) + ' with no block time, not plotted');
     chartNote.push('the line ends at ' + fmtGnotAmount(live));
@@ -19687,8 +20117,7 @@ function renderRealmDefi(into, d, ctx) {
       el('th', {}, 'tx'), el('th', {}, 'account'), el('th', {}, 'counterparty'),
       el('th', {}, 'amount'), el('th', {}, 'block'))));
     const body = el('tbody');
-    const drawn = flows.slice(0, _defiTableRows);
-    for (const f of drawn) {
+    for (const f of flows) {
       body.appendChild(el('tr', {},
         el('td', {}, txLink(f.tx_hash, f.block_height, null, { showBlock: false })),
         el('td', {}, badge(f.account === 'banker' ? 'realm' : 'pkg', f.account)),
@@ -19701,12 +20130,15 @@ function renderRealmDefi(into, d, ctx) {
     }
     tbl.appendChild(body);
     into.appendChild(tbl);
-    if (drawn.length < flows.length) {
-      // Held in hand already, so this one is a redraw and not a fetch.
-      into.appendChild(defiShowMoreEl(into, d, ctx, drawn.length, flows.length));
-    } else if (d.flows_total > flows.length) {
-      into.appendChild(defiFlowsPagerEl(into, d, ctx, flows));
-    }
+    const pg = defiLedgerPagerEl(d.flows_offset || 0, d.flows_total || 0, 'transfers', async (offset) => {
+      const next = await api(defiPath(ctx, offset));
+      // Only the native half is replaced. The token table keeps its own page.
+      d.flows = next.flows || [];
+      d.flows_offset = next.flows_offset || 0;
+      d.flows_total = next.flows_total || 0;
+      renderRealmDefi(ctx.into(), d, ctx);
+    });
+    if (pg) into.appendChild(pg);
   } else {
     into.appendChild(el('div', { style: { color: 'var(--fg2)', padding: '12px 0' } },
       isRealm ? 'no coin has ever moved through this realm’s account'
@@ -19714,70 +20146,39 @@ function renderRealmDefi(into, d, ctx) {
   }
 }
 
-// defiShowMoreEl draws more of what is already loaded.
+// defiLedgerPagerEl is the pager both ledger tables share: newer and older,
+// one server page each, replacing the rows rather than appending them.
 //
-// The distinction from defiFlowsPagerEl below matters to a reader: that one goes
-// back to the server for legs it does not have, this one only unfolds rows the
-// page is already holding, so it is instant and cannot fail. Saying "draw" and
-// not "load" is what keeps the two from reading as the same button.
-function defiShowMoreEl(into, d, ctx, shown, held) {
-  // The step the button offers has to be the step it takes, or it says "show
-  // 250 more" on an address page and shows 25.
-  const step = ctx.path ? DEFI_TABLE_ROWS : DEFI_TABLE_ROWS_ADDRESS;
-  const more = Math.min(held - shown, step);
-  const wrap = el('div', { className: 'detail-chart-note' });
-  wrap.appendChild(el('span', {},
-    'drawing the ' + fmtNum(shown) + ' most recent of ' + fmtNum(d.flows_total)
-    + '. The balance, the curve and the counterparties above are computed over all of them. '));
-  const btn = el('button', { className: 'pager-btn', style: { marginLeft: '8px' } },
-    'draw ' + fmtNum(more) + ' more');
-  btn.onclick = () => {
-    _defiTableRows += ctx.path ? DEFI_TABLE_ROWS : DEFI_TABLE_ROWS_ADDRESS;
-    renderRealmDefi(ctx.into(), d, ctx);
-  };
-  wrap.appendChild(btn);
-  return wrap;
-}
-
-// defiFlowsPagerEl says how much of the history is on screen, and loads the rest.
-//
-// The page used to stop at 500 legs with a sentence explaining that it had, and
-// no way to see the other 2,595, which on a realm one day old is most of what a
-// reader came for. Each press appends the next page and redraws, so the chart
-// grows with the table rather than staying pinned to the first window.
-//
-// ⚠️ Every page costs the server a full walk of the realm's history from the
-// indexer, because the flows are derived per request rather than stored. That is
-// what the local coin_transfers ledger is for; until it exists, pressing this
-// twice on a large realm is two full derivations, and the response cache is the
-// only thing keeping it from being two per reader.
-function defiFlowsPagerEl(into, d, ctx, flows) {
-  const remaining = d.flows_total - flows.length;
-  const wrap = el('div', { className: 'detail-chart-note' });
-  wrap.appendChild(el('span', {},
-    'showing the ' + fmtNum(flows.length) + ' most recent of ' + fmtNum(d.flows_total)
-    + '. The balance above is computed over all of them. '));
-  const btn = el('button', { className: 'pager-btn', style: { marginLeft: '8px' } },
-    'load ' + fmtNum(Math.min(remaining, DEFI_FLOWS_PAGE)) + ' older');
-  btn.onclick = async () => {
+// It replaced two buttons that appended, "draw 25 more" over rows already held
+// and "load 5,000 older" for the rest, so a reader who kept pressing grew the
+// page without bound. Everything above the tables (the balances, the
+// reconciliation, the curves, the counterparties) is computed over every leg
+// server-side, so turning a page changes the table and nothing else.
+function defiLedgerPagerEl(offset, total, noun, load) {
+  if (total <= DEFI_FLOWS_PAGE) return null;
+  const page = Math.floor(offset / DEFI_FLOWS_PAGE);
+  const pages = Math.ceil(total / DEFI_FLOWS_PAGE);
+  const nav = el('div', { className: 'pager' });
+  const go = async (p, btn) => {
     btn.disabled = true;
-    btn.textContent = 'loading…';
-    let next;
     try {
-      next = await api(defiPath(ctx, flows.length));
+      await load(p * DEFI_FLOWS_PAGE);
     } catch (err) {
       btn.disabled = false;
       btn.textContent = 'could not load: ' + err.message;
-      return;
     }
-    // Merged into the object the caller holds, so a third press continues from
-    // where the second stopped instead of re-fetching the same offset.
-    d.flows = flows.concat(next.flows || []);
-    into.textContent = '';
-    renderRealmDefi(into, d, ctx);
   };
-  wrap.appendChild(btn);
-  return wrap;
+  const prev = el('button', { className: 'pager-btn' }, '\u2190 newer');
+  prev.disabled = page <= 0;
+  prev.onclick = () => go(page - 1, prev);
+  const next = el('button', { className: 'pager-btn' }, 'older \u2192');
+  next.disabled = page >= pages - 1;
+  next.onclick = () => go(page + 1, next);
+  nav.appendChild(prev);
+  nav.appendChild(el('span', { className: 'pager-info' },
+    'page ' + (page + 1) + ' / ' + fmtNum(pages) + ' (' + fmtNum(total) + ' ' + noun + ')'));
+  nav.appendChild(next);
+  return nav;
 }
 
 // --- The money graph: who paid this realm, and who it paid -------------------
@@ -19836,7 +20237,7 @@ function drawDefiFlowGraph(slot, into, d, ctx) {
       urlSetParam('flow', id === 'combined' ? '' : id);
       // Redraw in place rather than reloading the tab: the data is already
       // here, and a refetch would cost the server another full derivation of
-      // the realm's history (see defiFlowsPagerEl).
+      // the realm's ledgers.
       into.textContent = '';
       renderRealmDefi(into, d, ctx);
     });
@@ -19863,8 +20264,8 @@ function drawDefiFlowGraph(slot, into, d, ctx) {
     // Detail mode has only the page in hand, and saying so is the difference
     // between a partial picture and a wrong one.
     if ((d.flows_total || 0) > (d.flows || []).length) {
-      bits.push('the ' + fmtNum((d.flows || []).length) + ' most recent of ' + fmtNum(d.flows_total)
-        + '; load the rest below to draw them all');
+      bits.push('the ' + fmtNum((d.flows || []).length) + ' on the table’s current page, of ' + fmtNum(d.flows_total)
+        + '; page the table to draw others');
     }
   }
   bits.push('green in, orange out');
@@ -20078,7 +20479,25 @@ const GRC20_CHART_MAX = 4;
 // carries no amount, so every leg parses to zero and the curve would be a flat
 // line on zero: that is not "holds none", it is "this arithmetic does not
 // apply", which is what the table's n/a already says.
-function defiTokenCharts(section, d, tokens) {
+function defiTokenCharts(section, d, tokens, ctx) {
+  // The server series first: every leg the account ever had, whichever page
+  // the table is on. The legs on the page are the fallback, and say so.
+  const series = ctx && ctx.series;
+  if (series) {
+    const meta = new Map(tokens.map(t => [t.token, t]));
+    const curves = (series.balances || []).filter(b => b.fungible && b.token !== 'ugnot' && meta.has(b.token));
+    let drawn = 0;
+    for (const b of curves) {
+      if (drawn >= GRC20_CHART_MAX) break;
+      const t = meta.get(b.token);
+      if (defiBalanceChart(section, series, b, (t.display_symbol || t.symbol || b.symbol) + ' balance', v => fmtTokenUnits(v))) drawn++;
+    }
+    if (curves.length > GRC20_CHART_MAX) {
+      section.appendChild(el('div', { className: 'detail-chart-note' },
+        'charting the ' + GRC20_CHART_MAX + ' most active positions, of ' + fmtNum(curves.length) + '.'));
+    }
+    return;
+  }
   const byToken = new Map();
   for (const f of (d.token_flows || [])) {
     if (!byToken.has(f.token)) byToken.set(f.token, []);
@@ -20148,7 +20567,7 @@ function defiTokenCharts(section, d, tokens) {
 function defiTokensEl(d, tokens, ctx) {
   const section = el('div');
   section.appendChild(el('div', { className: 'section-title' }, 'GRC20 positions'));
-  defiTokenCharts(section, d, tokens);
+  defiTokenCharts(section, d, tokens, ctx);
   const tbl = el('table', { id: 'defi-tokens' });
   tbl.appendChild(el('thead', {}, el('tr', {},
     el('th', {}, 'token'), el('th', {}, 'realm'), el('th', {}, 'balance'),
@@ -20235,45 +20654,16 @@ function defiTokenFlowsEl(section, d, tokens, ctx) {
   // position saw, and this counts rows, so the two part company on a leg that
   // touches a token the positions table folded. A pager has to page against the
   // count it is actually paging through.
-  const total = d.token_flows_total || 0;
-  if (total > flows.length) {
-    section.appendChild(defiTokenFlowsPagerEl(d, flows, total, ctx));
-  }
-}
-
-// defiTokenFlowsPagerEl is the native pager's counterpart, and exists for the
-// same reason: the table used to stop at 500 with a sentence explaining that it
-// had and no way to see the rest. r/gnoswap/pool and r/gnoswap/router both sit
-// exactly on that cap, which is indistinguishable from a complete history
-// without a total beside it.
-function defiTokenFlowsPagerEl(d, flows, total, ctx) {
-  const remaining = total - flows.length;
-  const wrap = el('div', { className: 'detail-chart-note' });
-  wrap.appendChild(el('span', {},
-    'showing the ' + fmtNum(flows.length) + ' most recent of ' + fmtNum(total)
-    + ', across every token above. The positions and the curves are computed over all of them. '));
-  const btn = el('button', { className: 'pager-btn', style: { marginLeft: '8px' } },
-    'load ' + fmtNum(Math.min(remaining, DEFI_FLOWS_PAGE)) + ' older');
-  btn.onclick = async () => {
-    btn.disabled = true;
-    btn.textContent = 'loading\u2026';
-    let next;
-    try {
-      next = await api(defiTokenFlowsPath(ctx, flows.length));
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = 'could not load: ' + err.message;
-      return;
-    }
-    // Merged into the object the caller holds, so a third press continues from
-    // where the second stopped. Only the token half is replaced: the response
-    // that answered this asked for flows_limit=0, so its `flows` is empty by
-    // design and overwriting the native table with it would blank it.
-    d.token_flows = flows.concat(next.token_flows || []);
+  const pg = defiLedgerPagerEl(d.token_flows_offset || 0, d.token_flows_total || 0, 'transfers, every token', async (offset) => {
+    const next = await api(defiTokenFlowsPath(ctx, offset));
+    // Only the token half is replaced: this response asked for flows_limit=0,
+    // so its `flows` is empty by design and would blank the native table.
+    d.token_flows = next.token_flows || [];
+    d.token_flows_offset = next.token_flows_offset || 0;
+    d.token_flows_total = next.token_flows_total || 0;
     renderRealmDefi(ctx.into(), d, ctx);
-  };
-  wrap.appendChild(btn);
-  return wrap;
+  });
+  if (pg) section.appendChild(pg);
 }
 
 // signedUnitsEl is signedGnotEl for a token amount: coloured by direction, and
