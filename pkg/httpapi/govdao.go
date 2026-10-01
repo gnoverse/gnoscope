@@ -459,15 +459,61 @@ func unescapeMarkdown(s string) string {
 // of that, namely single-flight and a bounded retry after a failure.
 var govDAOOverviewCache = newMemo[GovDAOOverview](govDAOCacheTTL, govDAOFailureTTL)
 
+// govDAOListMaxPages bounds the walk. gov/dao lists five proposals a page, so
+// this is 250 proposals; mainnet had 8 and onyx-1 22 on 2026-10-01.
+const govDAOListMaxPages = 50
+
+// fetchGovDAOProposalList reads every page of gov/dao's proposal list.
+//
+// The root render is page one of several, five a page, newest first, and
+// reading it alone is how /govdao showed proposals 3 to 7 of mainnet's 0 to 7
+// until 2026-10-01. Walking proposal IDs one render at a time is not a
+// substitute: Status: appears only in the list render (see
+// parseGovDAOProposalDetail), so the list is the one place an open proposal's
+// status can be read. A page past the end renders no proposals, which is the
+// stop; a page that repeats IDs already seen stops it too, in case a future
+// render clamps the page number instead.
+func fetchGovDAOProposalList(ctx context.Context, rpcURL string) ([]GovDAOProposalSummary, error) {
+	var out []GovDAOProposalSummary
+	seen := map[int]bool{}
+	for page := 1; page <= govDAOListMaxPages; page++ {
+		query := store.GovDAOPathPrefix + ":"
+		if page > 1 {
+			query += "?page=" + strconv.Itoa(page)
+		}
+		md, err := fetchGovDAORender(ctx, rpcURL, query)
+		if err != nil {
+			if page == 1 {
+				return nil, err
+			}
+			// Later pages are best-effort: the newest proposals are already in
+			// hand, and they are the ones with a vote still open.
+			break
+		}
+		fresh := 0
+		for _, p := range parseGovDAOProposalList(md) {
+			if !seen[p.ID] {
+				seen[p.ID] = true
+				out = append(out, p)
+				fresh++
+			}
+		}
+		if fresh == 0 {
+			break
+		}
+	}
+	return out, nil
+}
+
 // FetchGovDAOOverview returns the proposal list, members and tier stats for
 // a network, best-effort and cached.
 func FetchGovDAOOverview(ctx context.Context, network, rpcURL string) GovDAOOverview {
 	return govDAOOverviewCache.get(ctx, network, func(ctx context.Context) (GovDAOOverview, bool) {
 		var out GovDAOOverview
-		if listMD, err := fetchGovDAORender(ctx, rpcURL, store.GovDAOPathPrefix+":"); err != nil {
+		if props, err := fetchGovDAOProposalList(ctx, rpcURL); err != nil {
 			out.Errors = append(out.Errors, "proposals: "+err.Error())
 		} else {
-			out.Proposals = parseGovDAOProposalList(listMD)
+			out.Proposals = props
 		}
 		if membersMD, err := fetchGovDAORender(ctx, rpcURL, store.GovDAOPathPrefix+"/memberstore/v0:members"); err != nil {
 			out.Errors = append(out.Errors, "members: "+err.Error())
