@@ -1,12 +1,15 @@
 import { expect, test } from '@playwright/test';
 
+import { PROPOSERS } from '../harness/fake-indexer.mjs';
 import { settle, unexpected, watch } from './helpers.js';
 
-// The per-validator page.
+// One validator, over time: the validator tab of its address page.
 //
 // /validators already rendered the set; what it could not do is show one
 // validator over time, because the table is a snapshot and a validator's story
-// is a history.
+// is a history. It was its own page, /validator/<addr>, until 2026-10-01: the
+// key that proposes blocks is also an account, so it is one address page with
+// a tab, and the old URL lands on that tab.
 
 const OPERATOR = 'g1manfred47kzduec920z88wfr64ylksmdcedlf5';
 
@@ -29,11 +32,12 @@ test('a validator page shows its history and says what the share series is', asy
   await page.route('**/api/validator/g1val_a*', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DETAIL) }));
 
-  const response = await page.goto('/validator/g1val_a');
+  const response = await page.goto('/validator/g1val_a?network=alpha');
   expect(response.status()).toBe(200);
   await settle(page);
+  await expect(page).toHaveURL(/\/address\/g1val_a\?.*tab=validator/);
 
-  const detail = page.locator('#validator-detail-content');
+  const detail = page.locator('#address-detail-content [data-pane="validator"]');
   await expect(detail).toContainText('blocks proposed');
   await expect(detail).toContainText('recent blocks proposed');
   await expect(detail).toContainText('signs as');
@@ -64,12 +68,12 @@ test('a validator that has left the set says so', async ({ page }) => {
       body: JSON.stringify({ ...DETAIL, in_set: false }),
     }));
 
-  await page.goto('/validator/g1val_a');
+  await page.goto('/validator/g1val_a?network=alpha');
   await settle(page);
 
   // An address with history but no place in the current set would otherwise
   // read as an active validator.
-  await expect(page.locator('#validator-detail-content')).toContainText('not in the current set');
+  await expect(page.locator('#address-detail-content [data-pane="validator"]')).toContainText('not in the current set');
 
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
 });
@@ -84,7 +88,8 @@ test('the set table links through to each validator', async ({ page }) => {
   const history = page.locator('#validators-content').getByText('history', { exact: true }).first();
   await expect(history).toBeVisible();
   await history.click();
-  await expect(page).toHaveURL(/\/validator\/g1/);
+  await expect(page).toHaveURL(/\/address\/g1[^?]*\?.*tab=validator/);
+  await expect(page.locator('#address-detail-content [data-pane="validator"]')).toBeVisible();
 
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
 });
@@ -100,10 +105,10 @@ test('a validator page without liveness data does not claim zero missed blocks',
       body: JSON.stringify({ ...DETAIL, validator: rest, proposals: [] }),
     }));
 
-  await page.goto('/validator/g1val_a');
+  await page.goto('/validator/g1val_a?network=alpha');
   await settle(page);
 
-  const detail = page.locator('#validator-detail-content');
+  const detail = page.locator('#address-detail-content [data-pane="validator"]');
   await expect(detail).toContainText('blocks proposed');
   await expect(detail).not.toContainText('missed 24h');
   await expect(detail).toContainText('most likely in the genesis set');
@@ -158,5 +163,70 @@ test('the registrations filter has a short key that does not grow', async ({ pag
   const params = await page.locator('#validators-content .table-filter').evaluateAll(
     els => els.map(e => e.getAttribute('data-param') || ''));
   for (const p of params) expect(p.length, 'filter key ' + p.slice(0, 80)).toBeLessThan(64);
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+});
+
+// A validator is drawn like a registered name wherever its address appears:
+// the moniker in place of the address, no @, and the shield after it. Either
+// key counts, so the operator account is marked as well as the consensus key.
+// The block page is the case that prompted it (onyx block 94057 showed a bare
+// proposer address), and the address page is where the shield leads.
+test('a validator address shows its moniker and the shield everywhere', async ({ page }) => {
+  const seen = watch(page);
+  const [SIGNING, , TIP_PROPOSER] = PROPOSERS;
+  const entry = { moniker: 'val-zero', signing: SIGNING, operator: OPERATOR, in_set: true };
+  await page.route('**/api/validators/addresses*', route =>
+    route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        [SIGNING]: { role: 'signing', ...entry },
+        [OPERATOR]: { role: 'operator', ...entry },
+        [TIP_PROPOSER]: { role: 'signing', moniker: 'val-two', signing: TIP_PROPOSER, in_set: true },
+      }),
+    }));
+
+  await page.goto('/blocks?network=alpha');
+  await settle(page);
+  const row = page.locator('#blocks-list tr', { hasText: 'val-zero' }).first();
+  await expect(row).toBeVisible();
+  await expect(row).not.toContainText('@val-zero');
+  await expect(row.locator('.addr-validator')).toHaveText('\u{1F6E1}\uFE0F');
+
+  // The block page's proposer row, which had no name at all before. The fake
+  // indexer answers every block query with its tip, so that is the proposer.
+  await page.goto('/block/1039?network=alpha');
+  await settle(page);
+  const prop = page.locator('#block-detail-content tr', { hasText: 'proposer' });
+  await expect(prop).toContainText('val-two');
+  await expect(prop.locator('.addr-validator')).toBeVisible();
+
+  // The shield goes to the validator tab of that address.
+  await page.route('**/api/validator/' + TIP_PROPOSER + '*', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...DETAIL, validator: { ...DETAIL.validator, address: TIP_PROPOSER } }) }));
+  await prop.locator('.addr-validator').click();
+  await expect(page).toHaveURL(new RegExp('/address/' + TIP_PROPOSER + '\\?.*tab=validator'));
+  await expect(page.locator('#address-detail-content [data-tab="validator"]')).toHaveClass(/active/);
+  await expect(page.locator('#address-detail-content [data-pane="validator"]')).toContainText('blocks proposed');
+
+  // The operator key is the same validator, and is marked the same way.
+  await page.goto('/address/' + OPERATOR + '?network=alpha');
+  await settle(page);
+  await expect(page.locator('#address-detail-content [data-tab="validator"]')).toBeVisible();
+  await expect(page.locator('#address-detail-content')).toContainText('val-zero');
+
+  expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
+  expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);
+});
+
+// An address that is not a validator has no validator tab, and no shield.
+test('an ordinary address has no validator tab', async ({ page }) => {
+  const seen = watch(page);
+  await page.route('**/api/validators/addresses*', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await page.goto('/address/' + OPERATOR + '?network=alpha');
+  await settle(page);
+  await expect(page.locator('#address-detail-content [data-tab="overview"]')).toBeVisible();
+  await expect(page.locator('#address-detail-content [data-tab="validator"]')).toHaveCount(0);
+  await expect(page.locator('#address-detail-content .addr-validator')).toHaveCount(0);
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
 });

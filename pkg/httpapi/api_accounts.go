@@ -118,6 +118,72 @@ func (a *API) HandleValidatorMonikers(w http.ResponseWriter, r *http.Request) {
 	JSONResponse(w, monikers)
 }
 
+// ValidatorAddress is what an address page or an address link needs to know
+// about an address that belongs to a validator: which of its two keys this
+// is, the name to draw in place of the address, and the other key.
+type ValidatorAddress struct {
+	// Role is "signing" (the consensus key that proposes blocks) or
+	// "operator" (the key its r/gnops/valopers profile is registered under).
+	Role     string `json:"role"`
+	Moniker  string `json:"moniker,omitempty"`
+	Signing  string `json:"signing"`
+	Operator string `json:"operator,omitempty"`
+	InSet    bool   `json:"in_set"`
+}
+
+// HandleValidatorAddresses serves address -> ValidatorAddress for one network,
+// keyed by **both** keys of every validator, so a link can mark either one
+// without knowing which it was handed. Same sources as HandleValidatorMonikers
+// (the valopers realm, the network's own set, gnockpit for names on the one
+// chain it describes), and the same best-effort contract: an unreachable RPC
+// yields {}, which reads as "no validators known", never as an error.
+func (a *API) HandleValidatorAddresses(w http.ResponseWriter, r *http.Request) {
+	JSONResponse(w, validatorAddresses(a.FetchValset(r.Context(), a.singleNetwork(r))))
+}
+
+func validatorAddresses(vs Valset) map[string]ValidatorAddress {
+	out := map[string]ValidatorAddress{}
+	inSet := map[string]ValsetMember{}
+	for _, m := range vs.Members {
+		inSet[m.Address] = m
+	}
+	for signing, p := range vs.Valopers {
+		if signing == "" {
+			continue
+		}
+		_, seated := inSet[signing]
+		v := ValidatorAddress{Role: "signing", Moniker: p.Moniker, Signing: signing, Operator: p.Operator, InSet: seated}
+		out[signing] = v
+		if p.Operator != "" && p.Operator != signing {
+			v.Role = "operator"
+			out[p.Operator] = v
+		}
+	}
+	// A member with no profile is still a validator: genesis ones mostly are.
+	// Its name, when there is one, is gnockpit's, and it wins over the
+	// profile's for the same reason it does in HandleValidatorMonikers.
+	for _, m := range vs.Members {
+		v, ok := out[m.Address]
+		if !ok {
+			v = ValidatorAddress{Role: "signing", Signing: m.Address, Operator: m.Operator}
+		}
+		v.InSet = true
+		if m.Name != "" {
+			v.Moniker = m.Name
+		}
+		out[m.Address] = v
+		if v.Operator != "" && v.Operator != m.Address {
+			op := out[v.Operator]
+			op.Role, op.Signing, op.Operator, op.InSet = "operator", m.Address, v.Operator, true
+			if v.Moniker != "" {
+				op.Moniker = v.Moniker
+			}
+			out[v.Operator] = op
+		}
+	}
+	return out
+}
+
 // HandleValidatorsLive serves one network's current validator set, from that
 // network's own RPC, joined with the valopers profile and the proposals that
 // changed each member (see valset.go). Until 2026-10-01 this served gnockpit's

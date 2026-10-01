@@ -207,6 +207,35 @@ func TestValidatorMonikersCoverProfilesOutsideTheSet(t *testing.T) {
 	}
 }
 
+// Either key of a validator resolves, so a link can mark the operator's
+// account as well as the consensus key that proposes blocks. g1val_b has no
+// profile and is still a validator; testOperatorB's profile is not seated yet.
+func TestValidatorAddressesKeyBothKeys(t *testing.T) {
+	api, _ := newTestAPI(t)
+	gnockpitDown(t)
+	fakeChain(t, api, "alpha-1")
+
+	rec := httptest.NewRecorder()
+	api.HandleValidatorAddresses(rec, httptest.NewRequest(http.MethodGet, "/api/validators/addresses?network=alpha", nil))
+	var got map[string]ValidatorAddress
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	want := map[string]ValidatorAddress{
+		"g1val_a":     {Role: "signing", Moniker: "moul", Signing: "g1val_a", Operator: testOperatorA, InSet: true},
+		testOperatorA: {Role: "operator", Moniker: "moul", Signing: "g1val_a", Operator: testOperatorA, InSet: true},
+		"g1val_b":     {Role: "signing", Signing: "g1val_b", InSet: true},
+		"g1val_c":     {Role: "signing", Moniker: "waiting", Signing: "g1val_c", Operator: testOperatorB},
+		testOperatorB: {Role: "operator", Moniker: "waiting", Signing: "g1val_c", Operator: testOperatorB},
+	}
+	if len(got) != len(want) {
+		t.Errorf("got %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%s = %+v, want %+v", k, got[k], w)
+		}
+	}
+}
+
 func TestParseValsetUpdates(t *testing.T) {
 	for _, tc := range []struct {
 		name string
