@@ -1,4 +1,4 @@
-/* Cartography: five drawings of one chain, as a place rather than a table.
+/* Cartography: ten drawings of one chain, as a place rather than a table.
  *
  * ---------------------------------------------------------------------------
  * Why a file of its own
@@ -10,7 +10,7 @@
  * container and a ten-line loader; everything below is the experiment.
  *
  * ---------------------------------------------------------------------------
- * Why five and not one
+ * Why ten and not one
  *
  * The site already has the honest picture: /contracts is a force-directed
  * graph, and it is the right answer to "what is connected to what". It is a
@@ -28,6 +28,15 @@
  *   metro       what does everything stand on
  *   relief      where is the chain dense, ignoring who owns what
  *
+ * and five more borrowed from city-builders, each with a centre (the second
+ * five, below, says why):
+ *
+ *   metropolis  where is downtown: what the chain leans on and uses most
+ *   boroughs    how do namespaces compare when each gets the same ground
+ *   hexes       which namespaces are neighbours, and what each one yields
+ *   frontier    who settled the chain, and in what order
+ *   old town    how did the whole chain grow, era by era
+ *
  * ---------------------------------------------------------------------------
  * What it reads
  *
@@ -42,7 +51,7 @@
  * Honesty rules these drawings follow
  *
  * A picture is easier to believe than a table and just as easy to get wrong,
- * so three rules hold across all five:
+ * so three rules hold across all ten:
  *
  *  1. Nothing is invented. Every position that carries meaning is derived from
  *     a field. Where a position is arbitrary (which slot in a district a
@@ -98,6 +107,11 @@ var VIEWS = [
   { id: 'orbits',     name: 'orbits',     blurb: 'one solar system per namespace, orbit radius by deploy date' },
   { id: 'metro',      name: 'metro',      blurb: 'the import graph as transit lines, interchanges where code is shared' },
   { id: 'relief',     name: 'relief',     blurb: 'a contour map of where the chain is dense, owner-blind' },
+  { id: 'metropolis', name: 'metropolis', blurb: 'a downtown by land value, owner-blind, zoned by what each package does' },
+  { id: 'boroughs',   name: 'boroughs',   blurb: 'one equal block per namespace, the busiest at the centre' },
+  { id: 'hexes',      name: 'hexes',      blurb: 'a board of equal hexes, neighbours by imports, terrain by yield' },
+  { id: 'frontier',   name: 'frontier',   blurb: 'deployers as players, settled outward from (0|0) in deploy order' },
+  { id: 'oldtown',    name: 'old town',   blurb: 'a walled town grown ring by ring, one wall per era of deploys' },
 ];
 
 // pure says whether a pure package may take a size from this metric.
@@ -423,7 +437,7 @@ function camChrome(reset, zoom) {
 // Data
 // -----------------------------------------------------------------------------
 
-// One load for all five views. The import graph ignores the window by design
+// One load for every view. The import graph ignores the window by design
 // (it is a property of deployed source, not of traffic), the other three
 // honour it, and the /api/graph/callers day count is derived from it so the
 // people on the settlement map are the same people the buildings are lit by.
@@ -508,7 +522,7 @@ function render(root) {
 
   root.appendChild(el('div', { className: 'carto-intro' },
     el('h2', {}, 'cartography'),
-    el('p', {}, 'The same chain the rest of the site tabulates, drawn as a place. Five metaphors, ' +
+    el('p', {}, 'The same chain the rest of the site tabulates, drawn as a place. Ten metaphors, ' +
       'one data load, no endpoint of their own: every number here comes from the API that serves ' +
       '/contracts, /accounts and /gas, so a figure that disagrees with one of those pages is a bug ' +
       'in the drawing and not a second opinion. Each view says in its caption which quantity it ' +
@@ -566,7 +580,12 @@ function btnGroup(label, options, isOn, pick) {
 function controls(root) {
   var el = window.el;
   var bar = el('div', { className: 'carto-bar', id: 'carto-bar' });
-  var sized = S.view === 'city' || S.view === 'orbits' || S.view === 'relief';
+  // hexes is the one city-builder view without a size channel: a tile is the
+  // same size whatever is in it, which is its point.
+  var sized = S.view !== 'settlement' && S.view !== 'metro' && S.view !== 'hexes';
+  // The three isometric drawings share one camera model, so they share its
+  // controls: the compass and the plan view.
+  var iso = S.view === 'city' || S.view === 'metropolis' || S.view === 'boroughs';
 
   bar.appendChild(btnGroup('window', WINDOWS.map(function (w) { return [w, w]; }),
     function (v) { return S.window === v; },
@@ -602,6 +621,8 @@ function controls(root) {
     bar.appendChild(btnGroup('roads', [['on', true], ['off', false]],
       function (v) { return S.roads === v; },
       function (v) { if (S.roads !== v) { S.roads = v; writeURL(); restate(root); } }));
+  }
+  if (iso) {
 
     bar.appendChild(btnGroup('view', [['model', false, 'isometric, with heights'],
       ['plan', true, 'straight down, no heights: nothing hides behind a tower']],
@@ -613,7 +634,7 @@ function controls(root) {
     // on every pixel of a drag would queue redraws faster than they finish.
     var rot = el('div', { className: 'carto-grp' }, el('span', {}, 'rotate'));
     [['\u21ba', -15], ['\u21bb', 15]].forEach(function (o) {
-      var b = el('button', { title: 'turn the city ' + (o[1] < 0 ? 'left' : 'right') + ' 15\u00b0' }, o[0]);
+      var b = el('button', { title: 'turn the map ' + (o[1] < 0 ? 'left' : 'right') + ' 15\u00b0' }, o[0]);
       b.addEventListener('click', function () {
         S.yaw = (((S.yaw + o[1]) % 360) + 360) % 360; writeURL(); restate(root);
       });
@@ -716,7 +737,8 @@ function draw() {
       return;
     }
     ({ city: drawCity, settlement: drawSettlement, orbits: drawOrbits,
-       metro: drawMetro, relief: drawRelief })[S.view](stage, below, d);
+       metro: drawMetro, relief: drawRelief, metropolis: drawMetropolis, boroughs: drawBoroughs,
+       hexes: drawHexes, frontier: drawFrontier, oldtown: drawOldTown })[S.view](stage, below, d);
   }, function (e) {
     if (gen !== S.gen) return;
     stage.textContent = '';
@@ -2096,6 +2118,1280 @@ function drawReliefField(stage, below, d, pos, met) {
 function cardinal(deg) {
   var names = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
   return names[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+}
+
+// =============================================================================
+// The second five: the chain as a city-builder would draw it
+// =============================================================================
+//
+// The first five each answer one question well and share one weakness: four of
+// them are laid out by namespace with a district's area set by its member
+// count, and on mainnet one namespace holds 337 of 598 packages. The city is
+// then a single slab with a village beside it, and there is no centre, because
+// nothing in a row-packed layout says where the middle of the chain is.
+//
+// City-builders solved both problems a long time ago, so these borrow from them
+// on purpose:
+//
+//   metropolis  SimCity: a downtown. Owner-blind, placed by land value, zoned
+//               by what each package does.
+//   boroughs    the same grid of streets, but every namespace gets one block of
+//               the same size, so a big namespace is dense rather than wide.
+//   hexes       a Catan board: one equal hex per namespace, neighbours chosen
+//               by who imports whom, terrain by what it contributes most of.
+//   frontier    a Travian world map: deployers are the players, the first
+//               settler holds (0|0), later arrivals settle further out.
+//   old town    a walled town grown ring by ring: the oldest code around the
+//               market square, a new wall for every era of deploys.
+//
+// Every honesty rule at the top of this file holds here too. Where a game
+// supplies a convention with no data behind it (a Catan number, a wilderness
+// tile), the caption says it is a convention.
+
+// byDeploy orders packages by when they reached the chain: time first, then
+// height, then path. Time leads because genesis packages all carry height 0
+// and a stable date, so a height-first sort would put them in the right group
+// only by accident of the zero.
+function byDeploy(a, b) {
+  var ta = a.deployed_at ? Date.parse(a.deployed_at) : 0;
+  var tb = b.deployed_at ? Date.parse(b.deployed_at) : 0;
+  return ta - tb || (a.deploy_height || 0) - (b.deploy_height || 0) || a.path.localeCompare(b.path);
+}
+
+// landValue is the metropolis' one invented quantity, and it is invented from
+// three real ones: how widely a package is imported, how often it was called,
+// and by how many distinct addresses. Each is log-scaled against the chain's
+// own maximum, so the score is a rank-like number in 0..2.5 that no single
+// power-law outlier can own.
+//
+// Callers weigh half, because a realm with many callers is already a realm with
+// many calls and counting both at full weight would count the same traffic
+// twice.
+function landValuer(nodes) {
+  var mi = 0, mc = 0, mu = 0;
+  nodes.forEach(function (n) {
+    mi = Math.max(mi, n.importers || 0); mc = Math.max(mc, n.calls || 0); mu = Math.max(mu, n.unique_callers || 0);
+  });
+  var li = lg(mi) || 1, lc = lg(mc) || 1, lu = lg(mu) || 1;
+  return function (n) { return lg(n.importers) / li + lg(n.calls) / lc + 0.5 * lg(n.unique_callers) / lu; };
+}
+
+// Zoning, SimCity's three colours plus two of its oddities. The zone is a
+// function of two facts every row already carries (realm or not, called or
+// not, imported or not), so a reader can check any plot against /contracts.
+var ZONES = {
+  C:     { hue: 212, sat: 62, name: 'commercial',  what: 'a realm called in the window' },
+  R:     { hue: 128, sat: 44, name: 'residential', what: 'a realm nobody called in the window' },
+  I:     { hue: 44,  sat: 72, name: 'industrial',  what: 'a pure package other code imports' },
+  P:     { hue: 150, sat: 22, name: 'park',        what: 'a pure package nothing imports' },
+  build: { hue: 28,  sat: 70, name: 'construction', what: 'parked: stored, never enabled' },
+};
+function zoneOf(n) {
+  if (n.parked) return 'build';
+  if (n.is_realm) return n.calls > 0 ? 'C' : 'R';
+  return n.importers > 0 ? 'I' : 'P';
+}
+function zoneColor(z, l, s) { var Z = ZONES[z]; return 'hsl(' + Z.hue + ',' + (s || Z.sat) + '%,' + l + '%)'; }
+
+function pts(a) { return a.map(function (q) { return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' '); }
+
+// isoBox draws one building at a projected point: a roof and the two walls the
+// camera can see, or a flat plot in the plan view. hw and hh are the roof's
+// half-extents on screen, so a caller can give a mansion a wider footprint than
+// a terrace house without a second drawing routine.
+function isoBox(x, y, h, hw, hh, top, left, right) {
+  var g = svgEl('g');
+  var edge = { stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.5 };
+  if (_cityCam.flat) {
+    g.appendChild(svgEl('rect', Object.assign({ x: x - hw, y: y - hh, width: hw * 2, height: hh * 2, rx: 1,
+      fill: top }, edge)));
+    return g;
+  }
+  g.appendChild(svgEl('polygon', Object.assign({ points: pts([[x - hw, y - h], [x, y - h + hh], [x, y + hh], [x - hw, y]]),
+    fill: left }, edge)));
+  g.appendChild(svgEl('polygon', Object.assign({ points: pts([[x + hw, y - h], [x, y - h + hh], [x, y + hh], [x + hw, y]]),
+    fill: right }, edge)));
+  g.appendChild(svgEl('polygon', Object.assign({ points: pts([[x, y - h - hh], [x + hw, y - h], [x, y - h + hh], [x - hw, y - h]]),
+    fill: top }, edge)));
+  return g;
+}
+
+// isoLamps lights a building's facade, the same rule as the city: any call at
+// all lights one window, more calls light more, capped by the storeys there
+// are to light.
+function isoLamps(g, n, x, y, h, hw, hh, storeys) {
+  if (!(n.calls > 0)) return;
+  if (_cityCam.flat) {
+    g.appendChild(svgEl('circle', { cx: x, cy: y, r: Math.max(1.2, Math.min(2.4, hw * 0.25)), fill: '#ffd93d', opacity: 0.9 }));
+    return;
+  }
+  var lamps = Math.min(storeys, Math.max(1, Math.round(lg(n.calls) * 1.6)));
+  var s = Math.max(1.4, Math.min(2.6, hw * 0.16));
+  for (var k = 0; k < lamps; k++) {
+    var ly = y - (k + 0.6) * (h / Math.max(1, storeys));
+    g.appendChild(svgEl('rect', { x: x - hw * 0.62, y: ly - s + hh * 0.18, width: s, height: s, fill: '#ffd93d', opacity: 0.85 }));
+    g.appendChild(svgEl('rect', { x: x + hw * 0.4, y: ly - s + hh * 0.18, width: s, height: s, fill: '#ffd93d', opacity: 0.6 }));
+  }
+}
+
+// storeysFor is the city's height rule, shared so the three isometric drawings
+// cannot disagree about how tall a package is: the metric on the reader's
+// scale, a floor of one, and pure packages held flat under a metric they do
+// not have (see METRICS).
+// isoParked outlines a parked package as scaffolding, in whichever of the
+// two projections is on.
+function isoParked(g, x, y, h, hw, hh) {
+  var dash = { fill: 'none', stroke: 'var(--amber)', 'stroke-width': 1, 'stroke-dasharray': '2 2', opacity: 0.85 };
+  g.appendChild(_cityCam.flat
+    ? svgEl('rect', Object.assign({ x: x - hw, y: y - hh, width: hw * 2, height: hh * 2, rx: 1 }, dash))
+    : svgEl('polygon', Object.assign({ points: pts([[x, y - h - hh], [x + hw, y - h], [x, y + hh], [x - hw, y]]) }, dash)));
+}
+
+function storeysFor(nodes, met, maxStorey) {
+  var maxM = Math.max(1, nodes.reduce(function (m, n) { return Math.max(m, met.get(n) || 0); }, 0));
+  var denom = Math.max(1e-9, sc(maxM));
+  return function (n) {
+    var v = met.get(n) || 0;
+    var rises = n.is_realm || met.pure;
+    return { rises: rises, storeys: rises && v > 0 ? Math.max(1, Math.round(sc(v) / denom * maxStorey)) : 1 };
+  };
+}
+
+// isoFrame turns a list of projected extents into a viewBox and an svg. Every
+// isometric view needs the frame to be the bounds of what is drawn and nothing
+// more, for the reason drawCity gives at length.
+function isoFrame(ext, pad) {
+  var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  ext.forEach(function (e) {
+    minX = Math.min(minX, e[0]); maxX = Math.max(maxX, e[0]);
+    minY = Math.min(minY, e[1]); maxY = Math.max(maxY, e[1]);
+  });
+  minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+  return svgEl('svg', { viewBox: minX + ' ' + minY + ' ' + (maxX - minX) + ' ' + (maxY - minY),
+    preserveAspectRatio: 'xMidYMid meet', style: 'max-height:80vh' });
+}
+
+// An iso-projected circle on the ground, for the metropolis' ring roads.
+function isoRing(cx, cy, r) {
+  var out = [];
+  for (var i = 0; i < 72; i++) {
+    var a = i / 72 * Math.PI * 2;
+    out.push(isoXY(cx + Math.cos(a) * r, cy + Math.sin(a) * r));
+  }
+  return out;
+}
+
+// =============================================================================
+// 6. METROPOLIS  -- a downtown, by land value, zoned by role
+// =============================================================================
+//
+// The view the city should have been if it had a centre. Ownership is thrown
+// away: every package competes for the same land, the most valuable takes the
+// plot nearest the middle, and the chain sorts itself into a downtown, a
+// midtown and a sprawl the way a real city does under a bid-rent curve.
+//
+//   position   land value (landValuer), highest at the centre. The streets
+//              are a fixed grid of three-by-three blocks; only which plot
+//              each package lands on carries meaning, and only as distance.
+//   storeys    the reader's metric, same rule as the city.
+//   colour     zone: commercial, residential, industrial, park, construction.
+//   windows    lit if called in the window, same as the city.
+
+function drawMetropolis(stage, below, d) {
+  var met = METRICS[S.metric];
+  var nodes = d.nodes;
+  var lv = landValuer(nodes);
+  var ranked = nodes.slice().sort(function (a, b) {
+    return lv(b) - lv(a) || b.calls - a.calls || a.path.localeCompare(b.path);
+  });
+
+  // Plots: three-by-three blocks with a one-cell street between them, on an
+  // odd number of blocks so one block sits exactly on the centre. Enough
+  // blocks for every package with room left over, because a city that fills
+  // its square to the corners reads as a square and not as a city.
+  var BLK = 3, P = 4;
+  var L = Math.ceil(Math.sqrt(nodes.length / (BLK * BLK) * 1.5));
+  if (L % 2 === 0) L++;
+  var mid = Math.floor(L / 2) * P + 1;
+  var plots = [];
+  for (var bx = 0; bx < L; bx++) for (var by = 0; by < L; by++) {
+    for (var px = 0; px < BLK; px++) for (var py = 0; py < BLK; py++) {
+      var gx = bx * P + px, gy = by * P + py;
+      // A small seeded jitter on the distance, so the edge of the built-up
+      // area is ragged like a real city's instead of a perfect disc. It moves
+      // a plot by less than one ring of plots, so it cannot carry a package
+      // from midtown to downtown.
+      var j = (hash32(gx + ',' + gy) % 1000) / 1000 * 1.6;
+      plots.push({ gx: gx, gy: gy, bx: bx, by: by, d: Math.hypot(gx - mid, gy - mid) + j });
+    }
+  }
+  plots.sort(function (a, b) { return a.d - b.d || a.gx - b.gx || a.gy - b.gy; });
+
+  cityCamera(L * P - 1, L * P - 1);
+  // The camera rotates about the grid centre, which for this grid is the
+  // centre plot: rotation then turns the city about its own downtown.
+  _cityCam.cx = mid; _cityCam.cy = mid;
+
+  var height = storeysFor(nodes, met, 18);
+  var cells = [], usedBlock = {};
+  ranked.forEach(function (n, i) {
+    var p = plots[i];
+    var hs = height(n);
+    usedBlock[p.bx + ':' + p.by] = true;
+    cells.push({ n: n, gx: p.gx, gy: p.gy, rank: i, dist: p.d, z: zoneOf(n),
+      storeys: hs.storeys, h: _cityCam.flat ? 0 : (hs.rises ? hs.storeys * ISO.storey : ISO.storey * 0.6),
+      p: isoXY(p.gx, p.gy) });
+  });
+  cells.sort(function (a, b) { return a.p[1] - b.p[1]; });
+
+  // Districts as rings: the radius that contains the top 5%, 25% and 60% of
+  // the chain by land value. They are drawn, not just named in the caption,
+  // because the whole claim of this view is that the chain has a middle.
+  var ringAt = function (q) { return plots[Math.max(0, Math.round(q * nodes.length) - 1)].d + 0.6; };
+  var RINGS = [['downtown', ringAt(0.05)], ['midtown', ringAt(0.25)], ['suburbs', ringAt(0.6)], ['outskirts', ringAt(1)]];
+
+  var ext = [];
+  cells.forEach(function (c) { ext.push([c.p[0] - ISO.tw, c.p[1] - c.h - ISO.th], [c.p[0] + ISO.tw, c.p[1] + ISO.th]); });
+  RINGS.forEach(function (r) { isoRing(mid, mid, r[1]).forEach(function (q) { ext.push(q); }); });
+  var svg = isoFrame(ext, 30);
+
+  // Asphalt under every block anyone built on, then the block's own pavement
+  // on top. Adjacent asphalt squares abut, which is what draws the streets:
+  // nothing here draws a road, the roads are the gaps between blocks.
+  var ground = svgEl('g');
+  var corners = function (x0, y0, x1, y1) { return pts([isoXY(x0, y0), isoXY(x1, y0), isoXY(x1, y1), isoXY(x0, y1)]); };
+  Object.keys(usedBlock).forEach(function (k) {
+    var b = k.split(':').map(Number), x0 = b[0] * P, y0 = b[1] * P;
+    ground.appendChild(svgEl('polygon', { points: corners(x0 - 1.02, y0 - 1.02, x0 + BLK + 0.02, y0 + BLK + 0.02),
+      fill: '#17181c' }));
+  });
+  Object.keys(usedBlock).forEach(function (k) {
+    var b = k.split(':').map(Number), x0 = b[0] * P, y0 = b[1] * P;
+    ground.appendChild(svgEl('polygon', { points: corners(x0 - 0.55, y0 - 0.55, x0 + BLK - 0.45, y0 + BLK - 0.45),
+      fill: '#24262c', stroke: '#2e3139', 'stroke-width': 0.6 }));
+    // A dashed centre line on the street along the block's two near edges.
+    var a = isoXY(x0 - 1, y0 + BLK - 0.5 + 0.5), e = isoXY(x0 + BLK, y0 + BLK - 0.5 + 0.5);
+    ground.appendChild(svgEl('line', { x1: a[0], y1: a[1], x2: e[0], y2: e[1], stroke: '#3a3d45',
+      'stroke-width': 0.7, 'stroke-dasharray': '3 4' }));
+    var a2 = isoXY(x0 + BLK, y0 - 1), e2 = isoXY(x0 + BLK, y0 + BLK);
+    ground.appendChild(svgEl('line', { x1: a2[0], y1: a2[1], x2: e2[0], y2: e2[1], stroke: '#3a3d45',
+      'stroke-width': 0.7, 'stroke-dasharray': '3 4' }));
+  });
+  svg.appendChild(ground);
+
+  var rings = svgEl('g');
+  RINGS.forEach(function (r, i) {
+    var ring = isoRing(mid, mid, r[1]);
+    rings.appendChild(svgEl('polygon', { points: pts(ring), fill: 'none',
+      stroke: i === 0 ? 'var(--accent)' : 'rgba(255,255,255,.22)', 'stroke-width': i === 0 ? 1.4 : 1,
+      'stroke-dasharray': '6 5' }));
+  });
+  svg.appendChild(rings);
+
+  var lit = 0, zc = { C: 0, R: 0, I: 0, P: 0, build: 0 };
+  var town = svgEl('g');
+  var hw = ISO.tw * 0.74, hh = (_cityCam.flat ? ISO.tw * 0.52 : ISO.th) * 0.74;
+  // A plan cell is one tw wide (isoXY's flat branch), so a plot has to stay
+  // under half of that or neighbours overlap into one slab.
+  if (_cityCam.flat) { hw = ISO.tw * 0.42; hh = ISO.tw * 0.52 * 0.42; }
+  cells.forEach(function (c) {
+    var n = c.n, x = c.p[0], y = c.p[1], g;
+    zc[c.z]++;
+    if (n.calls > 0) lit++;
+    if (c.z === 'P') {
+      // A park is a lawn with trees on it, not a building: a package nothing
+      // imports and nobody calls holds no weight in the city, and drawing a
+      // shed for it would make the sprawl look busier than it is.
+      g = isoBox(x, y, _cityCam.flat ? 0 : 1.5, hw, hh, zoneColor('P', 26), zoneColor('P', 18), zoneColor('P', 14));
+      var rng = rngFrom(n.path);
+      for (var t = 0; t < 2; t++) {
+        var tx = x + (rng() - 0.5) * hw, ty = y - 1.5 + (rng() - 0.5) * hh;
+        if (!_cityCam.flat) g.appendChild(svgEl('line', { x1: tx, y1: ty, x2: tx, y2: ty - 4, stroke: '#3b2a1a', 'stroke-width': 1 }));
+        g.appendChild(svgEl('circle', { cx: tx, cy: _cityCam.flat ? ty : ty - 6, r: 3.2, fill: 'hsl(130,35%,30%)' }));
+      }
+    } else {
+      var base = c.z === 'C' ? 56 : c.z === 'I' ? 52 : c.z === 'build' ? 40 : 46;
+      var liftL = _cityCam.flat ? (c.storeys / 18) * 22 : 0;
+      g = isoBox(x, y, c.h, hw, hh, zoneColor(c.z, base + 10 + liftL), zoneColor(c.z, base - 12), zoneColor(c.z, base - 24));
+      // Industry gets a chimney, so the zone reads in the model's shape and
+      // not only in a hue a colour-blind reader may not separate from green.
+      if (c.z === 'I' && !_cityCam.flat) {
+        g.appendChild(svgEl('rect', { x: x + hw * 0.25, y: y - c.h - 9, width: 3, height: 9, fill: zoneColor('I', 28) }));
+      }
+      if (c.z === 'build') isoParked(g, x, y, c.h, hw, hh);
+      isoLamps(g, n, x, y, c.h, hw, hh, c.storeys);
+    }
+    bindNode(g, n, [['zone', ZONES[c.z].name], ['land value rank', '#' + (c.rank + 1) + ' of ' + nodes.length],
+      ['storeys', String(c.storeys) + ' (' + met.label + ')']]);
+    town.appendChild(g);
+  });
+  svg.appendChild(town);
+
+  // Ring names on top of the town, at each ring's lowest point on screen (the
+  // edge nearest the reader) on a dark halo: drawn under the buildings, three
+  // of the four were hidden behind the very towers they name.
+  var ringNames = svgEl('g', { 'pointer-events': 'none' });
+  RINGS.forEach(function (r, i) {
+    var ring = isoRing(mid, mid, r[1]);
+    var low = ring.reduce(function (m, q) { return q[1] > m[1] ? q : m; }, ring[0]);
+    var t = svgEl('text', { x: low[0], y: low[1] + 4, 'text-anchor': 'middle',
+      fill: i === 0 ? 'var(--accent)' : 'rgba(255,255,255,.72)', 'font-size': 12, 'font-family': 'var(--mono)',
+      'paint-order': 'stroke', stroke: 'rgba(7,7,11,.9)', 'stroke-width': 4 });
+    t.textContent = r[0];
+    ringNames.appendChild(t);
+  });
+  svg.appendChild(ringNames);
+  mountSVG(stage, svg);
+
+  var top = ranked.slice(0, 3).map(function (n) { return n.name; }).join(', ');
+  note(below, [
+    'Owner-blind: all ', [String(nodes.length)], ' packages compete for the same land, and the ' +
+    'most valuable takes the plot nearest the centre. Land value is the one composite on this ' +
+    'page, and it is built from three real numbers: how many packages import it, how many calls it ' +
+    'took in the last ', [S.window], ', and (at half weight, so the same traffic is not counted ' +
+    'twice) from how many addresses, each log-scaled against the chain’s maximum. Downtown is ' +
+    'therefore what the chain leans on and uses most, and on this chain it is led by ', [top], '. ',
+    'The rings mark the radius holding the top 5%, 25% and 60% by land value. Storeys are ',
+    [met.label], ' on a ', [S.scale], ' scale, the same rule as the city. Colour is the zone: ',
+    [String(zc.C)], ' commercial (a realm called in the window), ', [String(zc.R)],
+    ' residential (a realm nobody called), ', [String(zc.I)], ' industrial (a pure package others ' +
+    'import, with a chimney), ', [String(zc.P)], ' parks (a pure package nothing imports), ',
+    [String(zc.build)], ' under construction (parked). ', [String(lit)], ' buildings have lit windows. ',
+    'The street grid is fixed and carries nothing; only distance from the centre does, and which ' +
+    'of two plots at the same distance a package takes is a tie broken by a seeded jitter.',
+  ]);
+  legend(below, [
+    [zoneColor('C', 56), 'commercial', '· realm, called'],
+    [zoneColor('R', 46), 'residential', '· realm, not called'],
+    [zoneColor('I', 52), 'industrial', '· pure package, imported'],
+    [zoneColor('P', 30), 'park', '· pure package, not imported'],
+    ['var(--accent)', 'downtown', '· top 5% by land value'],
+  ]);
+}
+
+// =============================================================================
+// 7. BOROUGHS  -- one equal block per namespace, around a centre
+// =============================================================================
+//
+// The city's districts with the one change it needed: every namespace gets the
+// same ground. A namespace of 337 packages and a namespace of one are both one
+// block; the first is a dense quarter of narrow towers, the second a single
+// mansion on a lawn. Size becomes density, which a reader can see without the
+// biggest namespace pushing every other one off the edge of the frame.
+//
+// Blocks spiral out from the centre in order of the namespace's total in the
+// chosen metric, so the middle of the map is the busiest namespace and the
+// edge is the quietest, and every block has room for its own name.
+
+function drawBoroughs(stage, below, d) {
+  var met = METRICS[S.metric];
+  var groups = groupNamespaces(d.nodes);
+  groups.forEach(function (g) { g.score = g.nodes.reduce(function (a, n) { return a + (met.get(n) || 0); }, 0); });
+  groups.sort(function (a, b) { return b.score - a.score || b.n - a.n || a.ns.localeCompare(b.ns); });
+
+  var B = 6, ST = 1.6, P = B + ST;
+  var L = Math.ceil(Math.sqrt(groups.length));
+  if (L % 2 === 0) L++;
+  var c0 = Math.floor(L / 2);
+  var slots = [];
+  for (var bx = 0; bx < L; bx++) for (var by = 0; by < L; by++) {
+    // Chebyshev ring first, then the Euclidean distance inside it, then the
+    // angle: a square spiral that fills the ring nearest the centre before
+    // starting the next, so rank is distance.
+    var dx = bx - c0, dy = by - c0;
+    slots.push({ bx: bx, by: by, ring: Math.max(Math.abs(dx), Math.abs(dy)), d: Math.hypot(dx, dy),
+      a: (Math.atan2(dy, dx) + Math.PI * 2.75) % (Math.PI * 2) });
+  }
+  slots.sort(function (a, b) { return a.ring - b.ring || a.d - b.d || a.a - b.a; });
+
+  var span = L * P - ST;
+  cityCamera(span, span);
+  var height = storeysFor(d.nodes, met, 16);
+
+  var cells = [];
+  groups.forEach(function (g, gi) {
+    var s = slots[gi];
+    g.ox = s.bx * P; g.oy = s.by * P; g.rank = gi;
+    var k = Math.max(1, Math.ceil(Math.sqrt(g.n)));
+    var plot = B / k;
+    // A mansion is capped well short of the whole block, so a one-package
+    // namespace still reads as a building on a lawn and not as a block-sized
+    // monolith that looks like the most important thing on the map.
+    var foot = Math.min(plot * 0.78, 2.4);
+    g.nodes.forEach(function (n, i) {
+      var gx = g.ox + ((i % k) + 0.5) * plot - 0.5, gy = g.oy + (Math.floor(i / k) + 0.5) * plot - 0.5;
+      // Rows that do not fill are centred, so a block of five sits as two
+      // rows in the middle of the lawn and not crammed against one side.
+      var rows = Math.ceil(g.n / k);
+      gy += (k - rows) * plot / 2;
+      var hs = height(n);
+      cells.push({ n: n, g: g, foot: foot, storeys: hs.storeys,
+        h: _cityCam.flat ? 0 : (hs.rises ? hs.storeys * ISO.storey : ISO.storey * 0.6) * Math.max(0.55, Math.min(1, foot * 0.9)),
+        p: isoXY(gx, gy) });
+    });
+  });
+  cells.sort(function (a, b) { return a.p[1] - b.p[1]; });
+
+  var ext = [];
+  groups.forEach(function (g) {
+    [[g.ox - 1, g.oy - 1], [g.ox + B, g.oy - 1], [g.ox - 1, g.oy + B + 1], [g.ox + B, g.oy + B + 1]]
+      .forEach(function (q) { ext.push(isoXY(q[0], q[1])); });
+  });
+  cells.forEach(function (c) { ext.push([c.p[0], c.p[1] - c.h - ISO.th * 2]); });
+  var svg = isoFrame(ext, 24);
+
+  var corners = function (x0, y0, x1, y1) { return pts([isoXY(x0, y0), isoXY(x1, y0), isoXY(x1, y1), isoXY(x0, y1)]); };
+  var ground = svgEl('g');
+  // One asphalt sheet under the whole used area, so the streets are
+  // continuous even where a slot in the last ring is empty.
+  ground.appendChild(svgEl('polygon', { points: corners(-ST, -ST, span + ST - 1, span + ST - 1), fill: '#15161a' }));
+  groups.forEach(function (g) {
+    ground.appendChild(svgEl('polygon', { points: corners(g.ox - 0.75, g.oy - 0.75, g.ox + B - 0.25, g.oy + B - 0.25),
+      fill: nsColor(g.ns, 10, 34), stroke: nsColor(g.ns, 24, 34), 'stroke-width': 1, 'class': 'carto-block',
+      'data-ns': g.ns }));
+  });
+  // The centre: the busiest namespace's block is outlined so the middle of the
+  // map is visible as a middle and not inferred from the caption.
+  var g0 = groups[0];
+  ground.appendChild(svgEl('polygon', { points: corners(g0.ox - 1.05, g0.oy - 1.05, g0.ox + B + 0.05, g0.oy + B + 0.05),
+    fill: 'none', stroke: 'var(--accent)', 'stroke-width': 1.3, 'stroke-dasharray': '6 4' }));
+  svg.appendChild(ground);
+
+  var town = svgEl('g');
+  var lit = 0;
+  cells.forEach(function (c) {
+    var n = c.n, x = c.p[0], y = c.p[1];
+    var hw = ISO.tw * c.foot * 0.5, hh = (_cityCam.flat ? ISO.tw * 0.52 : ISO.th) * c.foot * 0.5;
+    if (!_cityCam.flat) { hw = ISO.tw * c.foot * 0.62; hh = ISO.th * c.foot * 0.62; }
+    var base = n.is_realm ? 58 : 34;
+    var liftL = _cityCam.flat ? (c.storeys / 16) * 26 : 0;
+    var g = isoBox(x, y, c.h, hw, hh, nsColor(n.namespace, base + 8 + liftL), nsColor(n.namespace, base - 16),
+      nsColor(n.namespace, base - 28));
+    if (n.calls > 0) lit++;
+    isoLamps(g, n, x, y, c.h, hw, hh, c.storeys);
+    if (n.parked) isoParked(g, x, y, c.h, hw, hh);
+    bindNode(g, n, [['borough', c.g.ns + ' · #' + (c.g.rank + 1) + ' from the centre'],
+      ['storeys', String(c.storeys) + ' (' + met.label + ')']]);
+    town.appendChild(g);
+  });
+  svg.appendChild(town);
+
+  // Names last, on the street in front of each block: every block is the same
+  // size, so every one has room, which the city could never promise.
+  var labels = svgEl('g');
+  groups.forEach(function (g) {
+    var a = isoXY(g.ox + B / 2 - 0.5, g.oy + B - 0.1);
+    var t = svgEl('text', { x: a[0], y: a[1] + 12, 'text-anchor': 'middle', fill: nsColor(g.ns, 70),
+      'font-size': 10.5, 'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: '#0a0a0e',
+      'stroke-width': 3 });
+    t.textContent = (g.ns.length > 16 ? g.ns.slice(0, 6) + '…' + g.ns.slice(-4) : g.ns) + ' · ' + g.n;
+    t.addEventListener('mousemove', function (ev) {
+      tipShow(ev, ['namespace ' + g.ns, ['packages', String(g.n)], ['called in ' + S.window, String(g.live)],
+        [met.label + ' (total)', met.label === 'storage' ? fmtBytes(g.score) : window.fmtNum(g.score)],
+        ['rank from the centre', '#' + (g.rank + 1)]]);
+    });
+    t.addEventListener('mouseleave', tipHide);
+    labels.appendChild(t);
+  });
+  svg.appendChild(labels);
+  mountSVG(stage, svg);
+
+  var biggest = groups.slice().sort(function (a, b) { return b.n - a.n; })[0];
+  note(below, [
+    'One block per namespace, ', [String(groups.length)], ' of them, every block the same size. ' +
+    'Package count becomes density instead of area: ', [biggest.ns], '’s ', [String(biggest.n)],
+    ' packages are a packed quarter of narrow towers, and a namespace of one is a single house on a ' +
+    'lawn, so the biggest namespace no longer decides the shape of the whole map. Blocks spiral ' +
+    'outward from the centre by the namespace’s total ', [met.label], ', so the outlined block in ' +
+    'the middle, ', [g0.ns], ', is the busiest by that measure and the corners are the quietest. ' +
+    'Storeys are ', [met.label], ' on a ', [S.scale], ' scale, the same rule as the city; ' +
+    'hue is the namespace; ', [String(lit)], ' buildings have lit windows (called in the last ',
+    [S.window], '). Where a building stands inside its block is deployment-agnostic and ordered ' +
+    'busiest first, the same order as the city.',
+  ]);
+  legend(below, [
+    ['var(--accent)', 'outlined block', '· the centre: busiest namespace by ' + met.label],
+    ['var(--amber)', 'lit window', '· called in the window'],
+    [nsColor(biggest.ns, 58), 'dense block', '· many packages on equal ground'],
+  ]);
+}
+
+// =============================================================================
+// 8. HEXES  -- a Catan board, one equal hex per namespace
+// =============================================================================
+//
+// The view about namespaces as units. Every namespace is one hex of the same
+// size, which is the board game's whole conceit: the land is equal, what it
+// produces is not.
+//
+//   adjacency  chosen from the import graph. The hub everyone imports sits in
+//              the middle, and each slot after it, spiralling outward, takes
+//              the namespace with the most imports to and from its already
+//              placed neighbours. A road on a shared edge is real import flow
+//              between those two neighbours.
+//   terrain    what the namespace contributes most of, as a share of the
+//              chain: grain for calls, wool for callers, lumber for being
+//              imported, ore for gas, brick for storage. Desert when nothing
+//              in it was called or imported.
+//   token      the game's number disc, by rank of calls in the window: 6 and
+//              8 (five pips, red) are the busiest, 2 and 12 the least. The
+//              number is the game's convention; the rank behind it is real.
+//   pieces     its busiest called realms, up to six, on the hex's corners.
+//              A city (the big piece) when that realm is in the chain's top
+//              tenth by calls, a settlement otherwise.
+
+var TERRAIN = {
+  fields:    { q: 'calls',     fill: '#cfa83f', name: 'fields',    res: 'grain',  what: 'calls' },
+  pasture:   { q: 'callers',   fill: '#86b552', name: 'pasture',   res: 'wool',   what: 'distinct callers' },
+  forest:    { q: 'importers', fill: '#2f6a3c', name: 'forest',    res: 'lumber', what: 'being imported' },
+  mountains: { q: 'gas',       fill: '#7f8590', name: 'mountains', res: 'ore',    what: 'gas' },
+  hills:     { q: 'storage',   fill: '#b25a33', name: 'hills',     res: 'brick',  what: 'storage' },
+  desert:    { q: null,        fill: '#d6c596', name: 'desert',    res: 'nothing', what: 'nothing called or imported' },
+};
+
+function hexCorner(cx, cy, r, i) {
+  var a = Math.PI / 180 * (60 * i - 30);
+  return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+}
+
+// Axial hex coordinates in spiral order: the centre, then ring 1, ring 2...
+// The six axial directions, in the order a ring walk takes them.
+var HEX_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+function hexSpiral(count) {
+  var out = [[0, 0]];
+  for (var k = 1; out.length < count; k++) {
+    var q = HEX_DIRS[4][0] * k, r = HEX_DIRS[4][1] * k;
+    for (var side = 0; side < 6; side++) {
+      for (var s = 0; s < k; s++) {
+        out.push([q, r]);
+        q += HEX_DIRS[side][0]; r += HEX_DIRS[side][1];
+      }
+    }
+  }
+  return out;
+}
+
+function drawHexes(stage, below, d) {
+  var groups = groupNamespaces(d.nodes);
+  var byNs = {};
+  groups.forEach(function (g) { byNs[g.ns] = g; });
+
+  // Import flow between namespaces, symmetric for placement, directed for the
+  // tooltip.
+  var flow = {}, inbound = {};
+  d.imports.forEach(function (e) {
+    var a = d.byPath[e.source], b = d.byPath[e.target];
+    if (!a || !b || a.namespace === b.namespace) return;
+    var k = a.namespace + '\u0000' + b.namespace;
+    flow[k] = (flow[k] || 0) + 1;
+    inbound[b.namespace] = (inbound[b.namespace] || 0) + 1;
+  });
+  var fl = function (a, b) { return (flow[a + '\u0000' + b] || 0) + (flow[b + '\u0000' + a] || 0); };
+
+  // Terrain: the quantity in which this namespace's share of the chain is
+  // largest. A share, not a raw total, so a small namespace that carries a
+  // tenth of the chain's callers is pasture even if a big one has more of
+  // every quantity in absolute terms.
+  var Q = {
+    calls: function (n) { return n.calls; }, callers: function (n) { return n.unique_callers; },
+    importers: function (n) { return n.importers; }, gas: function (n) { return n.gas_used; },
+    storage: function (n) { return n.storage_bytes; },
+  };
+  var tot = {};
+  Object.keys(Q).forEach(function (q) { tot[q] = d.nodes.reduce(function (a, n) { return a + (Q[q](n) || 0); }, 0) || 1; });
+  groups.forEach(function (g) {
+    g.sum = {};
+    Object.keys(Q).forEach(function (q) { g.sum[q] = g.nodes.reduce(function (a, n) { return a + (Q[q](n) || 0); }, 0); });
+    if (!g.sum.calls && !g.sum.importers) { g.terrain = 'desert'; g.share = 0; return; }
+    var best = null, bs = -1;
+    Object.keys(TERRAIN).forEach(function (t) {
+      var q = TERRAIN[t].q; if (!q) return;
+      var s = g.sum[q] / tot[q];
+      if (s > bs) { bs = s; best = t; }
+    });
+    g.terrain = best; g.share = bs;
+  });
+
+  // Placement. The centre is the namespace the rest of the chain imports most;
+  // every later slot takes the unplaced namespace with the strongest ties to
+  // that slot's placed neighbours, falling back to ties with anything placed,
+  // then size. Greedy, deterministic, and every adjacency it produces is one
+  // the import graph argued for.
+  var slots = hexSpiral(groups.length);
+  var center = groups.slice().sort(function (a, b) {
+    return (inbound[b.ns] || 0) - (inbound[a.ns] || 0) || b.n - a.n || a.ns.localeCompare(b.ns);
+  })[0];
+  var at = {}, placed = [center], left = groups.filter(function (g) { return g !== center; });
+  center.q = 0; center.r = 0; at['0,0'] = center;
+  for (var si = 1; si < slots.length && left.length; si++) {
+    var sq = slots[si][0], sr = slots[si][1];
+    var nb = HEX_DIRS.map(function (dd) { return at[(sq + dd[0]) + ',' + (sr + dd[1])]; }).filter(Boolean);
+    var best = null, bk = null;
+    left.forEach(function (g) {
+      var local = nb.reduce(function (a, h) { return a + fl(g.ns, h.ns); }, 0);
+      var glob = placed.reduce(function (a, h) { return a + fl(g.ns, h.ns); }, 0);
+      var key = [local, glob, g.n];
+      if (!bk || key[0] > bk[0] || (key[0] === bk[0] && (key[1] > bk[1] || (key[1] === bk[1] &&
+          (key[2] > bk[2] || (key[2] === bk[2] && g.ns < best.ns)))))) { best = g; bk = key; }
+    });
+    best.q = sq; best.r = sr; at[sq + ',' + sr] = best;
+    placed.push(best);
+    left.splice(left.indexOf(best), 1);
+  }
+
+  // Number tokens, by rank of calls among the namespaces that had any.
+  var active = groups.filter(function (g) { return g.sum.calls > 0; })
+    .sort(function (a, b) { return b.sum.calls - a.sum.calls || b.sum.callers - a.sum.callers || a.ns.localeCompare(b.ns); });
+  active.forEach(function (g, i) {
+    var f = i / Math.max(1, active.length);
+    var pair = f < 0.12 ? [6, 8] : f < 0.32 ? [5, 9] : f < 0.55 ? [4, 10] : f < 0.78 ? [3, 11] : [2, 12];
+    g.token = pair[i % 2];
+    g.pips = 6 - Math.abs(7 - g.token);
+  });
+
+  // Cities: a realm in the chain's top tenth by calls.
+  var called = d.nodes.filter(function (n) { return n.is_realm && n.calls > 0; })
+    .sort(function (a, b) { return b.calls - a.calls; });
+  var cityAt = called.length ? called[Math.max(0, Math.floor(called.length * 0.1) - 1)].calls : Infinity;
+
+  var R = 62, sq3 = Math.sqrt(3);
+  var hx = function (q, r) { return [R * sq3 * (q + r / 2), R * 1.5 * r]; };
+  var rings = 0;
+  slots.forEach(function (s) { rings = Math.max(rings, (Math.abs(s[0]) + Math.abs(s[1]) + Math.abs(s[0] + s[1])) / 2); });
+  var sea = hexSpiral(1 + 3 * (rings + 1) * (rings + 2)).filter(function (s) { return !at[s[0] + ',' + s[1]]; });
+
+  var ext = sea.map(function (s) { return hx(s[0], s[1]); });
+  var minX = Math.min.apply(null, ext.map(function (p) { return p[0]; })) - R - 10;
+  var maxX = Math.max.apply(null, ext.map(function (p) { return p[0]; })) + R + 10;
+  var minY = Math.min.apply(null, ext.map(function (p) { return p[1]; })) - R - 10;
+  var maxY = Math.max.apply(null, ext.map(function (p) { return p[1]; })) + R + 10;
+  var svg = svgEl('svg', { viewBox: minX + ' ' + minY + ' ' + (maxX - minX) + ' ' + (maxY - minY),
+    preserveAspectRatio: 'xMidYMid meet', style: 'max-height:82vh' });
+
+  var hexPts = function (c, r) { var o = []; for (var i = 0; i < 6; i++) o.push(hexCorner(c[0], c[1], r, i)); return pts(o); };
+
+  // The sea frame, the board's border, drawn as hexes so the coast is the
+  // same shape as the land.
+  var seaG = svgEl('g');
+  sea.forEach(function (s) {
+    var c = hx(s[0], s[1]);
+    seaG.appendChild(svgEl('polygon', { points: hexPts(c, R - 1), fill: '#1d3f63', stroke: '#16314d', 'stroke-width': 2 }));
+    var rng = rngFrom('sea' + s[0] + ',' + s[1]);
+    for (var w = 0; w < 2; w++) {
+      var wx = c[0] + (rng() - 0.5) * R, wy = c[1] + (rng() - 0.5) * R * 0.8;
+      seaG.appendChild(svgEl('path', { d: 'M' + (wx - 7) + ',' + wy + ' q3.5,-3 7,0 t7,0', fill: 'none',
+        stroke: '#3a6a98', 'stroke-width': 1.2, opacity: 0.7 }));
+    }
+  });
+  svg.appendChild(seaG);
+
+  var land = svgEl('g');
+  placed.forEach(function (g) {
+    var c = hx(g.q, g.r), T = TERRAIN[g.terrain];
+    var hex = svgEl('g');
+    hex.appendChild(svgEl('polygon', { points: hexPts(c, R - 1.5), fill: T.fill, stroke: '#e9dcb5', 'stroke-width': 3,
+      'class': 'carto-hex', 'data-ns': g.ns, 'data-terrain': g.terrain }));
+    // A darker inner bevel, which is most of what makes a flat hexagon read
+    // as a cardboard tile.
+    hex.appendChild(svgEl('polygon', { points: hexPts(c, R - 7), fill: 'none', stroke: 'rgba(0,0,0,.18)', 'stroke-width': 4 }));
+    terrainGlyphs(hex, g, c, R);
+    hex.addEventListener('mousemove', function (ev) {
+      tipShow(ev, ['namespace ' + g.ns, ['terrain', T.name + ' (' + T.res + ')'],
+        ['because', g.terrain === 'desert' ? T.what : 'its biggest share of the chain is ' + T.what +
+          ': ' + (g.share * 100).toFixed(1) + '%'],
+        ['packages', String(g.n) + ' (' + g.live + ' called)'],
+        ['calls (' + S.window + ')', window.fmtNum(g.sum.calls)],
+        ['imported from outside', window.fmtNum(inbound[g.ns] || 0)],
+        ['token', g.token ? g.token + ' (' + g.pips + ' pips)' : 'none: no calls']]);
+    });
+    hex.addEventListener('mouseleave', tipHide);
+    land.appendChild(hex);
+  });
+  svg.appendChild(land);
+
+  // Roads on shared edges, wherever the two neighbours import each other.
+  var roadsG = svgEl('g'), roadN = 0, roadFlow = 0, totalFlow = 0;
+  Object.keys(flow).forEach(function (k) { totalFlow += flow[k]; });
+  var maxF = 1;
+  placed.forEach(function (g) { HEX_DIRS.forEach(function (dd) {
+    var h = at[(g.q + dd[0]) + ',' + (g.r + dd[1])]; if (h) maxF = Math.max(maxF, fl(g.ns, h.ns));
+  }); });
+  placed.forEach(function (g) {
+    HEX_DIRS.forEach(function (dd, di) {
+      var h = at[(g.q + dd[0]) + ',' + (g.r + dd[1])];
+      if (!h || h.ns <= g.ns) return;   // each edge once
+      var f = fl(g.ns, h.ns);
+      if (!f) return;
+      roadN++; roadFlow += f;
+      var a = hx(g.q, g.r), b = hx(h.q, h.r);
+      // The shared edge is perpendicular to the line between centres, at its
+      // midpoint, half a side long each way.
+      var mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+      var ux = (b[0] - a[0]) / (R * sq3), uy = (b[1] - a[1]) / (R * sq3);
+      var half = R * 0.36;
+      var w = 3 + lg(f) / lg(maxF) * 5;
+      var road = svgEl('line', { x1: mx - uy * half, y1: my + ux * half, x2: mx + uy * half, y2: my - ux * half,
+        stroke: '#3b2716', 'stroke-width': w + 2.4, 'stroke-linecap': 'round' });
+      var top = svgEl('line', { x1: mx - uy * half, y1: my + ux * half, x2: mx + uy * half, y2: my - ux * half,
+        stroke: '#e0c38c', 'stroke-width': w, 'stroke-linecap': 'round' });
+      var rg = svgEl('g');
+      rg.appendChild(road); rg.appendChild(top);
+      rg.addEventListener('mousemove', function (ev) {
+        tipShow(ev, [g.ns + '  ↔  ' + h.ns,
+          [g.ns + ' imports ' + h.ns, window.fmtNum(flow[g.ns + '\u0000' + h.ns] || 0)],
+          [h.ns + ' imports ' + g.ns, window.fmtNum(flow[h.ns + '\u0000' + g.ns] || 0)]]);
+      });
+      rg.addEventListener('mouseleave', tipHide);
+      roadsG.appendChild(rg);
+    });
+  });
+  svg.appendChild(roadsG);
+
+  // Tokens, names and pieces on top.
+  var top = svgEl('g'), cities = 0, settlements = 0;
+  placed.forEach(function (g) {
+    var c = hx(g.q, g.r);
+    if (g.token) {
+      var red = g.token === 6 || g.token === 8;
+      top.appendChild(svgEl('circle', { cx: c[0], cy: c[1] + 4, r: 15.5, fill: '#f2e6c6', stroke: '#8a7650', 'stroke-width': 1.2 }));
+      var t = svgEl('text', { x: c[0], y: c[1] + 8.5, 'text-anchor': 'middle', 'font-size': red ? 15 : 13,
+        'font-weight': 'bold', fill: red ? '#b3261e' : '#2b2216', 'font-family': 'Georgia, serif' });
+      t.textContent = String(g.token);
+      top.appendChild(t);
+      for (var p = 0; p < g.pips; p++) {
+        top.appendChild(svgEl('circle', { cx: c[0] + (p - (g.pips - 1) / 2) * 3.4, cy: c[1] + 13.5, r: 1.1,
+          fill: red ? '#b3261e' : '#2b2216' }));
+      }
+    }
+    var lab = svgEl('text', { x: c[0], y: c[1] - 20, 'text-anchor': 'middle', 'font-size': 10.5,
+      fill: '#fff', 'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: 'rgba(0,0,0,.72)', 'stroke-width': 3 });
+    lab.textContent = g.ns.length > 14 ? g.ns.slice(0, 6) + '…' + g.ns.slice(-4) : g.ns;
+    top.appendChild(lab);
+
+    var busy = g.nodes.filter(function (n) { return n.is_realm && n.calls > 0; })
+      .sort(function (a, b) { return b.calls - a.calls || a.path.localeCompare(b.path); }).slice(0, 6);
+    busy.forEach(function (n, i) {
+      // Corners in a fixed order, lower ones first because the name runs
+      // across the upper two, pulled a little inside the tile so a piece
+      // never sits on a neighbour's corner and reads as theirs.
+      var v = hexCorner(c[0], c[1], R * 0.8, [1, 3, 2, 5, 0, 4][i]);
+      var pg = svgEl('g');
+      if (n.calls >= cityAt) {
+        cities++;
+        pg.appendChild(svgEl('path', { d: 'M' + (v[0] - 7) + ',' + (v[1] + 5) + ' v-7 l3.5,-3.5 l3.5,3.5 v-1 h7 v8 z',
+          fill: '#f4f4f4', stroke: '#1b1b1b', 'stroke-width': 1.2, 'stroke-linejoin': 'round' }));
+      } else {
+        settlements++;
+        pg.appendChild(svgEl('path', { d: 'M' + (v[0] - 4.5) + ',' + (v[1] + 4) + ' v-5 l4.5,-4.5 l4.5,4.5 v5 z',
+          fill: '#f4f4f4', stroke: '#1b1b1b', 'stroke-width': 1.2, 'stroke-linejoin': 'round' }));
+      }
+      pg.style.cursor = 'pointer';
+      bindNode(pg, n, [['piece', n.calls >= cityAt ? 'city: top tenth of the chain by calls' : 'settlement']]);
+      top.appendChild(pg);
+    });
+  });
+  svg.appendChild(top);
+  mountSVG(stage, svg);
+
+  var tc = {};
+  placed.forEach(function (g) { tc[g.terrain] = (tc[g.terrain] || 0) + 1; });
+  var tparts = Object.keys(TERRAIN).filter(function (t) { return tc[t]; }).map(function (t) {
+    return tc[t] + ' ' + TERRAIN[t].name + ' (' + TERRAIN[t].what + ')';
+  }).join(', ');
+  note(below, [
+    'One hex per namespace, ', [String(placed.length)], ' of them, all the same size: the board ' +
+    'game’s conceit is that the land is equal and what it yields is not. ', [center.ns],
+    ' holds the centre because the rest of the chain imports it more than anything else (',
+    [window.fmtNum(inbound[center.ns] || 0)], ' import edges from other namespaces); every slot ' +
+    'after it, spiralling outward, went to the namespace with the most imports to and from its ' +
+    'already-placed neighbours, so who sits next to whom is the import graph’s argument, and the ',
+    [String(roadN)], ' roads on shared edges carry ', [String(roadFlow)], ' of the ', [String(totalFlow)],
+    ' cross-namespace import edges. The rest run between hexes that are not neighbours and are not ' +
+    'drawn. Terrain is the quantity in which a namespace holds its largest share of the chain: ',
+    tparts, '. The number disc is the game’s convention laid over a real rank: namespaces ' +
+    'ordered by calls in the last ', [S.window], ' get 6 and 8 (red, five pips) at the top and 2 ' +
+    'and 12 at the bottom; a hex with no disc took no calls. Pieces are each namespace’s busiest ' +
+    'called realms, up to six: ', [String(cities)], ' cities (the chain’s top tenth by calls) ' +
+    'and ', [String(settlements)], ' settlements. The sea is the board’s frame and carries nothing.',
+  ]);
+  legend(below, Object.keys(TERRAIN).filter(function (t) { return tc[t]; }).map(function (t) {
+    return [TERRAIN[t].fill, TERRAIN[t].name, '· ' + TERRAIN[t].what];
+  }));
+}
+
+// terrainGlyphs scatters the tile's picture: wheat, sheep, trees, peaks,
+// bricks, dunes. Seeded by the namespace so a tile looks the same on every
+// load, kept out of the middle where the disc goes, and pure decoration: the
+// fill colour is what carries the terrain, these only make it legible at a
+// glance.
+function terrainGlyphs(parent, g, c, R) {
+  var rng = rngFrom('t' + g.ns);
+  var spots = [];
+  for (var tries = 0; spots.length < 7 && tries < 60; tries++) {
+    var a = rng() * Math.PI * 2, rr = R * (0.38 + rng() * 0.38);
+    var x = c[0] + Math.cos(a) * rr, y = c[1] + Math.sin(a) * rr * 0.92;
+    if (Math.abs(y - (c[1] - 20)) < 9 && Math.abs(x - c[0]) < 30) continue;   // the name
+    if (spots.some(function (s) { return Math.hypot(s[0] - x, s[1] - y) < 15; })) continue;
+    spots.push([x, y]);
+  }
+  spots.forEach(function (s) {
+    var x = s[0], y = s[1], gl;
+    switch (g.terrain) {
+      case 'forest':
+        gl = svgEl('path', { d: 'M' + x + ',' + (y - 9) + ' l6,10 h-12 z M' + x + ',' + (y - 4) + ' l7,10 h-14 z',
+          fill: '#1d4a29', stroke: '#173d21', 'stroke-width': 0.6 });
+        break;
+      case 'mountains':
+        gl = svgEl('g');
+        gl.appendChild(svgEl('path', { d: 'M' + (x - 10) + ',' + (y + 6) + ' l10,-15 l10,15 z', fill: '#5d626b' }));
+        gl.appendChild(svgEl('path', { d: 'M' + (x - 3.4) + ',' + (y - 4) + ' l3.4,-5 l3.4,5 l-1.7,1 l-1.7,-1.4 l-1.7,1.4 z', fill: '#e8ecf0' }));
+        break;
+      case 'hills':
+        gl = svgEl('g');
+        [[0, 0], [7, 0], [3.5, -4]].forEach(function (o) {
+          gl.appendChild(svgEl('rect', { x: x - 6 + o[0], y: y + o[1], width: 6.5, height: 3.6, fill: '#7d3418', stroke: '#e3a07a', 'stroke-width': 0.5 }));
+        });
+        break;
+      case 'pasture':
+        gl = svgEl('g');
+        gl.appendChild(svgEl('ellipse', { cx: x, cy: y, rx: 5, ry: 3.4, fill: '#f6f6ee' }));
+        gl.appendChild(svgEl('circle', { cx: x + 5, cy: y - 1.4, r: 1.8, fill: '#2b2b2b' }));
+        break;
+      case 'fields':
+        gl = svgEl('g');
+        for (var k = -1; k <= 1; k++) {
+          gl.appendChild(svgEl('line', { x1: x + k * 3, y1: y + 5, x2: x + k * 3, y2: y - 4, stroke: '#8a6a1c', 'stroke-width': 1 }));
+          gl.appendChild(svgEl('ellipse', { cx: x + k * 3, cy: y - 5, rx: 1.3, ry: 2.6, fill: '#f0d27a' }));
+        }
+        break;
+      default:
+        gl = svgEl('path', { d: 'M' + (x - 9) + ',' + y + ' q4.5,-5 9,0 t9,0', fill: 'none', stroke: '#b9a571', 'stroke-width': 1.4 });
+    }
+    parent.appendChild(gl);
+  });
+}
+
+// =============================================================================
+// 9. FRONTIER  -- a Travian world map, deployers as players
+// =============================================================================
+//
+// The view about who built the chain and in what order. Ownership here is not
+// the namespace but the creator address that signed the deploy, so a team that
+// deploys under several namespaces is one player and a namespace someone else
+// deployed into is theirs.
+//
+// Settlement follows the game: the first player holds (0|0), and each new
+// player founds a capital at the next free tile of the spiral, one tile clear
+// of anyone already there. Every later package that player deploys is a new
+// village on the free tile nearest their capital. Deploy order alone produces
+// the map, so the oldest players hold the middle and the newcomers the rim.
+
+function drawFrontier(stage, below, d) {
+  var met = METRICS[S.metric];
+  var order = d.nodes.slice().sort(byDeploy);
+
+  // Offsets sorted by distance, shared by the spiral and the nearest-free
+  // search. Ties by a seeded angle so a ring fills in an order that looks
+  // organic rather than in raster order.
+  var RMAX = Math.ceil(Math.sqrt(order.length * 2.2)) + 6;
+  var offs = [];
+  for (var x = -RMAX; x <= RMAX; x++) for (var y = -RMAX; y <= RMAX; y++) {
+    offs.push([x, y, Math.hypot(x, y) + (hash32('o' + x + ',' + y) % 1000) / 4000]);
+  }
+  offs.sort(function (a, b) { return a[2] - b[2]; });
+
+  var tile = {}, players = {}, plist = [], fi = 0;
+  var key = function (x, y) { return x + '|' + y; };
+  var clear = function (x, y, who) {
+    for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 1; dy++) {
+      var t = tile[key(x + dx, y + dy)];
+      if (t && t.p !== who) return false;
+    }
+    return true;
+  };
+  order.forEach(function (n) {
+    var who = n.creator || '?';
+    var p = players[who];
+    var spot = null, i;
+    if (!p) {
+      p = players[who] = { id: who, nodes: [], idx: plist.length, first: n };
+      plist.push(p);
+      for (; fi < offs.length; fi++) {
+        var o = offs[fi];
+        if (!tile[key(o[0], o[1])] && clear(o[0], o[1], who)) { spot = o; break; }
+      }
+      p.cap = [spot[0], spot[1]];
+    } else {
+      for (i = 0; i < offs.length; i++) {
+        var tx = p.cap[0] + offs[i][0], ty = p.cap[1] + offs[i][1];
+        if (!tile[key(tx, ty)]) { spot = [tx, ty]; break; }
+      }
+    }
+    if (!spot) return;
+    tile[key(spot[0], spot[1])] = { n: n, p: who, x: spot[0], y: spot[1], cap: !p.nodes.length };
+    p.nodes.push(n);
+  });
+
+  // A player's name is the namespace they use most that is a name rather than
+  // an address, which is how a reader knows them; failing that, the address.
+  plist.forEach(function (p) {
+    var c = {};
+    p.nodes.forEach(function (n) { if (!/^g1[0-9a-z]{30,}$/.test(n.namespace || '')) c[n.namespace] = (c[n.namespace] || 0) + 1; });
+    var best = Object.keys(c).sort(function (a, b) { return c[b] - c[a] || a.localeCompare(b); })[0];
+    p.name = best || shortAddr(p.id);
+    p.hue = nsHue(p.id);
+  });
+  // Two addresses deploying into one namespace would otherwise be two players
+  // with one name, so a repeated name carries its address's tail.
+  // The biggest of them keeps the bare name, because that is the one a reader
+  // means by it.
+  var owner = {};
+  plist.forEach(function (p) { var o = owner[p.name]; if (!o || p.nodes.length > o.nodes.length) owner[p.name] = p; });
+  plist.forEach(function (p) { if (owner[p.name] !== p) p.name += '·' + p.id.slice(-4); });
+
+  var tiles = Object.keys(tile).map(function (k) { return tile[k]; });
+  var bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity;
+  tiles.forEach(function (t) { bx0 = Math.min(bx0, t.x); bx1 = Math.max(bx1, t.x); by0 = Math.min(by0, t.y); by1 = Math.max(by1, t.y); });
+  bx0 -= 2; bx1 += 2; by0 -= 2; by1 += 2;
+
+  var T = 22;
+  // Travian's y grows north; the screen's grows south, hence the minus.
+  var sx = function (x) { return x * T; }, sy = function (y) { return -y * T; };
+  var vx = sx(bx0) - T, vy = sy(by1) - T, vw = (bx1 - bx0 + 2) * T + T, vh = (by1 - by0 + 2) * T + T;
+  var svg = svgEl('svg', { viewBox: vx + ' ' + vy + ' ' + vw + ' ' + vh, preserveAspectRatio: 'xMidYMid meet',
+    style: 'max-height:82vh' });
+
+  // Wilderness first: every tile in the frame nobody settled. The mix of
+  // grass, woods, hills and water is seeded noise and carries nothing; it is
+  // there so settled land reads as settled against something.
+  var wild = svgEl('g');
+  for (var wx = bx0; wx <= bx1; wx++) for (var wy = by0; wy <= by1; wy++) {
+    var X = sx(wx) - T / 2, Y = sy(wy) - T / 2;
+    var h = hash32('w' + wx + '|' + wy) % 100;
+    var settled = !!tile[key(wx, wy)];
+    wild.appendChild(svgEl('rect', { x: X, y: Y, width: T, height: T,
+      fill: settled ? '#1f2a1a' : (h < 7 ? '#17283a' : h < 22 ? '#1a2a18' : h < 30 ? '#2a2a1c' : '#1f2a1a'),
+      stroke: '#141c11', 'stroke-width': 0.6 }));
+    if (!settled && h >= 7 && h < 22) {
+      wild.appendChild(svgEl('path', { d: 'M' + (X + T / 2) + ',' + (Y + 5) + ' l4,8 h-8 z', fill: '#24401f' }));
+    } else if (!settled && h >= 22 && h < 30) {
+      wild.appendChild(svgEl('path', { d: 'M' + (X + 4) + ',' + (Y + T - 6) + ' l6,-8 l6,8 z', fill: '#3b3a28' }));
+    }
+  }
+  svg.appendChild(wild);
+
+  // Territory: each settled tile tinted with its player, and a border on any
+  // edge where the neighbour is someone else or no one.
+  var terr = svgEl('g'), border = svgEl('g');
+  tiles.forEach(function (t) {
+    var p = players[t.p], X = sx(t.x) - T / 2, Y = sy(t.y) - T / 2;
+    terr.appendChild(svgEl('rect', { x: X, y: Y, width: T, height: T, fill: 'hsl(' + p.hue.toFixed(0) + ',45%,22%)', opacity: 0.85 }));
+    [[1, 0, X + T, Y, X + T, Y + T], [-1, 0, X, Y, X, Y + T], [0, 1, X, Y, X + T, Y], [0, -1, X, Y + T, X + T, Y + T]]
+      .forEach(function (e) {
+        var nb = tile[key(t.x + e[0], t.y + e[1])];
+        if (nb && nb.p === t.p) return;
+        border.appendChild(svgEl('line', { x1: e[2], y1: e[3], x2: e[4], y2: e[5],
+          stroke: 'hsl(' + p.hue.toFixed(0) + ',70%,62%)', 'stroke-width': 1.4, 'stroke-linecap': 'square' }));
+      });
+  });
+  svg.appendChild(terr);
+  svg.appendChild(border);
+
+  // The size of a village is the metric, in four tiers like the game's
+  // population icons. Tiers are quartiles of the packages that have any of
+  // the metric at all, so tier 4 always means "top quarter of what moved".
+  var vals = d.nodes.map(function (n) { return met.get(n) || 0; }).filter(function (v) { return v > 0; })
+    .sort(function (a, b) { return a - b; });
+  var q = function (f) { return vals.length ? vals[Math.min(vals.length - 1, Math.floor(f * vals.length))] : Infinity; };
+  var q1 = q(0.25), q2 = q(0.5), q3 = q(0.75);
+  var tier = function (n) {
+    var v = met.get(n) || 0;
+    if (!v || (!n.is_realm && !met.pure)) return 0;
+    return v >= q3 ? 4 : v >= q2 ? 3 : v >= q1 ? 2 : 1;
+  };
+
+  var vil = svgEl('g');
+  var counts = { village: 0, oasis: 0, ruin: 0 };
+  tiles.forEach(function (t) {
+    var n = t.n, p = players[t.p], cx = sx(t.x), cy = sy(t.y);
+    var g = svgEl('g');
+    g.appendChild(svgEl('rect', { x: cx - T / 2, y: cy - T / 2, width: T, height: T, fill: 'transparent' }));
+    var col = 'hsl(' + p.hue.toFixed(0) + ',55%,64%)';
+    if (n.parked) {
+      counts.ruin++;
+      g.appendChild(svgEl('path', { d: 'M' + (cx - 6) + ',' + (cy + 5) + ' v-6 l2,2 l2,-4 v8 M' + (cx + 1) + ',' + (cy + 5) + ' v-4 l3,-2 v6',
+        fill: 'none', stroke: '#9a8f7a', 'stroke-width': 1.3 }));
+    } else if (!n.is_realm) {
+      // A pure package is an oasis: a resource the villages around it draw on,
+      // which is exactly what an imported library is. A bigger pool for more
+      // importers, nothing for none.
+      counts.oasis++;
+      var r = 2.2 + Math.min(4.5, lg(n.importers) * 2.2);
+      g.appendChild(svgEl('ellipse', { cx: cx, cy: cy + 1.5, rx: r + 1, ry: r * 0.7 + 0.6, fill: '#2f6f9c' }));
+      g.appendChild(svgEl('circle', { cx: cx - r - 0.5, cy: cy - 2.5, r: 2.4, fill: '#3e7d3a' }));
+    } else {
+      counts.village++;
+      var tr = tier(n), houses = [[0, 0]];
+      if (tr >= 2) houses.push([-4.5, 3]);
+      if (tr >= 3) houses.push([4.5, 3]);
+      if (tr >= 4) houses.push([0, -4.5]);
+      var s = tr >= 4 ? 1.2 : 1;
+      houses.forEach(function (o) {
+        var hx2 = cx + o[0], hy = cy + o[1];
+        g.appendChild(svgEl('rect', { x: hx2 - 3 * s, y: hy - 1 * s, width: 6 * s, height: 4.2 * s,
+          fill: n.calls > 0 ? '#e9d9a8' : '#a99e86', stroke: '#1a1a1a', 'stroke-width': 0.5 }));
+        g.appendChild(svgEl('path', { d: 'M' + (hx2 - 3.8 * s) + ',' + (hy - 0.8 * s) + ' l' + (3.8 * s) + ',' + (-3.4 * s) +
+          ' l' + (3.8 * s) + ',' + (3.4 * s) + ' z', fill: n.calls > 0 ? '#c4532f' : '#6e4a3a', stroke: '#1a1a1a', 'stroke-width': 0.5 }));
+      });
+      if (n.calls > 0) g.appendChild(svgEl('circle', { cx: cx + 7, cy: cy - 7, r: 1.6, fill: '#ffd93d' }));
+    }
+    if (t.cap) {
+      // The capital's banner, in the player's colour.
+      g.appendChild(svgEl('line', { x1: cx + 6, y1: cy - 1, x2: cx + 6, y2: cy - 11, stroke: '#ddd', 'stroke-width': 0.9 }));
+      g.appendChild(svgEl('path', { d: 'M' + (cx + 6) + ',' + (cy - 11) + ' h6 l-2,2 l2,2 h-6 z', fill: col }));
+    }
+    g.setAttribute('data-tile', t.x + '|' + t.y);
+    bindNode(g, n, [['tile', '(' + t.x + '|' + t.y + ')'], ['player', p.name + ' · ' + shortAddr(p.id)],
+      ['', t.cap ? 'capital: their first deploy' : 'village #' + (p.nodes.indexOf(n) + 1) + ' of ' + p.nodes.length]]);
+    vil.appendChild(g);
+  });
+  svg.appendChild(vil);
+
+  // Axes: the origin cross and a coordinate every ten tiles, as on the game's
+  // map. Drawn last and faint so they sit above the land without hiding it.
+  var ax = svgEl('g');
+  ax.appendChild(svgEl('line', { x1: sx(bx0) - T / 2, y1: 0, x2: sx(bx1) + T / 2, y2: 0, stroke: 'rgba(255,255,255,.12)', 'stroke-width': 1 }));
+  ax.appendChild(svgEl('line', { x1: 0, y1: sy(by0) + T / 2, x2: 0, y2: sy(by1) - T / 2, stroke: 'rgba(255,255,255,.12)', 'stroke-width': 1 }));
+  for (var cxv = Math.ceil(bx0 / 10) * 10; cxv <= bx1; cxv += 10) {
+    var t1 = svgEl('text', { x: sx(cxv), y: sy(by1) - T / 2 + 9, 'text-anchor': 'middle', fill: 'rgba(255,255,255,.4)', 'font-size': 8, 'font-family': 'var(--mono)' });
+    t1.textContent = String(cxv); ax.appendChild(t1);
+  }
+  for (var cyv = Math.ceil(by0 / 10) * 10; cyv <= by1; cyv += 10) {
+    var t2 = svgEl('text', { x: sx(bx0) - T / 2 + 3, y: sy(cyv) + 3, fill: 'rgba(255,255,255,.4)', 'font-size': 8, 'font-family': 'var(--mono)' });
+    t2.textContent = String(cyv); ax.appendChild(t2);
+  }
+  svg.appendChild(ax);
+
+  // Player names at their capitals, for players big enough to have room for
+  // one: a name wider than the territory under it lands on a neighbour's and
+  // names the wrong player. Every player is named on hover.
+  var names = svgEl('g');
+  var boxes = [];
+  plist.slice().sort(function (a, b) { return b.nodes.length - a.nodes.length; }).forEach(function (p, i) {
+    if (p.nodes.length < 5 && i >= 8) return;
+    // Biggest first, and a name that would overlap one already placed is
+    // left to the tooltip.
+    var txt = p.name + ' · ' + p.nodes.length;
+    var bw = txt.length * 6.2, bx = sx(p.cap[0]) - bw / 2, by = sy(p.cap[1]) + T * 0.95 - 9;
+    if (boxes.some(function (b) { return bx < b[0] + b[2] && b[0] < bx + bw && by < b[1] + 12 && b[1] < by + 12; })) return;
+    boxes.push([bx, by, bw]);
+    var t = svgEl('text', { x: sx(p.cap[0]), y: sy(p.cap[1]) + T * 0.95, 'text-anchor': 'middle',
+      fill: 'hsl(' + p.hue.toFixed(0) + ',80%,78%)', 'font-size': 10, 'font-family': 'var(--mono)',
+      'paint-order': 'stroke', stroke: 'rgba(0,0,0,.85)', 'stroke-width': 3, 'pointer-events': 'none' });
+    t.textContent = txt;
+    names.appendChild(t);
+  });
+  svg.appendChild(names);
+  mountSVG(stage, svg);
+
+  // The caption counts packages, not tiles, so a package that failed to find
+  // a tile (or landed on one already taken) shows as a mismatch with the map
+  // rather than vanishing from both.
+  var first = plist[0];
+  var big = plist.slice().sort(function (a, b) { return b.nodes.length - a.nodes.length; })[0];
+  note(below, [
+    'A world map in which the players are the ', [String(plist.length)], ' addresses that deployed ' +
+    'code, not the namespaces it went into, and every one of the ', [String(order.length)],
+    ' packages is a tile they settled. Placement is deploy order and nothing else: the first ' +
+    'deployer, ', [first.name], ', holds (0|0), each new player founds a capital (the flag) at the ' +
+    'next free tile spiralling out from the origin with a tile of clearance from everyone else, and ' +
+    'each later deploy becomes a village on the free tile nearest that capital. So the middle is the ' +
+    'chain’s founders and the rim its newest arrivals, and a territory’s size is how much ' +
+    'that player deployed: ', [big.name], ' holds ', [String(big.nodes.length)], '. ',
+    [String(counts.village)], ' villages are realms, sized in four tiers by ', [met.label],
+    ' (quartiles of the packages that have any), with warm roofs and a gold light if called in the last ',
+    [S.window], '. ', [String(counts.oasis)], ' oases are pure packages, the pool sized by how many ' +
+    'packages import them, because a library is a resource the villages around it draw on. ',
+    [String(counts.ruin)], ' ruins are parked packages. Which free tile wins a tie, and the wilderness ' +
+    'between territories, are seeded and carry nothing.',
+  ]);
+  legend(below, [
+    ['#c4532f', 'village', '· a realm, more houses for more ' + met.label],
+    ['#2f6f9c', 'oasis', '· a pure package, pool by importers'],
+    ['#ffd93d', 'gold light', '· called in the window'],
+    ['', 'flag', '· the player’s capital, their first deploy'],
+  ]);
+}
+
+// =============================================================================
+// 10. OLD TOWN  -- a walled town, grown outward ring by ring
+// =============================================================================
+//
+// The view about how the whole chain grew, rather than one namespace at a time
+// as the orbits draw it. European towns grew this way: the oldest streets
+// inside the first wall around the market, a new wall for each age of growth,
+// the newest houses outside all of them.
+//
+// Every package is one house, laid down in deploy order on a sunflower spiral:
+// the n-th house sits at a radius that keeps the town's density constant, so
+// the area inside each wall is exactly proportional to how much was deployed
+// in that era, and a wall that encloses a fat ring marks a busy age.
+
+function drawOldTown(stage, below, d) {
+  var met = METRICS[S.metric];
+  var order = d.nodes.slice().sort(byDeploy);
+  var N = order.length;
+
+  // Eras: deploy days merged until each holds at least a tenth of the chain,
+  // so there are walls enough to show growth and not one per quiet Tuesday.
+  var eras = [], cur = null;
+  order.forEach(function (n, i) {
+    var day = (n.deployed_at || '').slice(0, 10) || 'unknown';
+    if (!cur || (cur.n >= N / 10 && day !== cur.last)) {
+      cur = { from: day, last: day, start: i, n: 0 };
+      eras.push(cur);
+    }
+    cur.n++; cur.last = day; cur.end = i + 1;
+  });
+  // A trailing sliver is folded into the era before it, or the outermost wall
+  // would enclose a handful of houses and read as a district.
+  if (eras.length > 1 && eras[eras.length - 1].n < N / 25) {
+    var tail = eras.pop(), prevE = eras[eras.length - 1];
+    prevE.last = tail.last; prevE.end = tail.end; prevE.n += tail.n;
+  }
+
+  var R0 = 50, R = 460;
+  var rAt = function (i) { return Math.sqrt(R0 * R0 + (R * R - R0 * R0) * (i / N)); };
+  var maxM = Math.max(1, d.nodes.reduce(function (m, n) { return Math.max(m, met.get(n) || 0); }, 0));
+  var denom = Math.max(1e-9, sc(maxM));
+  var ROADS = [0, Math.PI / 2, Math.PI, Math.PI * 1.5].map(function (a) { return a - Math.PI / 4; });
+
+  var houses = order.map(function (n, i) {
+    var r = rAt(i + 0.5), a = i * 2.399963 + 0.3;
+    // Off the four high streets: a house that would stand on one is slid
+    // sideways off it. That shifts it by less than one house width, so the
+    // deploy-order radius, the only thing position means, is untouched.
+    ROADS.forEach(function (ra) {
+      var da = Math.atan2(Math.sin(a - ra), Math.cos(a - ra));
+      var lim = 13 / r;
+      if (Math.abs(da) < lim) a = ra + (da < 0 ? -lim : lim);
+    });
+    var v = met.get(n) || 0;
+    var rises = n.is_realm || met.pure;
+    var f = rises && v > 0 ? sc(v) / denom : 0;
+    return { n: n, x: Math.cos(a) * r, y: Math.sin(a) * r, a: a, w: 14 + f * 12, h: 9.5 + f * 5 };
+  });
+
+  var ext = R + 46;
+  var svg = svgEl('svg', { viewBox: (-ext) + ' ' + (-ext) + ' ' + (ext * 2) + ' ' + (ext * 2),
+    preserveAspectRatio: 'xMidYMid meet', style: 'max-height:84vh' });
+
+  // Farmland outside the last wall, in seeded strips. Decoration: it says
+  // "this is the edge of town" and nothing else.
+  var fields = svgEl('g');
+  for (var k = 0; k < 28; k++) {
+    var rng = rngFrom('field' + k);
+    var a0 = k / 28 * Math.PI * 2, a1 = a0 + Math.PI * 2 / 28 * 0.9;
+    var r1 = R + 10, r2 = R + 40;
+    fields.appendChild(svgEl('path', { d: 'M' + Math.cos(a0) * r1 + ',' + Math.sin(a0) * r1 +
+      ' A' + r1 + ',' + r1 + ' 0 0 1 ' + Math.cos(a1) * r1 + ',' + Math.sin(a1) * r1 +
+      ' L' + Math.cos(a1) * r2 + ',' + Math.sin(a1) * r2 +
+      ' A' + r2 + ',' + r2 + ' 0 0 0 ' + Math.cos(a0) * r2 + ',' + Math.sin(a0) * r2 + ' Z',
+      fill: 'hsl(' + (60 + rng() * 40).toFixed(0) + ',' + (18 + rng() * 14).toFixed(0) + '%,' + (13 + rng() * 6).toFixed(0) + '%)' }));
+  }
+  svg.appendChild(fields);
+
+  svg.appendChild(svgEl('circle', { cx: 0, cy: 0, r: R + 8, fill: '#1b1814' }));
+  // High streets, out through every gate.
+  ROADS.forEach(function (a) {
+    svg.appendChild(svgEl('line', { x1: Math.cos(a) * R0, y1: Math.sin(a) * R0, x2: Math.cos(a) * (R + 44),
+      y2: Math.sin(a) * (R + 44), stroke: '#3d362c', 'stroke-width': 16, 'stroke-linecap': 'round' }));
+  });
+  // The market square, and its well.
+  svg.appendChild(svgEl('circle', { cx: 0, cy: 0, r: R0 - 4, fill: '#3d362c', stroke: '#4a4236', 'stroke-width': 2 }));
+  svg.appendChild(svgEl('circle', { cx: 0, cy: 0, r: 9, fill: '#2a4f6e', stroke: '#8c8270', 'stroke-width': 2.5 }));
+
+  // Walls at every era boundary, broken at the four gates, with a tower every
+  // so often and the era's dates on the wall itself.
+  var walls = svgEl('g');
+  eras.forEach(function (e, ei) {
+    var rw = rAt(e.end) + 4;
+    var gate = 16 / rw;
+    ROADS.forEach(function (ra, ri) {
+      var a0 = ra + gate, a1 = (ROADS[(ri + 1) % 4] + (ri === 3 ? Math.PI * 2 : 0)) - gate;
+      walls.appendChild(svgEl('path', { d: 'M' + Math.cos(a0) * rw + ',' + Math.sin(a0) * rw +
+        ' A' + rw + ',' + rw + ' 0 0 1 ' + Math.cos(a1) * rw + ',' + Math.sin(a1) * rw,
+        fill: 'none', stroke: '#8c8270', 'stroke-width': 4.5, 'stroke-linecap': 'butt', 'class': 'carto-wall',
+        'data-era': String(ei) }));
+      // Gate towers either side of the gap.
+      [ra + gate, ra - gate].forEach(function (ta) {
+        walls.appendChild(svgEl('rect', { x: Math.cos(ta) * rw - 4, y: Math.sin(ta) * rw - 4, width: 8, height: 8,
+          fill: '#a49a86', stroke: '#5a5244', 'stroke-width': 1 }));
+      });
+    });
+    var towers = Math.max(4, Math.round(rw * Math.PI * 2 / 120));
+    for (var t = 0; t < towers; t++) {
+      var ta = (t + 0.5) / towers * Math.PI * 2;
+      if (ROADS.some(function (ra) { return Math.abs(Math.atan2(Math.sin(ta - ra), Math.cos(ta - ra))) < gate * 2.2; })) continue;
+      walls.appendChild(svgEl('circle', { cx: Math.cos(ta) * rw, cy: Math.sin(ta) * rw, r: 4.2,
+        fill: '#a49a86', stroke: '#5a5244', 'stroke-width': 1 }));
+    }
+    // The wall's dates, at its top, on a dark plate so a house below cannot
+    // swallow them.
+    var lab = svgEl('text', { x: 0, y: -rw + 3.5, 'text-anchor': 'middle', 'font-size': 10.5, fill: '#e9dfc9',
+      'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: '#1b1814', 'stroke-width': 4 });
+    var span = e.from === e.last ? e.from.slice(5) : e.from.slice(5) + '–' + e.last.slice(5);
+    lab.textContent = (ei === 0 ? 'first wall ' : '') + span + ' · ' + e.n;
+    e.label = span;
+    walls.appendChild(lab);
+  });
+
+  var town = svgEl('g'), lit = 0;
+  houses.forEach(function (hs, i) {
+    var n = hs.n, g = svgEl('g');
+    var deg = hs.a * 180 / Math.PI + 90;
+    g.setAttribute('transform', 'translate(' + hs.x.toFixed(1) + ',' + hs.y.toFixed(1) + ') rotate(' + deg.toFixed(1) + ')');
+    var roof = n.parked ? 'none' : n.is_realm ? (n.calls > 0 ? '#c8613a' : '#8e4c34') : '#5d6672';
+    g.appendChild(svgEl('rect', { x: -hs.w / 2, y: -hs.h / 2, width: hs.w, height: hs.h, fill: roof,
+      stroke: n.parked ? 'var(--amber)' : '#16130f', 'stroke-width': n.parked ? 1 : 0.8,
+      'stroke-dasharray': n.parked ? '2 2' : null }));
+    // The ridge, which is what makes a rectangle a roof from above.
+    g.appendChild(svgEl('line', { x1: -hs.w / 2 + 1, y1: 0, x2: hs.w / 2 - 1, y2: 0,
+      stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.9 }));
+    if (n.calls > 0) {
+      lit++;
+      g.appendChild(svgEl('rect', { x: -1.3, y: hs.h / 2 - 0.6, width: 2.6, height: 2.6, fill: '#ffd93d' }));
+    }
+    var era = eras.filter(function (e) { return i >= e.start && i < e.end; })[0];
+    g.setAttribute('data-order', String(i));
+    bindNode(g, n, [['house', '#' + (i + 1) + ' of ' + N + ' in deploy order'], ['era', era ? era.label : '?']]);
+    town.appendChild(g);
+  });
+  svg.appendChild(town);
+  svg.appendChild(walls);
+  mountSVG(stage, svg);
+
+  var fat = eras.slice().sort(function (a, b) { return b.n - a.n; })[0];
+  note(below, [
+    'The chain as a town that grew outward. All ', [String(N)], ' packages are houses laid down in ' +
+    'deploy order on a sunflower spiral from the market square, at radii chosen so the town’s ' +
+    'density is constant: the area between two walls is exactly proportional to how much was ' +
+    'deployed in that era. There are ', [String(eras.length)], ' walls, one per era, an era being ' +
+    'consecutive deploy days merged until it holds a tenth of the chain; each wall is labelled with ' +
+    'its dates and how many houses it closed in. The busiest era was ', [fat.label], ', with ',
+    [String(fat.n)], '. House size is ', [met.label], ' on a ', [S.scale], ' scale (pure packages stay ' +
+    'small under a metric they do not have, the same rule as the city); a terracotta roof is a ' +
+    'realm, slate is a pure package, a dashed outline is parked, and ', [String(lit)],
+    ' houses show a lit window because they were called in the last ', [S.window], '. Angle around ' +
+    'the square is the golden angle and carries nothing, the four high streets and their gates are ' +
+    'there to be streets, and the farmland outside is decoration.',
+  ]);
+  legend(below, [
+    ['#c8613a', 'terracotta', '· realm, called'],
+    ['#8e4c34', 'dark roof', '· realm, not called'],
+    ['#5d6672', 'slate', '· pure package'],
+    ['#8c8270', 'wall', '· the edge of one era of deploys'],
+  ]);
 }
 
 // -----------------------------------------------------------------------------

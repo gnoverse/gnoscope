@@ -60,7 +60,8 @@ async function stubPeople(page) {
 test('every view draws, and none of them throws', async ({ page }) => {
   const w = watch(page);
   await stubPeople(page);
-  for (const view of ['city', 'settlement', 'orbits', 'metro', 'relief']) {
+  for (const view of ['city', 'settlement', 'orbits', 'metro', 'relief',
+    'metropolis', 'boroughs', 'hexes', 'frontier', 'oldtown']) {
     await open(page, view);
     // A view that cannot draw paints .carto-empty or .carto-err instead, and
     // both are legitimate on a chain with no data, but not on this fixture,
@@ -261,7 +262,11 @@ test('the zoom keeps the point under the cursor under the cursor', async ({ page
     const svg = document.querySelector('#carto-stage svg');
     const g = svg.firstChild;
     const r = svg.getBoundingClientRect();
-    const cx = r.left + r.width * 0.22, cy = r.top + r.height * 0.74;
+    // Whole pixels, because that is all a WheelEvent carries: Chrome truncates
+    // a fractional clientX, so a fractional point here put the handler and
+    // this test up to a pixel apart and measured that instead of the zoom.
+    // It passed only while the stage happened to sit near a whole pixel.
+    const cx = Math.round(r.left + r.width * 0.22), cy = Math.round(r.top + r.height * 0.74);
     const vb = svg.viewBox.baseVal;
     // The user-space point under that cursor, before and after.
     const ux = vb.x + (cx - r.left) / r.width * vb.width;
@@ -442,4 +447,104 @@ test('the camera survives a metric change, and the controls round-trip through t
   await expect(page.locator('#carto-bar button.on', { hasText: 'linear' })).toHaveCount(1);
   await expect(page.locator('#carto-bar button.on', { hasText: 'plan' })).toHaveCount(1);
   await expect(page.locator('#carto-bar button.on', { hasText: '30°' })).toHaveCount(1);
+});
+
+// The city-builder five. Each one makes one structural promise in its caption,
+// and these pin the promise rather than the picture: a drawing can look right
+// and break any of them.
+
+function expectEqualSizes(sizes) {
+  expect(sizes.length).toBeGreaterThan(1);
+  for (const k of [0, 1]) {
+    const v = sizes.map(s => s[k]);
+    // pts() writes coordinates to a tenth of a unit, so two equal shapes can
+    // differ by that much in their boxes and no more.
+    expect(Math.max(...v) - Math.min(...v)).toBeLessThan(0.25);
+  }
+}
+
+test('the metropolis builds every package once and zones all of them', async ({ page }) => {
+  await open(page, 'metropolis');
+  const note = await page.locator('.carto-note').innerText();
+  const all = Number(note.match(/all (\d+) packages compete/)[1]);
+  expect(await page.locator('#carto-stage [data-cp]').count()).toBe(all);
+  // The five zone counts in the caption partition the city. A package that
+  // fell through zoneOf would be drawn and counted nowhere.
+  const zones = ['commercial', 'residential', 'industrial', 'parks', 'under construction']
+    .map(z => Number(note.match(new RegExp('(\\d+) ' + z))[1]));
+  expect(zones.reduce((a, b) => a + b, 0)).toBe(all);
+  // The four district rings are drawn and named on the map, not only in the
+  // caption, because the whole claim of this view is that the chain has a
+  // middle.
+  for (const r of ['downtown', 'midtown', 'suburbs', 'outskirts']) {
+    await expect(page.locator('#carto-stage text', { hasText: r })).toHaveCount(1);
+  }
+});
+
+test('boroughs gives every namespace the same block', async ({ page }) => {
+  await open(page, 'boroughs');
+  const stated = Number((await page.locator('.carto-note').innerText()).match(/One block per namespace, (\d+) of them/)[1]);
+  const sizes = await page.evaluate(() => [...document.querySelectorAll('#carto-stage .carto-block')]
+    .map(b => { const r = b.getBBox(); return [r.width, r.height]; }));
+  expect(sizes.length).toBe(stated);
+  // Equal ground is this view's one promise, the fix for a city in which one
+  // namespace was most of the frame.
+  expectEqualSizes(sizes);
+});
+
+test('hexes lays one equal tile per namespace and gives each a terrain', async ({ page }) => {
+  await open(page, 'hexes');
+  const stated = Number((await page.locator('.carto-note').innerText()).match(/One hex per namespace, (\d+) of them/)[1]);
+  const hexes = await page.evaluate(() => [...document.querySelectorAll('#carto-stage .carto-hex')]
+    .map(h => { const r = h.getBBox(); return { size: [r.width, r.height],
+      ns: h.getAttribute('data-ns'), terrain: h.getAttribute('data-terrain') }; }));
+  expect(hexes.length).toBe(stated);
+  expectEqualSizes(hexes.map(h => h.size));
+  expect(new Set(hexes.map(h => h.ns)).size).toBe(stated);
+  for (const h of hexes) expect(['fields', 'pasture', 'forest', 'mountains', 'hills', 'desert']).toContain(h.terrain);
+});
+
+test('the frontier settles every package on its own tile, starting at the origin', async ({ page }) => {
+  await open(page, 'frontier');
+  const note = await page.locator('.carto-note').innerText();
+  const stated = Number(note.match(/every one of the (\d+) packages is a tile/)[1]);
+  const tiles = await page.evaluate(() => [...document.querySelectorAll('#carto-stage [data-tile]')]
+    .map(t => t.getAttribute('data-tile')));
+  expect(tiles.length).toBe(stated);
+  // Two villages on one tile would draw as one and lose a package silently.
+  expect(new Set(tiles).size).toBe(stated);
+  // The first settler holds (0|0); that is what makes the middle mean "oldest".
+  expect(tiles).toContain('0|0');
+});
+
+test('the old town lays houses outward in deploy order inside one wall per era', async ({ page }) => {
+  await open(page, 'oldtown');
+  const note = await page.locator('.carto-note').innerText();
+  const all = Number(note.match(/All (\d+) packages are houses/)[1]);
+  const eras = Number(note.match(/There are (\d+) walls/)[1]);
+  const radii = await page.evaluate(() => [...document.querySelectorAll('#carto-stage [data-order]')]
+    .sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order))
+    .map(g => { const m = /translate\(([-\d.]+),([-\d.]+)\)/.exec(g.getAttribute('transform')); return Math.hypot(+m[1], +m[2]); }));
+  expect(radii.length).toBe(all);
+  // Distance from the market square is deploy order, so it never decreases.
+  // The street nudge moves a house sideways and must not move it inward.
+  for (let i = 1; i < radii.length; i++) expect(radii[i]).toBeGreaterThanOrEqual(radii[i - 1] - 0.15);
+  const walls = await page.evaluate(() => new Set([...document.querySelectorAll('#carto-stage .carto-wall')]
+    .map(w => w.getAttribute('data-era'))).size);
+  expect(walls).toBe(eras);
+});
+
+test('the compass and the plan view reach the two new isometric drawings', async ({ page }) => {
+  for (const view of ['metropolis', 'boroughs']) {
+    await open(page, view);
+    await expect(page.locator('#carto-bar button', { hasText: 'plan' })).toHaveCount(1);
+    await page.locator('#carto-bar button', { hasText: 'plan' }).click();
+    await expect(page).toHaveURL(/flat=1/);
+    await expect(page.locator('#carto-stage [data-cp] rect').first()).toBeVisible();
+    await open(page, view, '&flat=0');
+  }
+  // hexes has no size channel, so no metric picker: a control that is there
+  // and moves nothing reads as a broken page.
+  await open(page, 'hexes');
+  await expect(page.locator('#carto-bar', { hasText: 'size by' })).toHaveCount(0);
 });
