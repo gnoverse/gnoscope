@@ -1000,7 +1000,7 @@ incomparable.
 | endpoint | description |
 |---|---|
 | `GET /api/assets` | every asset seen on a network: supply, mints, burns, holders, transfer counts, first and last seen, plus registry metadata. `?realm=<package path>` narrows it to one realm |
-| `GET /api/assets/search` | `?q=` over the event key, for the search box. No balance reconstruction |
+| `GET /api/assets/search` | `?q=` over the event key, for the search box. `limit` (default 8, at most 100). No balance reconstruction |
 | `GET /api/prices` | every asset priced in USD, with the route, the measured depth and the caveats. See below |
 | `GET /api/asset/{token...}` | one asset: top holders, recent transfers, a daily supply series, the other assets its realm issues, the issuing package, and the ledger window every figure was computed over. Single network |
 
@@ -1241,14 +1241,16 @@ merge across chains, and a union coverage range would hide a lagging network.
 ## Search
 
 ```
-GET /api/search?q=<query>
+GET /api/search?q=<query>&limit=<n>
 ```
 
 Searches **package paths, names and creators only**. It does not search
-transaction hashes, block heights, or addresses — an address matches only when it
-happens to be a package creator.
+transaction hashes or block heights, and an address matches here only when it
+happens to be a package creator: a prefix of any known address is
+`/api/addresses/search`'s, below.
 
-Realms come first and each kind is capped separately (ten apiece), rather than
+Realms come first and each kind is capped separately (ten apiece by default,
+`limit` up to 100 per kind, which is what the `/search` page asks for), rather than
 twenty rows ordered by deploy height. The search box draws realms and packages
 as two groups, and a flat limit let one namespace's realms fill it and leave the
 package group empty — which reads as "this namespace has no packages" rather
@@ -1287,6 +1289,18 @@ The UI covers the rest without asking the server: an address, a transaction hash
 or a block height is recognised by shape and offered as a direct destination
 above the package matches. A bare number is offered only when a network is
 selected, since a height identifies a different block on every chain.
+
+**The popup is a preview; `/search?q=<query>` is the full answer.** The popup
+shows three rows per group, a "N more" link per group that leads to
+`/search?q=<query>&kind=<group>`, and an "all results" footer, which is also
+what Enter does unless the query is unambiguously one destination by its shape
+(a complete address, a hash, a height), in which case Enter goes there.
+`/search/<query>` is accepted and rewritten to the query form. Both surfaces call
+the same sources with different `limit`s, and **merge rows that name one thing on
+several chains**: with no network picked each endpoint answers once per chain,
+which put two identical `@moul` rows in the popup, mainnet's and onyx's. A merged
+row lists its chains instead, and an address lists one balance per chain, never a
+sum.
 
 ### User search
 

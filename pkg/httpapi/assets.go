@@ -263,7 +263,7 @@ func (a *API) HandleAssetSearch(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "missing q parameter", 400)
 		return
 	}
-	found, err := a.db.SearchTokens(network, q, 8)
+	found, err := a.db.SearchTokens(network, q, clampParam(r, "limit", 8, 100))
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return

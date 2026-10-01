@@ -227,6 +227,14 @@ html.rail-collapsed .rail-toggle svg { transform: scaleX(-1); }
    room in the opposite order to the reading order: the namespace shrinks first
    (999 against 1) and is the only part that ever shows an ellipsis; the name
    survives whole until there is genuinely nothing left to take. */
+/* The popup shows a few rows per group; these two lead to the rest. */
+.search-more { display: block; padding: 6px 12px 8px 12px; font-size: 12px; color: var(--fg2); border-bottom: 1px solid var(--border); text-decoration: none; }
+.search-more:hover { color: var(--fg); background: var(--bg3); }
+.search-all { position: sticky; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; background: var(--bg2); border-top: 1px solid var(--border); color: var(--accent); text-decoration: none; font-size: 13px; }
+.search-all:hover { background: var(--bg3); }
+.search-all-key { font-family: var(--mono); font-size: 10px; color: var(--fg2); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; }
+.search-page-group { margin: 0 0 20px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg2); }
+.search-page-kinds { margin: 8px 0 16px; }
 .search-result-title { display: flex; align-items: baseline; font-family: var(--mono); font-size: 14px; }
 .search-result-prefix { flex: 0 999 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg2); }
 .search-result-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
@@ -1621,6 +1629,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-people"><main><div id="people-content"></div></main></div>
   <div class="view" id="view-teams"><main><div id="teams-content"></div></main></div>
   <div class="view" id="view-glossary"><main><div id="glossary-content"></div></main></div>
+  <div class="view" id="view-search"><main><div id="search-page-content"></div></main></div>
   <div class="view" id="view-sanity"><main><div id="sanity-content"></div></main></div>
   <div class="view" id="view-traffic"><main><div id="traffic-content"></div></main></div>
   <div class="view" id="view-contracts"><main><div id="contracts-content"></div></main></div>
@@ -4392,6 +4401,17 @@ function route() {
   // markup and one block of script.
   else if (path === '/gnohub' || path.startsWith('/gnohub/')) { view = 'gnohub'; data = path.slice(8); }
   else if (path === '/glossary') { view = 'glossary'; }
+  // /search?q= is canonical. /search/<query> is accepted because it is the shape
+  // people type, and is rewritten to the query form so a path with slashes in
+  // it (a realm path is the common query) cannot be split as a route.
+  else if (path === '/search') { view = 'search'; }
+  else if (path.startsWith('/search/')) {
+    const url = new URL(window.location);
+    url.pathname = '/search';
+    url.searchParams.set('q', decodeURIComponent(path.slice(8)));
+    history.replaceState(null, '', url);
+    return route();
+  }
   else if (path === '/sanity') { view = 'sanity'; }
   else if (path === '/watch') { view = 'watch'; }
   else if (path.startsWith('/block/')) { view = 'block-detail'; data = parseInt(path.slice(7)); }
@@ -4482,6 +4502,7 @@ function route() {
     case 'people': loadPeople(); break;
     case 'teams': loadTeams(); break;
     case 'glossary': loadGlossary(); break;
+    case 'search': loadSearchPage(); break;
     case 'sanity': loadSanity(); break;
     case 'traffic': loadTraffic(); break;
     case 'block-detail': loadBlockDetail(data); break;
@@ -21935,6 +21956,194 @@ function searchResultRow(badgeType, badgeText, title, subtitle, onClick) {
   item.addEventListener('click', onClick);
   return item;
 }
+// searchGroups asks every search source and returns the groups in display
+// order, each row already shaped for searchResultRow. The popup and the /search
+// page both draw from it, so the two can never disagree about what a query
+// matched or in which order: the popup is the first few rows of each group, the
+// page is all of them.
+//
+// Separate endpoints rather than one, because /api/search answers with a flat
+// array of packages and every caller reads it as one. A user is not a package
+// (67 of mainnet's 78 registrations have never deployed anything), and a realm
+// issuing six tokens collapses to a single package row, which is the confusion
+// the per-asset page exists to undo. Every source but packages is optional, so
+// an older backend that lacks a route still answers with what it has.
+//
+// The order of the groups is deliberate, and is the answer to a real complaint:
+// typing "moul" used to lead with the MOULTEST token. Addresses, users, assets,
+// realms, symbols, packages. It runs from "who" through "what can I hold" and
+// "what can I open" down to "what can I import", which is the order the
+// questions are asked in. Addresses lead because a query that reaches that group
+// is already an address: nothing else here starts with g1 and two more
+// characters.
+//
+// One row per thing, not per chain. With no network picked every source answers
+// once per configured chain, so `moul` came back as two identical @moul rows,
+// mainnet's and onyx's, and nothing on screen said why. Rows are merged on what
+// identifies them and carry the list of chains instead.
+const SEARCH_LIMITS = {
+  popup: { users: 6, addresses: 6, assets: 8, symbols: 8, packages: 10 },
+  page: { users: 100, addresses: 50, assets: 100, symbols: 50, packages: 100 },
+};
+// How many rows of each group the popup shows. The rest are a click away on
+// /search, which is what keeps seven groups from becoming one long scroll.
+const SEARCH_POPUP_ROWS = 3;
+
+function searchPagePath(q, kind) {
+  return '/search?q=' + encodeURIComponent(q) + (kind ? '&kind=' + encodeURIComponent(kind) : '');
+}
+
+// mergeByKey folds rows that name the same thing on several chains into one,
+// keeping the first row's fields and the list of networks it was found on.
+function mergeByKey(rows, keyOf) {
+  const out = [];
+  const byKey = new Map();
+  for (const r of rows) {
+    const k = keyOf(r);
+    const net = r.network || '';
+    const seen = byKey.get(k);
+    if (seen) {
+      if (net && !seen.networks.includes(net)) seen.networks.push(net);
+      seen.others.push(r);
+      continue;
+    }
+    const merged = { ...r, networks: net ? [net] : [], others: [] };
+    byKey.set(k, merged);
+    out.push(merged);
+  }
+  return out;
+}
+
+// Which network a merged row's link opens on: the one picked, else the one row
+// it came from, else none, since the detail pages merge chains themselves.
+function searchNet(r) {
+  return netSuffix(r.networks && r.networks.length === 1 ? r.networks[0] : getNetwork());
+}
+
+// The chains a row was found on, printed only when no network is picked: with
+// one picked, every row is on it and saying so is noise.
+function searchNetBits(r) {
+  return getNetwork() === 'all' && r.networks && r.networks.length ? [r.networks.join(' + ')] : [];
+}
+
+async function searchGroups(q, mode) {
+  const lim = SEARCH_LIMITS[mode];
+  const enc = encodeURIComponent(q);
+  const typed = q.trim().toLowerCase();
+  const [data, users, assets, symbols, addrs] = await Promise.all([
+    api('search?q=' + enc + '&limit=' + lim.packages),
+    api('users/search?q=' + enc + '&limit=' + lim.users).catch(() => null),
+    api('assets/search?q=' + enc + '&limit=' + lim.assets).catch(() => null),
+    api('symbols/search?q=' + enc + '&limit=' + lim.symbols).catch(() => null),
+    // Asked only when the query is shaped like the start of an address: a
+    // partial g1… matched none of the others and answered "no results" for an
+    // account with 774 transactions.
+    /^g1[0-9a-z]{2,}$/.test(typed)
+      ? api('addresses/search?q=' + encodeURIComponent(typed) + '&limit=' + lim.addresses).catch(() => null)
+      : null,
+  ]);
+  const groups = [];
+  // capped: the source returned as many rows as were asked for, so there may
+  // be more than this. Read off the raw rows, before merging shrinks them.
+  const add = (key, label, raw, limit, keyOf, toRow) => {
+    const rows = mergeByKey(raw, keyOf).map(toRow);
+    if (rows.length) groups.push({ key, label, rows, capped: raw.length >= limit });
+  };
+
+  // The one the "go to" row already offers is left out, since a complete
+  // address matching itself says nothing new.
+  const direct = directDestinations(q);
+  const accounts = ((addrs && addrs.addresses) || [])
+    .filter(m => !direct.some(d => d.kind === 'address' && d.label === m.address));
+  add('addresses', 'addresses', accounts, lim.addresses, m => m.address, m => {
+    const bits = [];
+    if (m.name) bits.push('@' + m.name);
+    if (m.label && m.label.replace(/^@/, '') !== m.name) bits.push(m.label);
+    // One balance per chain, each named, never summed: a balance is
+    // denominated per chain and two chains' ugnot added together belong to
+    // neither.
+    const all = [m, ...m.others];
+    if (getNetwork() === 'all' && all.length > 1) {
+      for (const x of all) bits.push(fmtGnotAmount(x.ugnot || 0) + ' on ' + x.network);
+    } else {
+      bits.push(fmtGnotAmount(m.ugnot || 0));
+      bits.push(...searchNetBits(m));
+    }
+    // The typed part dims and gives way first, so the characters the reader
+    // has not typed yet are the ones that stay on screen.
+    const title = m.address.startsWith(typed) && m.address.length > typed.length
+      ? { prefix: typed, name: m.address.slice(typed.length) }
+      : m.address;
+    return { badge: 'address', title, sub: bits.join(' · '), href: '/address/' + m.address + searchNet(m) };
+  });
+
+  // Users. A short query is most often a name, and this is the only group
+  // whose answer is a person rather than a path.
+  add('users', 'users', (users && users.users) || [], lim.users, u => u.name + '|' + u.address, u => {
+    const bits = [];
+    // The curated label, only when it says something the name does not: for
+    // a namespace the two are usually the same word twice.
+    if (u.label && u.label.replace(/^@/, '') !== u.name) bits.push(u.label);
+    bits.push(shortAddr(u.address));
+    // The package count separates the project a reader meant from a
+    // namesake. Shown when there is one, left off when there is not, rather
+    // than printed as a zero: 67 of mainnet's 78 users have deployed nothing.
+    const pkgs = Math.max(u.packages || 0, ...u.others.map(o => o.packages || 0));
+    if (pkgs) bits.push(pkgs + ' package' + (pkgs === 1 ? '' : 's'));
+    // An alias and a tombstone are both real answers and both have to say
+    // so. r/sys/users keeps an old name resolvable on purpose, so "this
+    // resolves, but not to what you think" is exactly what a reader searching
+    // a previous handle needs to be told.
+    if (u.alias) bits.push('previous name');
+    if (u.deleted) bits.push('deleted');
+    bits.push(...searchNetBits(u));
+    return { badge: 'user', title: '@' + u.name, sub: bits.join(' · '), href: '/address/' + u.address + searchNet(u) };
+  });
+
+  add('assets', 'grc20 assets', (assets && assets.assets) || [], lim.assets, t => t.token, t => ({
+    badge: 'asset', title: t.display_symbol || t.symbol || t.token,
+    sub: [t.pkg_path || t.token, ...searchNetBits(t)].join(' · '), href: assetPath(t.token),
+  }));
+
+  // Realms and packages are two groups, not one list with two badges. A realm
+  // is something a reader can open and use; a package is a library it imports.
+  // They arrived interleaved by deploy height, so the realm somebody typed the
+  // name of could sit below four of its own libraries. The server caps each
+  // kind separately, so neither can crowd the other out of the response.
+  const pkgRows = data || [];
+  const pkgRow = r => ({
+    badgeType: r.is_realm ? 'realm' : 'pkg', badge: r.is_realm ? 'realm' : 'package',
+    title: pathParts(r.path),
+    sub: ['by ' + shortAddr(r.creator) + (r.status === 'inert' ? ' · parked' : ''), ...searchNetBits(r)].join(' · '),
+    href: '/realm/' + r.path.replace('gno.land/', '') + searchNet(r),
+  });
+  add('realms', 'realms', pkgRows.filter(r => r.is_realm), lim.packages, r => r.path, pkgRow);
+
+  // Symbols above packages. Somebody typing a CamelCase identifier wants the
+  // declaration, not the four paths whose text happens to contain it, and a
+  // package match for a symbol query is the weaker answer of the two. It does
+  // not reach past packages, because a realm and an asset are things a reader
+  // opens rather than imports.
+  add('symbols', 'symbols', (symbols && symbols.symbols) || [], lim.symbols, s => s.path + '.' + s.name, s => ({
+    badge: s.kind, title: s.display,
+    sub: (s.doc || s.signature || '').trim() || (s.kind + ' in ' + s.path),
+    // Straight to the declaration: the docs tab, anchored on the symbol.
+    href: '/realm/' + s.path.replace('gno.land/', '') + '?tab=docs&sym=' + encodeURIComponent(s.name),
+  }));
+
+  add('packages', 'packages', pkgRows.filter(r => !r.is_realm), lim.packages, r => r.path, pkgRow);
+
+  return { direct, groups };
+}
+
+function searchRowEl(row, onPick) {
+  return searchResultRow(row.badgeType || '', row.badge, row.title, row.sub, () => onPick(row.href));
+}
+
+function closeSearchPopup() {
+  document.getElementById('search-results').classList.remove('open');
+}
+
 document.getElementById('search-input').addEventListener('input', function() {
   clearTimeout(searchTimeout);
   const gen = ++_searchGen;
@@ -21942,168 +22151,47 @@ document.getElementById('search-input').addEventListener('input', function() {
   const results = document.getElementById('search-results');
   if (q.length < 2) { results.classList.remove('open'); return; }
   results.textContent = '';
+  const pick = href => { closeSearchPopup(); navigate(href); };
 
   const direct = directDestinations(q);
   if (direct.length) {
     results.appendChild(el('div', { className: 'search-section-label' }, 'go to'));
-    for (const d of direct) {
-      results.appendChild(searchResultRow('', d.kind, d.label, null,
-        () => { results.classList.remove('open'); navigate(d.href); }));
-    }
+    for (const d of direct) results.appendChild(searchResultRow('', d.kind, d.label, null, () => pick(d.href)));
   }
-  const loading = el('div', { className: 'search-loading' }, 'searching\u2026');
+  const loading = el('div', { className: 'search-loading' }, 'searching…');
   results.appendChild(loading);
   results.classList.add('open');
 
   searchTimeout = setTimeout(async () => {
     try {
-      // Four endpoints rather than one, because /api/search answers with a flat
-      // array of packages and every caller reads it as one. A user is not a
-      // package (67 of mainnet's 78 registrations have never deployed
-      // anything), and a realm issuing six tokens collapses to a single package
-      // row, which is the confusion the per-asset page exists to undo. Each of
-      // the three extras is optional, so an older backend that has none of
-      // those routes still answers with packages.
-      //
-      // A fifth, address autocomplete, is asked only when the query is shaped
-      // like the start of one: a partial g1… matched none of the four, and
-      // answered "no results" for an account with 774 transactions.
-      const typed = q.trim().toLowerCase();
-      const [data, users, assets, symbols, addrs] = await Promise.all([
-        api('search?q=' + encodeURIComponent(q)),
-        api('users/search?q=' + encodeURIComponent(q)).catch(() => null),
-        api('assets/search?q=' + encodeURIComponent(q)).catch(() => null),
-        api('symbols/search?q=' + encodeURIComponent(q) + '&limit=8').catch(() => null),
-        /^g1[0-9a-z]{2,}$/.test(typed)
-          ? api('addresses/search?q=' + encodeURIComponent(typed)).catch(() => null)
-          : null,
-      ]);
+      const { groups } = await searchGroups(q, 'popup');
       if (gen !== _searchGen) return;
       loading.remove();
 
-      // Addresses before everything else, because a query that reaches this
-      // group is already an address: nothing else here starts with g1 and a
-      // number. The one the "go to" row already offers is left out, since a
-      // complete address matching itself says nothing new.
-      const accounts = ((addrs && addrs.addresses) || [])
-        .filter(m => !direct.some(d => d.kind === 'address' && d.label === m.address));
-      if (accounts.length) {
-        results.appendChild(el('div', { className: 'search-section-label' }, 'addresses'));
-        for (const m of accounts) {
-          const bits = [];
-          if (m.name) bits.push('@' + m.name);
-          if (m.label && m.label.replace(/^@/, '') !== m.name) bits.push(m.label);
-          bits.push(fmtGnotAmount(m.ugnot || 0));
-          // Without a network picked, one address can match once per chain,
-          // and the two rows are otherwise identical.
-          if (getNetwork() === 'all' && m.network) bits.push(m.network);
-          // The typed part dims and gives way first, so the characters the
-          // reader has not typed yet are the ones that stay on screen.
-          const title = m.address.startsWith(typed) && m.address.length > typed.length
-            ? { prefix: typed, name: m.address.slice(typed.length) }
-            : m.address;
-          results.appendChild(searchResultRow('', 'address', title, bits.join(' \u00b7 '),
-            () => {
-              results.classList.remove('open');
-              navigate('/address/' + m.address + netSuffix(m.network || getNetwork()));
-            }));
+      for (const g of groups) {
+        results.appendChild(el('div', { className: 'search-section-label' }, g.label));
+        for (const row of g.rows.slice(0, SEARCH_POPUP_ROWS)) results.appendChild(searchRowEl(row, pick));
+        const more = g.rows.length - SEARCH_POPUP_ROWS;
+        if (more > 0) {
+          const href = searchPagePath(q.trim(), g.key);
+          const link = el('a', { className: 'search-more', href },
+            (g.capped ? more + '+' : more) + ' more ' + g.label + ' →');
+          link.addEventListener('click', ev => { ev.preventDefault(); pick(href); });
+          results.appendChild(link);
         }
       }
 
-      // The order of the groups below is deliberate, and is the answer to a
-      // real complaint: typing "moul" used to lead with the MOULTEST token.
-      // Users, then assets, then realms, then symbols, then packages. It runs
-      // from "who" through "what can I hold" and "what can I open" down to
-      // "what can I import", which is the order the questions are asked in.
-
-      // Users first. A short query is most often a name, and this is the only
-      // group whose answer is a person rather than a path.
-      const people = (users && users.users) || [];
-      if (people.length) {
-        results.appendChild(el('div', { className: 'search-section-label' }, 'users'));
-        for (const u of people) {
-          const bits = [];
-          // The curated label, only when it says something the name does not:
-          // for a namespace the two are usually the same word twice.
-          if (u.label && u.label.replace(/^@/, '') !== u.name) bits.push(u.label);
-          bits.push(shortAddr(u.address));
-          // The package count separates the project a reader meant from a
-          // namesake. Shown when there is one, left off when there is not,
-          // rather than printed as a zero: 67 of mainnet's 78 users have
-          // deployed nothing, and a column of "0 packages" says nothing.
-          if (u.packages) bits.push(u.packages + ' package' + (u.packages === 1 ? '' : 's'));
-          // An alias and a tombstone are both real answers and both have to say
-          // so. r/sys/users keeps an old name resolvable on purpose, so
-          // "this resolves, but not to what you think" is exactly what a reader
-          // searching a previous handle needs to be told.
-          if (u.alias) bits.push('previous name');
-          if (u.deleted) bits.push('deleted');
-          results.appendChild(searchResultRow('', 'user', '@' + u.name, bits.join(' · '),
-            () => {
-              results.classList.remove('open');
-              navigate('/address/' + u.address + netSuffix(u.network || getNetwork()));
-            }));
-        }
-      }
-
-      const tokens = (assets && assets.assets) || [];
-      if (tokens.length) {
-        results.appendChild(el('div', { className: 'search-section-label' }, 'grc20 assets'));
-        for (const t of tokens) {
-          results.appendChild(searchResultRow('', 'asset',
-            t.display_symbol || t.symbol || t.token, t.pkg_path || t.token,
-            () => { results.classList.remove('open'); navigate(assetPath(t.token)); }));
-        }
-      }
-
-      // Realms and packages are two groups, not one list with two badges. A
-      // realm is something a reader can open and use; a package is a library it
-      // imports. They arrived interleaved by deploy height, so the realm
-      // somebody typed the name of could sit below four of its own libraries.
-      // The server caps each kind separately (searchKindLimit) so neither can
-      // crowd the other out of the response.
-      const rows = data || [];
-      const realms = rows.filter(r => r.is_realm);
-      const pkgs = rows.filter(r => !r.is_realm);
-      const pkgRow = r => searchResultRow(r.is_realm ? 'realm' : 'pkg', r.is_realm ? 'realm' : 'package',
-        pathParts(r.path), 'by ' + shortAddr(r.creator) + (r.status === 'inert' ? ' · parked' : ''),
-        () => { results.classList.remove('open'); navigate('/realm/' + r.path.replace('gno.land/', '')); });
-      if (realms.length) {
-        results.appendChild(el('div', { className: 'search-section-label' }, 'realms'));
-        for (const r of realms) results.appendChild(pkgRow(r));
-      }
-
-      // Symbols above packages, which is where they were before the user group
-      // existed and where moul put them back. The argument is about these two
-      // specifically: somebody typing a CamelCase identifier wants the
-      // declaration, not the four paths whose text happens to contain it, and a
-      // package match for a symbol query is the weaker answer of the two. It
-      // does not reach past packages, because a realm and an asset are things a
-      // reader opens rather than imports.
-      const syms = (symbols && symbols.symbols) || [];
-      if (syms.length) {
-        results.appendChild(el('div', { className: 'search-section-label' }, 'symbols'));
-        for (const sym of syms) {
-          const sub = (sym.doc || sym.signature || '').trim() || (sym.kind + ' in ' + sym.path);
-          results.appendChild(searchResultRow('', sym.kind, sym.display, sub,
-            () => {
-              results.classList.remove('open');
-              // Straight to the declaration: the docs tab, anchored on the
-              // symbol. Landing on the realm's overview and making the reader
-              // find it again is most of why symbol search was worth having.
-              navigate('/realm/' + sym.path.replace('gno.land/', '')
-                + '?tab=docs&sym=' + encodeURIComponent(sym.name));
-            }));
-        }
-      }
-
-      if (pkgs.length) {
-        results.appendChild(el('div', { className: 'search-section-label' }, 'packages'));
-        for (const r of pkgs) results.appendChild(pkgRow(r));
-      }
-
-      if (!direct.length && !accounts.length && !people.length && !tokens.length && !syms.length && !rows.length) {
+      if (!direct.length && !groups.length) {
         results.appendChild(el('div', { style: { padding: '10px 12px' } }, 'no results'));
+        return;
+      }
+      if (groups.length) {
+        const href = searchPagePath(q.trim());
+        const all = el('a', { className: 'search-all', href },
+          el('span', {}, 'all results for “' + q.trim() + '” →'),
+          el('span', { className: 'search-all-key', 'aria-hidden': 'true' }, 'enter'));
+        all.addEventListener('click', ev => { ev.preventDefault(); pick(href); });
+        results.appendChild(all);
       }
     } catch (err) {
       if (gen !== _searchGen) return;
@@ -22112,6 +22200,102 @@ document.getElementById('search-input').addEventListener('input', function() {
     }
   }, 200);
 });
+
+// Enter goes somewhere rather than nowhere. A query that is unambiguously one
+// thing by its shape (a full address, a hash, a height) goes there; anything
+// else opens the full results page, which is what the popup's footer offers.
+document.getElementById('search-input').addEventListener('keydown', function(ev) {
+  if (ev.key === 'Escape') { closeSearchPopup(); this.blur(); return; }
+  if (ev.key !== 'Enter') return;
+  const q = this.value.trim();
+  if (q.length < 2) return;
+  ev.preventDefault();
+  clearTimeout(searchTimeout);
+  _searchGen++;
+  closeSearchPopup();
+  const direct = directDestinations(q);
+  navigate(direct.length === 1 ? direct[0].href : searchPagePath(q));
+});
+
+// The /search page: every group in full, with a strip to narrow it to one.
+//
+// The popup is a preview by construction. Seven groups at even five rows each
+// do not fit under a search box, so it shows three of each and says how many it
+// left out, and this page is where "how many" leads. `kind` is in the URL so a
+// "12 more realms" link lands on exactly that list, and a narrowed page can be
+// shared as it is.
+let _searchPageGen = 0;
+async function loadSearchPage() {
+  const params = new URLSearchParams(window.location.search);
+  const q = (params.get('q') || '').trim();
+  const kind = params.get('kind') || '';
+  const container = clear('search-page-content');
+  const gen = ++_searchPageGen;
+  // The box says what the page is for, so refining the query starts from it.
+  // Setting value fires no input event, so the popup stays shut.
+  const box = document.getElementById('search-input');
+  if (box && document.activeElement !== box) box.value = q;
+
+  container.appendChild(el('div', { className: 'section-title' }, q ? 'results for “' + q + '”' : 'search'));
+  if (q.length < 2) {
+    container.appendChild(el('div', { className: 'section-sub' },
+      'type at least two characters in the search box: a name, a realm path, a symbol, an asset or the start of an address.'));
+    return;
+  }
+  skeletonBlock(container);
+  let res;
+  try {
+    res = await searchGroups(q, 'page');
+  } catch (err) {
+    if (gen !== _searchPageGen) return;
+    container.textContent = '';
+    failBlock(container, err, loadSearchPage);
+    return;
+  }
+  if (gen !== _searchPageGen) return;
+  renderSearchPage(container, q, kind, res);
+}
+
+function renderSearchPage(container, q, kind, { direct, groups }) {
+  container.textContent = '';
+  container.appendChild(el('div', { className: 'section-title' }, 'results for “' + q + '”'));
+  const total = groups.reduce((n, g) => n + g.rows.length, 0);
+  const capped = groups.some(g => g.capped);
+  container.appendChild(el('div', { className: 'section-sub' },
+    (total ? fmtNum(total) + (capped ? '+' : '') + ' match' + (total === 1 ? '' : 'es') : 'nothing matched')
+    + ' across ' + (getNetwork() === 'all' ? 'every network' : getNetwork())
+    + (capped ? '. A "+" means the group stopped at its limit: narrow the query to see the rest.' : '.')));
+
+  const pick = href => navigate(href);
+  if (direct.length) {
+    const box = el('div', { className: 'search-page-group' });
+    box.appendChild(el('div', { className: 'search-section-label' }, 'go to'));
+    for (const d of direct) box.appendChild(searchResultRow('', d.kind, d.label, null, () => pick(d.href)));
+    container.appendChild(box);
+  }
+  if (!groups.length) return;
+
+  // An unknown kind (a stale link, a group that matched nothing this time)
+  // shows everything rather than an empty page.
+  const active = groups.some(g => g.key === kind) ? kind : '';
+  const strip = el('div', { className: 'gh-pills search-page-kinds' });
+  const pill = (key, text) => {
+    const p = el('a', { className: 'gh-pill' + (key === active ? ' on' : ''), href: searchPagePath(q, key) }, text);
+    p.addEventListener('click', ev => { ev.preventDefault(); navigate(searchPagePath(q, key), true); });
+    strip.appendChild(p);
+  };
+  pill('', 'all ' + fmtNum(total) + (capped ? '+' : ''));
+  for (const g of groups) pill(g.key, g.label + ' ' + fmtNum(g.rows.length) + (g.capped ? '+' : ''));
+  container.appendChild(strip);
+
+  for (const g of groups) {
+    if (active && g.key !== active) continue;
+    const box = el('div', { className: 'search-page-group', 'data-kind': g.key });
+    box.appendChild(el('div', { className: 'search-section-label' }, g.label + ' · ' + fmtNum(g.rows.length) + (g.capped ? '+' : '')));
+    for (const row of g.rows) box.appendChild(searchRowEl(row, pick));
+    container.appendChild(box);
+  }
+}
 // Both, since the results are a sibling of the box rather than a child of it:
 // a click on a result row closes the popup through its own handler, but a click
 // that only scrolls or selects inside it must not.

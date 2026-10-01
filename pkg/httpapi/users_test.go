@@ -152,3 +152,45 @@ func TestHandleLabelsSkipsAliasesAndTombstones(t *testing.T) {
 		t.Errorf("g1c = %+v, want @live", labels["g1c"])
 	}
 }
+
+// The /search page asks for more rows than the popup, per kind, and the popup's
+// default is unchanged when no limit is sent.
+func TestSearchLimitIsPerKind(t *testing.T) {
+	api, db := newTestAPI(t)
+	for i := 0; i < 12; i++ {
+		path := "gno.land/r/moul/realm" + string(rune('a'+i))
+		if err := db.UpsertPackage("alpha", path, "realm", "g1moul", "TXR"+path, 100+i, "", true, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		path := "gno.land/p/moul/lib" + string(rune('a'+i))
+		if err := db.UpsertPackage("alpha", path, "lib", "g1moul", "TXP"+path, 10+i, "", false, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		query        string
+		realms, pkgs int
+	}{
+		{"", 10, 3},
+		{"&limit=5", 5, 3},
+		{"&limit=50", 12, 3},
+		{"&limit=-1", 10, 3},
+	}
+	for _, tc := range cases {
+		var rows []store.PackageInfo
+		getJSON(t, api.HandleSearch, "/api/search?q=moul&network=alpha"+tc.query, &rows)
+		realms, pkgs := 0, 0
+		for _, r := range rows {
+			if r.IsRealm {
+				realms++
+			} else {
+				pkgs++
+			}
+		}
+		if realms != tc.realms || pkgs != tc.pkgs {
+			t.Errorf("%q: got %d realms, %d packages; want %d, %d", tc.query, realms, pkgs, tc.realms, tc.pkgs)
+		}
+	}
+}

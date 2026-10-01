@@ -317,7 +317,7 @@ func (a *API) HandleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := a.db.Search(network, q)
+	results, err := a.db.SearchPerKind(network, q, clampParam(r, "limit", 0, store.SearchKindMax))
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return

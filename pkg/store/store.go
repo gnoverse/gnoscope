@@ -180,6 +180,11 @@ type FileInfo struct {
 // and the popup the same total size it was.
 const searchKindLimit = 10
 
+// SearchKindMax bounds SearchPerKind. The /search page asks for far more than
+// the popup does, and a bound keeps one request from ranking every package on
+// the chain twice over.
+const SearchKindMax = 100
+
 // searchRelevance orders one kind's search hits, best first. See Search for how
 // the three signals were chosen and measured.
 //
@@ -223,6 +228,16 @@ func searchRelevanceArgs(q string) []any {
 }
 
 func (d *DB) Search(network, q string) ([]PackageInfo, error) {
+	return d.SearchPerKind(network, q, searchKindLimit)
+}
+
+// SearchPerKind is Search with the per-kind cap chosen by the caller: the popup
+// keeps the default, the full results page asks for more. Out-of-range values
+// fall back to the default rather than erroring.
+func (d *DB) SearchPerKind(network, q string, perKind int) ([]PackageInfo, error) {
+	if perKind <= 0 || perKind > SearchKindMax {
+		perKind = searchKindLimit
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -312,7 +327,7 @@ func (d *DB) Search(network, q string) ([]PackageInfo, error) {
 		 WHERE rn <= ?
 		 ORDER BY is_realm DESC, ` + searchRelevance()
 	// Once more for the outer sort, in the same order, for the same reason.
-	args = append(args, searchKindLimit)
+	args = append(args, perKind)
 	args = append(args, searchRelevanceArgs(q)...)
 
 	rows, err := d.db.Query(qStr, args...)
