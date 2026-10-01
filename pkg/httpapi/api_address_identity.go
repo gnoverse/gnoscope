@@ -56,6 +56,11 @@ const (
 	// has never seen it sign. A realm this explorer has not indexed, a funded
 	// key nobody has used yet, or a typo somebody sent money to.
 	identityUnsigned = "unsigned"
+	// identityConsensusKey: a validator's signing key. It signs blocks, not
+	// transactions, so the chain usually holds no account for it, and without
+	// this verdict the page called a validator signing every block "no
+	// account" (onyx-1, 2026-10-01).
+	identityConsensusKey = "consensus_key"
 	// identityUnknown: the chain has no account at all. Either nothing was ever
 	// sent here, or the RPC could not be reached, and chain.exists says which.
 	identityUnknown = "unknown"
@@ -94,6 +99,11 @@ type addressIdentity struct {
 	// Self-declared, which is why it is not a label: anyone may claim any name.
 	Validator string `json:"validator,omitempty"`
 
+	// Valset is this address's place in the network's validator set, as
+	// either key of a validator: the one it signs blocks with, or the operator
+	// its profile is registered under. Live, so only with one network.
+	Valset *identityValset `json:"valset,omitempty"`
+
 	// Transactions is what storage has seen this address sign: distinct
 	// transactions, not messages, so it can be read against the chain's own
 	// sequence number. Deploys are not here on purpose: /api/address already
@@ -109,6 +119,44 @@ type addressIdentity struct {
 	Label     string `json:"label,omitempty"`
 	LabelKind string `json:"label_kind,omitempty"`
 	LabelWhy  string `json:"label_why,omitempty"`
+}
+
+// identityValset joins a validator's two keys and the proposals that seated it.
+type identityValset struct {
+	// Role is which key this address is: "signing" or "operator".
+	Role        string              `json:"role"`
+	Moniker     string              `json:"moniker,omitempty"`
+	Operator    string              `json:"operator,omitempty"`
+	Signing     string              `json:"signing"`
+	InSet       bool                `json:"in_set"`
+	VotingPower string              `json:"voting_power,omitempty"`
+	TotalPower  int64               `json:"total_power,omitempty"`
+	Proposals   []ValsetProposalRef `json:"proposals,omitempty"`
+}
+
+// valsetIdentity places addr in the set, or returns nil when it is neither key
+// of any validator or registered profile.
+func valsetIdentity(vs Valset, addr string) *identityValset {
+	prof, ok := vs.Valopers[addr]
+	role := "signing"
+	if !ok {
+		if prof, ok = vs.ByOperator(addr); ok {
+			role = "operator"
+		}
+	}
+	signing := addr
+	if ok {
+		signing = prof.Signing
+	}
+	m, inSet := vs.Member(signing)
+	if !ok && !inSet {
+		return nil
+	}
+	return &identityValset{
+		Role: role, Moniker: prof.Moniker, Operator: prof.Operator, Signing: signing,
+		InSet: inSet, VotingPower: m.VotingPower, TotalPower: vs.TotalPower,
+		Proposals: vs.ProposalsFor(signing, prof.Operator),
+	}
 }
 
 // identityChain is auth/accounts, flattened and with the one inference the
@@ -272,6 +320,13 @@ func (a *API) HandleAddressIdentity(w http.ResponseWriter, r *http.Request) {
 					out.Kind = identityUnsigned
 				}
 			}
+		}
+	}
+	if network != "" {
+		out.Valset = valsetIdentity(a.FetchValset(r.Context(), network), addr)
+		if out.Valset != nil && out.Valset.Role == "signing" && out.Package == nil &&
+			(out.Kind == identityUnknown || out.Kind == identityUnsigned) && out.Transactions == 0 {
+			out.Kind = identityConsensusKey
 		}
 	}
 	// Storage can prove a signer even when the RPC could not be reached: a row

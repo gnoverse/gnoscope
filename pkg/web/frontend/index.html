@@ -2034,26 +2034,14 @@ function addrInfo(addr) {
 }
 // proposerEl renders a block proposer.
 //
-// It used to look the address up in a moniker map built from /api/validators, so
-// blocks could show "BonyNode" instead of a raw g1…. That lookup never matched
-// once, on any network, since the day it was written — and it fired on every
-// blocks-view load.
-//
-// The reason is not a bug in the join. A valoper registration carries an ed25519
-// public key, and `sha256(key)[:20]` bech32-encoded reproduces the operator
-// address it registered with — verified against production, where it matches for
-// four of six registrations. But that is the *operator* key. Proposers are
-// identified by the chain's *consensus* key, which is a different key and is
-// never published to the valopers realm. The two address sets are disjoint by
-// construction, so no amount of derivation joins them.
-//
-// See #84 for the measurements — the analysis stands for anything this chain
-// records itself. gnockpit (github.com/gnoverse/gnockpit) is not that: it
-// builds its own moniker map from genesis data and live peer RPC queries, so
-// it is keyed by the consensus address to begin with, the same space as
-// proposer_address_raw. _proposerMonikers is that map, fetched once via
-// /api/validators/monikers (see gnockpit.go) — best-effort, so a miss here
-// just means gnockpit does not know this address either, not a bug.
+// Proposers are identified by the chain's *consensus* (signing) key, and
+// valoper profiles by an *operator* key. Until 2026-10-01 this comment said the
+// two could never be joined, which was true of the realm #84 measured and is
+// not of the one on mainnet and onyx-1 now: r/gnops/valopers stores each
+// profile's SigningAddress, and /api/validators/monikers reads the whole map in
+// one vm/qeval (see valset.go). gnockpit fills gaps on the one chain it
+// describes. _proposerMonikers is that map, fetched once; a miss means the
+// validator never registered a profile, not a bug.
 function proposerEl(addr) {
   const span = el('span');
   span.setAttribute('data-hl', addr);
@@ -8749,7 +8737,24 @@ async function loadHolders() {
 }
 
 let _valopersCache = null;
+// The network's set as /api/validators/live serves it, so the registrations
+// table can say which operators are seated without a second fetch.
+let _valsetCache = null;
 let _valopersShowFailed = false;
+
+// proposalRefEl links one GovDAO proposal that changed a validator's
+// membership: "#18 add (power 4)", with the title and status on hover. The
+// proposal is the only record of why a validator is in the set at all, since
+// gno has no staking: membership is a governance decision.
+function proposalRefEl(p) {
+  const what = p.op + (p.power ? ' (power ' + p.power + ')' : '');
+  const a = link('#' + p.id + ' ' + what, () => navigate('/govdao/' + p.id + netSuffix()));
+  a.title = p.title + (p.status ? ' \u00b7 ' + p.status.toLowerCase() : '');
+  if (p.status && p.status !== 'ACCEPTED') {
+    return el('span', {}, a, ' ', el('span', { style: { color: 'var(--fg2)', fontSize: '11px' } }, p.status.toLowerCase()));
+  }
+  return a;
+}
 
 let _validatorShareChart = [];
 // A donut of block-production share — the top N proposers by blocks
@@ -8833,14 +8838,10 @@ function livenessSpark(blocks, addr) {
 
 // --- One validator ----------------------------------------------------------
 //
-// /validators already renders the set, keyed on the proposer's consensus
-// address, with a liveness sparkline and gnockpit's power/missed/spof columns.
-// What it had no way to show was one validator over time, so this is the detail
-// page those rows now link to.
-//
-// ⚠️ Keyed on the **consensus** address. The operator address that registers in
-// r/gnops/valopers is a different key and nothing on chain maps the two, which
-// is why the registration table on /validators stays its own thing.
+// /validators renders the set; this is one validator over time. Reachable by
+// either key: the consensus (signing) address that proposes blocks, or the
+// operator address its r/gnops/valopers profile is registered under, which the
+// server resolves through the profile's SigningAddress.
 async function loadValidatorDetail(addr) {
   const container = clear('validator-detail-content');
   skeletonBlock(container);
@@ -8854,20 +8855,30 @@ async function loadValidatorDetail(addr) {
 function renderValidatorDetail(container, data, addr) {
   container.textContent = '';
   const v = data.validator || { address: addr };
+  // The URL may name the operator; everything keyed below is the signing key.
+  addr = v.address || addr;
 
   container.appendChild(el('div', { style: { marginBottom: '12px' } },
     link('\u2190 all validators', () => navigate('/validators' + netSuffix()))));
 
   const head = el('div', { className: 'section' });
-  head.appendChild(el('div', { className: 'section-title' }, v.name || truncAddr(addr)));
+  head.appendChild(el('div', { className: 'section-title' }, v.moniker || v.name || truncAddr(v.address || addr)));
   const sub = el('div', { className: 'section-sub' });
-  sub.append('consensus address ' + addr + '. ');
+  sub.append('signs as ');
+  sub.appendChild(addrLink(v.address || addr));
+  if (v.operator) {
+    sub.append(' \u00b7 operator ');
+    sub.appendChild(addrLink(v.operator));
+    sub.append(' \u00b7 the moniker is self-declared on r/gnops/valopers');
+  }
+  sub.append('. ');
   if (!data.in_set) {
-    // Proposed blocks in the past but is not in the current set: it left, and
-    // the page has to say which rather than showing a validator that looks
-    // active.
-    sub.appendChild(el('span', { style: { color: '#ffd43b' } },
-      'not in the current set: this address has proposed blocks but gnockpit does not list it now.'));
+    // Registered or proposed in the past, and not in the current set: it left,
+    // or it is waiting on its proposal, and the page has to say so rather than
+    // show a validator that looks active.
+    sub.appendChild(el('span', { style: { color: '#ffd43b' } }, v.blocks
+      ? 'not in the current set: this key has proposed blocks but the chain does not list it now.'
+      : 'not in the current set: registered as a validator, and no proposal has seated it yet.'));
   }
   head.appendChild(sub);
   container.appendChild(head);
@@ -8876,13 +8887,40 @@ function renderValidatorDetail(container, data, addr) {
   const stat = (label, value, color) => bar.appendChild(el('div', { className: 'stat' },
     el('span', { className: 'label' }, label),
     el('span', { className: 'value', style: color ? { color } : {} }, value)));
-  stat('voting power', v.voting_power ? fmtNum(v.voting_power) : '-');
+  stat('voting power', v.voting_power
+    ? fmtNum(v.voting_power) + (data.total_power ? ' of ' + fmtNum(data.total_power) : '')
+    : '-');
   stat('blocks proposed', fmtNum(v.blocks || 0));
   stat('share', ((v.share || 0) * 100).toFixed(1) + '%');
   stat('txs in them', fmtNum(v.txs || 0));
-  stat('missed 24h', fmtNum(v.missed_24h || 0), v.missed_24h > 0 ? '#ff6b6b' : undefined);
-  stat('avg block', v.avg_block_ms ? v.avg_block_ms + 'ms' : '-');
+  // gnockpit describes mainnet only, so these are absent elsewhere and must
+  // read as unknown, not as a perfect record.
+  if (v.missed_24h != null) stat('missed 24h', fmtNum(v.missed_24h), v.missed_24h > 0 ? '#ff6b6b' : undefined);
+  if (v.avg_block_ms) stat('avg block', v.avg_block_ms + 'ms');
   container.appendChild(bar);
+
+  // Membership is a governance decision on gno, so the proposals are the
+  // validator's record of why it is in the set at all.
+  const props = data.proposals || [];
+  const gov = el('div', { className: 'section' });
+  gov.appendChild(el('div', { className: 'section-title' }, 'governance'));
+  if (props.length) {
+    const tbody = el('tbody');
+    for (const p of props) {
+      tbody.appendChild(el('tr', {},
+        el('td', {}, proposalRefEl(p)),
+        el('td', {}, p.title),
+        el('td', {}, p.status ? p.status.toLowerCase() : '')));
+    }
+    gov.appendChild(el('table', {},
+      el('thead', {}, el('tr', {}, el('th', {}, 'proposal'), el('th', {}, 'title'), el('th', {}, 'status'))),
+      tbody));
+  } else {
+    gov.appendChild(el('div', { className: 'section-sub' }, data.in_set
+      ? 'no GovDAO proposal names this validator, so it was most likely in the genesis set.'
+      : 'no GovDAO proposal names this validator yet.'));
+  }
+  container.appendChild(gov);
 
   // The share series, which is the honest stand-in for a voting-power
   // timeline: no historical valset is stored anywhere, and gnockpit reports
@@ -8940,70 +8978,91 @@ async function loadValidators() {
     await apiSWR(['blocks?limit=100', 'validators', 'validators/live'], ([blocks, valopers, liveSet], swrMeta) => {
       const liveByAddr = new Map((liveSet || []).map(v => [v.address, v]));
       _valopersCache = valopers;
+      _valsetCache = liveSet;
       _valopersShowFailed = false;
       container.textContent = '';
 
-      // Stats
+      // The set is the network's own (/api/validators/live reads its RPC, see
+      // valset.go). It used to be "whoever proposed in the last 100 blocks",
+      // which drops a validator at power 4 of 215 from the "active set" about
+      // one load in six while it signs every block, and the power columns came
+      // from gnockpit's mainnet set on every network.
       const proposerCounts = {};
       for (const b of (blocks || [])) {
         proposerCounts[b.proposer_address_raw] = (proposerCounts[b.proposer_address_raw] || 0) + 1;
       }
       const sorted = Object.entries(proposerCounts).sort((a, b) => b[1] - a[1]);
+      const members = (liveSet || []).slice();
+      // Without a set (RPC unreachable) the proposers are the best stand-in,
+      // and the page says that is what they are.
+      const fromProposers = !members.length;
+      if (fromProposers) for (const [addr] of sorted) members.push({ address: addr });
+      const totalPower = members.reduce((s, m) => s + Number(m.voting_power || 0), 0);
+      members.sort((a, b) => Number(b.voting_power || 0) - Number(a.voting_power || 0)
+        || (proposerCounts[b.address] || 0) - (proposerCounts[a.address] || 0));
       const okRegs = (valopers || []).filter(t => t.success).length;
       const failRegs = (valopers || []).length - okRegs;
       const statsBar = el('div', { className: 'stats-bar' });
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'active validators'), el('span', { className: 'value' }, String(sorted.length))));
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'registrations'), el('span', { className: 'value' }, fmtNum(okRegs))));
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'failed'), el('span', { className: 'value' }, fmtNum(failRegs))));
+      const stat = (label, value) => statsBar.appendChild(el('div', { className: 'stat' },
+        el('span', { className: 'label' }, label), el('span', { className: 'value' }, value)));
+      stat(fromProposers ? 'recent proposers' : 'validators', String(members.length));
+      if (totalPower) stat('total power', fmtNum(totalPower));
+      stat('registrations', fmtNum(okRegs));
+      stat('failed', fmtNum(failRegs));
       container.appendChild(statsBar);
 
-      // Active validator set
       container.appendChild(el('div', { className: 'section-title' }, 'active validator set'));
+      if (fromProposers) {
+        container.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px' } },
+          'the chain\u2019s validator set could not be read, so this lists who proposed the last ' + (blocks || []).length + ' blocks instead. a validator with little power can be in the set and missing here.'));
+      }
       const shareDiv = el('div', { style: { marginBottom: '16px' } });
       container.appendChild(shareDiv);
       const total = (blocks || []).length;
       renderValidatorShareChart(shareDiv, sorted, total);
-      const vsTbl = el('table');
-      const vpTh = el('th', {}, 'voting power'); vpTh.title = 'stake weight in the validator set, from gnockpit.gno.land';
-      const missedTh = el('th', {}, 'missed (100)'); missedTh.title = 'blocks missed in the last 100 this validator was in the set for';
-      const missed24Th = el('th', {}, 'missed (24h)'); missed24Th.title = 'blocks missed in the last 24h';
-      const speedTh = el('th', {}, 'avg block'); speedTh.title = 'average block time when this validator proposes, over its last 100 blocks';
-      const spofTh = el('th', {}, 'spof'); spofTh.title = 'losing this validator alone would drop the network below BFT quorum (2/3+1 of voting power)';
-      vsTbl.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'proposer'), el('th', {}, 'blocks'),
-        el('th', {}, 'share'), el('th', {}, 'last ' + SPARK_BLOCKS + ' blocks'), vpTh, missedTh, missed24Th, speedTh, spofTh)));
+
+      // gnockpit's liveness columns exist for the chain it describes only, so
+      // they are drawn only when some member carries them.
+      const hasLiveness = members.some(m => m.missed_100 != null);
+      const th = (label, title) => { const t = el('th', {}, label); if (title) t.title = title; return t; };
+      const heads = [th('validator'), th('voting power', 'from this network\u2019s own validator set'),
+        th('blocks', 'proposed in the last ' + total + ' blocks'), th('last ' + SPARK_BLOCKS + ' blocks'),
+        th('seated by', 'the GovDAO proposal that last changed this validator\u2019s membership')];
+      if (hasLiveness) heads.push(th('missed (100)', 'blocks missed in the last 100, from gnockpit'),
+        th('missed (24h)', 'blocks missed in the last 24h, from gnockpit'),
+        th('avg block', 'average block time when this validator proposes, from gnockpit'));
+      heads.push(th('spof', 'losing this validator alone would drop the network below BFT quorum (more than 2/3 of voting power)'));
+      const vsTbl = el('table', { id: 'valset' });
+      vsTbl.appendChild(el('thead', {}, el('tr', {}, ...heads)));
       const vsBody = el('tbody');
-      // The share column answers "whose blocks are these historically". It cannot
-      // answer "is this validator up": one that stopped proposing an hour ago
-      // still carries the same share it always did. The sparkline is the other
-      // question — recent blocks, marked where this validator proposed. Voting
-      // power / missed / spof come from gnockpit's live consensus view (see
-      // gnockpit.go) and answer a third question this chain's own data cannot:
-      // whether the validator set can currently tolerate losing this one.
       const recent = (blocks || []).slice(0, SPARK_BLOCKS);
-      for (const [addr, count] of sorted) {
-        const live = liveByAddr.get(addr);
+      for (const m of members) {
+        const addr = m.address;
+        const count = proposerCounts[addr] || 0;
         const nameCell = el('td', {}, proposerEl(addr));
         // Through to the per-validator page, which is the one view this table
         // cannot be: it is a snapshot, and a validator's story is over time.
         nameCell.appendChild(el('div', { style: { fontSize: '11px' } },
           link('history', () => navigate('/validator/' + addr + netSuffix()))));
-        vsBody.appendChild(el('tr', {},
+        const vp = Number(m.voting_power || 0);
+        const prop = (m.proposals || [])[0];
+        const cells = [
           nameCell,
+          el('td', {}, m.voting_power != null
+            ? fmtNum(vp) + (totalPower ? ' (' + (vp / totalPower * 100).toFixed(1) + '%)' : '')
+            : '\u2013'),
           el('td', {}, fmtNum(count)),
-          el('td', {}, (count / total * 100).toFixed(1) + '%'),
           el('td', {}, livenessSpark(recent, addr)),
-          el('td', {}, live ? fmtNum(Number(live.voting_power)) : '–'),
-          el('td', {}, live ? String(live.missed_100) : '–'),
-          el('td', {}, live ? String(live.missed_24h) : '–'),
-          el('td', {}, live && live.avg_block_ms ? (live.avg_block_ms / 1000).toFixed(1) + 's' : '–'),
-          el('td', {}, live ? (live.spof ? badge('fail', 'single point of failure') : statusBadge(true)) : '–')
-        ));
+          el('td', {}, prop ? proposalRefEl(prop) : el('span', { style: { color: 'var(--fg2)' } }, '\u2013')),
+        ];
+        if (hasLiveness) cells.push(
+          el('td', {}, m.missed_100 != null ? String(m.missed_100) : '\u2013'),
+          el('td', {}, m.missed_24h != null ? String(m.missed_24h) : '\u2013'),
+          el('td', {}, m.avg_block_ms ? (m.avg_block_ms / 1000).toFixed(1) + 's' : '\u2013'));
+        cells.push(el('td', {}, fromProposers ? '\u2013' : (m.spof ? badge('fail', 'single point of failure') : statusBadge(true))));
+        vsBody.appendChild(el('tr', {}, ...cells));
       }
       vsTbl.appendChild(vsBody); container.appendChild(vsTbl);
-      if (!liveSet || !liveSet.length) {
-        container.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px', marginTop: '4px' } },
-          'live voting power / uptime data from gnockpit.gno.land is unavailable right now.'));
-      }
 
       // Valoper registrations with filter
       if ((valopers || []).length) {
@@ -9052,10 +9111,13 @@ function renderValoperRows(container) {
     byValidator.get(key).push(reg);
   }
 
-  const tbl = el('table');
+  // A fixed id, so the filter's URL key is short and survives the header
+  // changing (see tableKey).
+  const tbl = el('table', { id: 'valopers' });
   tbl.appendChild(el('thead', {}, el('tr', {},
-    el('th', {}, 'moniker'), el('th', {}, 'validator'), el('th', {}, 'created at'),
+    el('th', {}, 'moniker'), el('th', {}, 'operator'), el('th', {}, 'in set'), el('th', {}, 'created at'),
     el('th', {}, 'last action'), el('th', {}, 'registrations'), el('th', {}, 'status'))));
+  const seated = new Map((_valsetCache || []).filter(m => m.operator).map(m => [m.operator, m]));
   const tbody = el('tbody');
   for (const [addr, regs] of byValidator) {
     const sorted = regs.slice().sort((a, b) => a.block_height - b.block_height);
@@ -9077,6 +9139,13 @@ function renderValoperRows(container) {
     } });
     toggleRow.appendChild(el('td', {}, moniker));
     toggleRow.appendChild(el('td', {}, addrLink(addr)));
+    // The signing address is in the cell's text too, so the filter finds a
+    // validator by the key the chain and every alert name it by.
+    const seat = seated.get(addr);
+    toggleRow.appendChild(el('td', {}, seat
+      ? el('span', {}, link('power ' + fmtNum(Number(seat.voting_power)), () => navigate('/validator/' + seat.address + netSuffix())),
+        el('div', { style: { fontSize: '11px', color: 'var(--fg2)' } }, seat.address))
+      : el('span', { style: { color: 'var(--fg2)' } }, 'no')));
     toggleRow.appendChild(el('td', {}, blockWithAge(created.block_height, created.block_time)));
     toggleRow.appendChild(el('td', {}, blockWithAge(last.block_height, last.block_time)));
     toggleRow.appendChild(el('td', {}, fmtNum(sorted.length)));
@@ -9084,7 +9153,7 @@ function renderValoperRows(container) {
     tbody.appendChild(toggleRow);
 
     const detailRow = el('tr', { id: detailId, hidden: true });
-    const detailTd = el('td', { colspan: '6', style: { padding: '0 0 12px' } });
+    const detailTd = el('td', { colspan: '7', style: { padding: '0 0 12px' } });
     const dTbl = el('table', { style: { margin: '4px 0 0' } });
     dTbl.appendChild(el('thead', {}, el('tr', {},
       el('th', {}, 'tx'), el('th', {}, 'function'), el('th', {}, 'moniker'), el('th', {}, 'status'), el('th', {}, 'block'))));
@@ -17307,6 +17376,10 @@ const IDENTITY_KINDS = {
     badge: 'send', text: 'never signed',
     line: 'the chain knows this account and has never seen it sign anything. it is a realm this explorer has not indexed, a key nobody has used yet, or somewhere money was sent by mistake.',
   },
+  consensus_key: {
+    badge: 'ok', text: 'validator key',
+    line: 'this is the key a validator signs blocks with. it signs consensus votes, not transactions, so the chain usually keeps no account for it and its transaction history is empty by design.',
+  },
   unknown: {
     badge: 'session', text: 'no account',
     line: 'the chain has no account here at all: nothing has ever been sent to this address, so it exists only as a string somebody wrote down.',
@@ -17461,7 +17534,24 @@ function renderAddressIdentity(container, ident, addr, network, deploys) {
     if (ident.label_kind) r.append(' (' + ident.label_kind + ')');
     if (ident.label_why) r.title = ident.label_why;
   }
-  if (ident.validator) {
+  const vs = ident.valset;
+  if (vs) {
+    const name = vs.moniker ? el('span', { style: { color: 'var(--accent)' } }, vs.moniker) : el('span', {}, 'unnamed');
+    const r = row('validator', name, ' · ');
+    r.appendChild(link('its validator page →', () => navigate('/validator/' + vs.signing + netSuffix(network))));
+    if (vs.moniker) r.append(' · self-declared on r/gnops/valopers, so anyone may claim any name');
+    if (vs.role === 'operator') {
+      const k = row('signs as', addrLink(vs.signing));
+      k.append(' · this address is the operator, the key its profile is registered under');
+    } else if (vs.operator) {
+      const k = row('operator', addrLink(vs.operator));
+      k.append(' · the key that registered this validator\u2019s profile and can rotate this one');
+    }
+    row('in the set', vs.in_set
+      ? 'yes, voting power ' + fmtNum(Number(vs.voting_power)) + (vs.total_power ? ' of ' + fmtNum(vs.total_power) : '')
+      : 'no: registered, and not in the current set');
+    for (const p of (vs.proposals || [])) row('proposal', proposalRefEl(p), ' · ' + p.title);
+  } else if (ident.validator) {
     const r = row('validator', ident.validator + ' ');
     r.appendChild(link('the validator set →', () => navigate('/validators' + netSuffix(network))));
     r.append(' · self-declared on r/gnops/valopers, so anyone may claim any name');
@@ -18272,7 +18362,11 @@ function processClampQueue() {
 // rather than a wrong one, and it is cheap next to the alternative.
 function tableKey(table) {
   if (table.id) return table.id;
-  const heads = [...table.querySelectorAll('thead th')].map(th => slugify(th.textContent)).filter(Boolean);
+  // `:scope >` keeps this to the table's own header. A bare 'thead th' also
+  // matched every nested table's, and the valoper table nests a history table
+  // per validator, so its key was ~2 KB and grew with each registration,
+  // breaking every saved link (onyx-1, 2026-10-01).
+  const heads = [...table.querySelectorAll(':scope > thead th')].map(th => slugify(th.textContent)).filter(Boolean);
   return heads.join('-');
 }
 

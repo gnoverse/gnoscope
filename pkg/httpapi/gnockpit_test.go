@@ -14,6 +14,7 @@ func resetGnockpitCache(t *testing.T) {
 	t.Helper()
 	gnockpitCache.mu.Lock()
 	gnockpitCache.validators = nil
+	gnockpitCache.chain = ""
 	gnockpitCache.fetched = time.Time{}
 	gnockpitCache.mu.Unlock()
 }

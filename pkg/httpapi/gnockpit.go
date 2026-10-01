@@ -38,17 +38,22 @@ type GnockpitValidator struct {
 }
 
 type gnockpitStatus struct {
+	// Chain is the chain ID gnockpit describes ("gnoland-1"). It is the only
+	// thing that says whose validators these are, so a caller joining them
+	// onto a network's set must compare it first (see valset.go).
+	Chain      string              `json:"chain"`
 	Validators []GnockpitValidator `json:"validators"`
 }
 
 // gnockpitCache holds the last successful fetch. gnockpit describes one
 // chain (mainnet) regardless of which network gnoscope is currently
-// showing; an address from any other chain simply will not appear in it,
-// which is a harmless miss rather than a wrong label, so the cache is not
-// scoped per network.
+// showing, so the cache is not scoped per network. It is NOT safe to serve
+// as a network's set: /validators did exactly that until 2026-10-01 and
+// showed mainnet's validators on onyx. valset.go gates the join on `chain`.
 var gnockpitCache = struct {
 	mu         sync.Mutex
 	validators []GnockpitValidator
+	chain      string
 	fetched    time.Time
 }{}
 
@@ -70,12 +75,13 @@ func fetchGnockpitStatus(ctx context.Context) []GnockpitValidator {
 	}
 	gnockpitCache.mu.Unlock()
 
-	validators := fetchGnockpitValidators(ctx)
+	validators, chain := fetchGnockpitValidators(ctx)
 
 	gnockpitCache.mu.Lock()
 	defer gnockpitCache.mu.Unlock()
 	if validators != nil {
 		gnockpitCache.validators = validators
+		gnockpitCache.chain = chain
 		gnockpitCache.fetched = time.Now()
 		return validators
 	}
@@ -107,29 +113,38 @@ func FetchGnockpitValidators(ctx context.Context) []GnockpitValidator {
 	return fetchGnockpitStatus(ctx)
 }
 
+// fetchGnockpitChain returns the chain ID gnockpit's set belongs to, or "" when
+// gnockpit has not answered yet.
+func fetchGnockpitChain(ctx context.Context) string {
+	fetchGnockpitStatus(ctx)
+	gnockpitCache.mu.Lock()
+	defer gnockpitCache.mu.Unlock()
+	return gnockpitCache.chain
+}
+
 // gnockpitClient talks to one external dashboard, over the shared pool.
 var gnockpitClient = sharedClient(5 * time.Second)
 
-func fetchGnockpitValidators(ctx context.Context) []GnockpitValidator {
+func fetchGnockpitValidators(ctx context.Context) ([]GnockpitValidator, string) {
 	req, err := http.NewRequestWithContext(ctx, "GET", gnockpitURL, nil)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	resp, err := gnockpitClient.Do(req)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return nil, ""
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	var status gnockpitStatus
 	if err := json.Unmarshal(body, &status); err != nil {
-		return nil
+		return nil, ""
 	}
-	return status.Validators
+	return status.Validators, status.Chain
 }
