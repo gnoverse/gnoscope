@@ -21964,14 +21964,51 @@ document.getElementById('search-input').addEventListener('input', function() {
       // row, which is the confusion the per-asset page exists to undo. Each of
       // the three extras is optional, so an older backend that has none of
       // those routes still answers with packages.
-      const [data, users, assets, symbols] = await Promise.all([
+      //
+      // A fifth, address autocomplete, is asked only when the query is shaped
+      // like the start of one: a partial g1… matched none of the four, and
+      // answered "no results" for an account with 774 transactions.
+      const typed = q.trim().toLowerCase();
+      const [data, users, assets, symbols, addrs] = await Promise.all([
         api('search?q=' + encodeURIComponent(q)),
         api('users/search?q=' + encodeURIComponent(q)).catch(() => null),
         api('assets/search?q=' + encodeURIComponent(q)).catch(() => null),
         api('symbols/search?q=' + encodeURIComponent(q) + '&limit=8').catch(() => null),
+        /^g1[0-9a-z]{2,}$/.test(typed)
+          ? api('addresses/search?q=' + encodeURIComponent(typed)).catch(() => null)
+          : null,
       ]);
       if (gen !== _searchGen) return;
       loading.remove();
+
+      // Addresses before everything else, because a query that reaches this
+      // group is already an address: nothing else here starts with g1 and a
+      // number. The one the "go to" row already offers is left out, since a
+      // complete address matching itself says nothing new.
+      const accounts = ((addrs && addrs.addresses) || [])
+        .filter(m => !direct.some(d => d.kind === 'address' && d.label === m.address));
+      if (accounts.length) {
+        results.appendChild(el('div', { className: 'search-section-label' }, 'addresses'));
+        for (const m of accounts) {
+          const bits = [];
+          if (m.name) bits.push('@' + m.name);
+          if (m.label && m.label.replace(/^@/, '') !== m.name) bits.push(m.label);
+          bits.push(fmtGnotAmount(m.ugnot || 0));
+          // Without a network picked, one address can match once per chain,
+          // and the two rows are otherwise identical.
+          if (getNetwork() === 'all' && m.network) bits.push(m.network);
+          // The typed part dims and gives way first, so the characters the
+          // reader has not typed yet are the ones that stay on screen.
+          const title = m.address.startsWith(typed) && m.address.length > typed.length
+            ? { prefix: typed, name: m.address.slice(typed.length) }
+            : m.address;
+          results.appendChild(searchResultRow('', 'address', title, bits.join(' \u00b7 '),
+            () => {
+              results.classList.remove('open');
+              navigate('/address/' + m.address + netSuffix(m.network || getNetwork()));
+            }));
+        }
+      }
 
       // The order of the groups below is deliberate, and is the answer to a
       // real complaint: typing "moul" used to lead with the MOULTEST token.
@@ -22065,7 +22102,7 @@ document.getElementById('search-input').addEventListener('input', function() {
         for (const r of pkgs) results.appendChild(pkgRow(r));
       }
 
-      if (!direct.length && !people.length && !tokens.length && !syms.length && !rows.length) {
+      if (!direct.length && !accounts.length && !people.length && !tokens.length && !syms.length && !rows.length) {
         results.appendChild(el('div', { style: { padding: '10px 12px' } }, 'no results'));
       }
     } catch (err) {

@@ -400,6 +400,7 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/packages/facets` | counts per kind and per namespace, for the current filter |
 | `GET /api/symbols/search` | find a declaration by name. `q`, `network`, `limit` |
 | `GET /api/users/search` | find a registered user by name or address prefix. `q`, `network`, `limit`. See Search below |
+| `GET /api/addresses/search` | address autocomplete: every known address starting with `q` (a `g1` prefix), richest first. `q`, `network`, `limit`. See Search below |
 | `GET /api/symbols/status` | what the symbol index covers |
 | `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset` |
 | `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
@@ -1345,6 +1346,48 @@ guess for the same address. Both are `derived` so precedence cannot settle it,
 and it is not a tie: one is what the chain records, the other is this repo
 noticing that an address deployed most of one namespace. Four of twelve mainnet
 namespaces resolve to a different account than their deploys suggest.
+
+### Address search
+
+```
+GET /api/addresses/search?q=<g1 prefix>&network=<id>&limit=<n>
+```
+
+Autocomplete for the search box. Before it, typing part of an address answered
+nothing: the UI offers a destination only for a complete 40-character address,
+and none of the other search endpoints matches an account that never deployed.
+Measured 2026-10-01, `g1qyfled5ulf6wmu` (an account with 774 mainnet
+transactions) returned an empty array.
+
+`q` has to look like the start of an address: `g1` and at least two more
+characters, case-insensitive. Anything else answers an empty `addresses` array
+rather than an error, because the box asks on every keystroke and most queries
+are names. Matches are ranked by cached balance, then address, and `limit`
+defaults to 6 (at most 50). Without `network`, one address can match once per
+configured chain.
+
+Read from `balances`, keyed `(network, address)`, so a prefix is one index range
+scan. Not from the "addresses seen on chain" union `/api/accounts/rich` counts:
+that is thirteen table scans and this runs per keystroke. The sweep keeps the
+two within a couple of rows (4,859 of 4,861 on mainnet the same day), so an
+address seen but not yet swept is missing until the next sweep.
+
+```json
+{
+  "network": "gnoland1",
+  "addresses": [
+    {
+      "network": "gnoland1",
+      "address": "g1manfred47kzduec920z88wfr64ylksmdcedlf5",
+      "ugnot": 1234567, "name": "moul", "label": "@moul"
+    }
+  ]
+}
+```
+
+`name` is the address's current `r/sys/users` registration (never a previous
+name or a tombstone), `label` the curated gloss from
+`pkg/registry/data/addresses.json`. Both are omitted when absent.
 
 ### Faceting the directory
 
