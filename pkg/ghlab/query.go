@@ -61,10 +61,11 @@ func (s *Store) Overview(days int) (Overview, error) {
 		return o, err
 	}
 	o.Tracked, o.Discovered = int(tracked.Int64), int(disc.Int64)
-	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT login) FROM gh_contributors`).Scan(&o.Contributors); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT c.login) FROM gh_contributors c
+		JOIN gh_repos r ON r.full_name = c.full_name WHERE r.tracked = 1`).Scan(&o.Contributors); err != nil {
 		return o, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_prs`).Scan(&o.PRs); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_tracked_prs`).Scan(&o.PRs); err != nil {
 		return o, err
 	}
 	kinds, err := s.db.Query(`SELECT CASE WHEN kind='' THEN '(unclassified)' ELSE kind END AS k,
@@ -111,7 +112,7 @@ func (s *Store) Overview(days int) (Overview, error) {
 const notBot = `author NOT LIKE '%[bot]' AND author NOT LIKE '%-bot' AND
 	LOWER(author) NOT IN ('dependabot','github-actions','renovate','codecov','coderabbitai',
 	                      'gnolang-bot','mergify','allcontributors','semantic-release',
-	                      'web-flow','copilot-swe-agent')`
+	                      'web-flow','copilot-swe-agent','gno2d2')`
 
 func cutoff(days int) string {
 	if days <= 0 {
@@ -126,13 +127,13 @@ func (s *Store) windowStats(days int) (WindowStats, error) {
 	}
 	w := WindowStats{Days: days}
 	since := cutoff(days)
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_prs WHERE created_at >= ?`, since).Scan(&w.PRsOpened); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_tracked_prs WHERE created_at >= ?`, since).Scan(&w.PRsOpened); err != nil {
 		return w, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_prs WHERE merged_at <> '' AND merged_at >= ?`, since).Scan(&w.PRsMerged); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_tracked_prs WHERE merged_at <> '' AND merged_at >= ?`, since).Scan(&w.PRsMerged); err != nil {
 		return w, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT author) FROM gh_prs
+	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT author) FROM gh_tracked_prs
 		WHERE author <> '' AND `+notBot+` AND created_at >= ?`, since).Scan(&w.Authors); err != nil {
 		return w, err
 	}
@@ -155,7 +156,7 @@ func (s *Store) windowStats(days int) (WindowStats, error) {
 // for two years and merged last Tuesday moves a mean over a hundred PRs by
 // several days, and that shape is normal on gnolang/gno rather than rare.
 func (s *Store) medianMergeHours(days int) (float64, error) {
-	rows, err := s.db.Query(`SELECT created_at, merged_at FROM gh_prs
+	rows, err := s.db.Query(`SELECT created_at, merged_at FROM gh_tracked_prs
 		WHERE merged_at <> '' AND merged_at >= ?`, cutoff(days))
 	if err != nil {
 		return 0, err
@@ -222,16 +223,16 @@ func (s *Store) NewContributors(days, limit int) ([]NewContributor, error) {
 	q := `
 WITH firsts AS (
   SELECT author, MIN(merged_at) AS first_merge
-  FROM gh_prs
+  FROM gh_tracked_prs
   WHERE merged_at <> '' AND author <> ''
   GROUP BY author
 ),
 totals AS (
-  SELECT author, COUNT(*) AS n FROM gh_prs WHERE merged_at <> '' GROUP BY author
+  SELECT author, COUNT(*) AS n FROM gh_tracked_prs WHERE merged_at <> '' GROUP BY author
 )
 SELECT f.author, p.full_name, p.number, p.title, f.first_merge, totals.n
 FROM firsts f
-JOIN gh_prs p ON p.author = f.author AND p.merged_at = f.first_merge
+JOIN gh_tracked_prs p ON p.author = f.author AND p.merged_at = f.first_merge
 JOIN totals ON totals.author = f.author
 WHERE f.first_merge >= ?
 ORDER BY f.first_merge DESC`
@@ -257,55 +258,6 @@ ORDER BY f.first_merge DESC`
 		}
 		seen[n.Login] = true
 		out = append(out, n)
-	}
-	return out, rows.Err()
-}
-
-// TopContributor is an all-time commit count summed across tracked repos.
-type TopContributor struct {
-	Login     string   `json:"login"`
-	Commits   int      `json:"commits"`
-	Repos     []string `json:"repos"`
-	AvatarURL string   `json:"avatar,omitempty"`
-	// RecentMerged is how many of their pull requests merged in the window,
-	// which is what separates "built this in 2022" from "is here now".
-	RecentMerged int `json:"recent_merged"`
-}
-
-func (s *Store) TopContributors(days, limit int) ([]TopContributor, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	rows, err := s.db.Query(`
-SELECT c.login, SUM(c.commits) AS total,
-       GROUP_CONCAT(c.full_name, '|'),
-       MAX(c.avatar),
-       (SELECT COUNT(*) FROM gh_prs p WHERE p.author = c.login AND p.merged_at <> '' AND p.merged_at >= ?)
-FROM gh_contributors c
-GROUP BY c.login
-ORDER BY total DESC
-LIMIT ?`, cutoff(days), limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []TopContributor{}
-	for rows.Next() {
-		var t TopContributor
-		var repos sql.NullString
-		var avatar sql.NullString
-		if err := rows.Scan(&t.Login, &t.Commits, &repos, &avatar, &t.RecentMerged); err != nil {
-			return nil, err
-		}
-		if IsBot(t.Login) {
-			continue
-		}
-		t.AvatarURL = avatar.String
-		if repos.Valid && repos.String != "" {
-			t.Repos = strings.Split(repos.String, "|")
-			sort.Strings(t.Repos)
-		}
-		out = append(out, t)
 	}
 	return out, rows.Err()
 }
@@ -359,7 +311,7 @@ ORDER BY 4 DESC, r.stars DESC`, since, since, since)
 }
 
 func (s *Store) repoMedianMergeHours(fullName string, days int) (float64, error) {
-	rows, err := s.db.Query(`SELECT created_at, merged_at FROM gh_prs
+	rows, err := s.db.Query(`SELECT created_at, merged_at FROM gh_tracked_prs
 		WHERE full_name=? AND merged_at <> '' AND merged_at >= ?`, fullName, cutoff(days))
 	if err != nil {
 		return 0, err
@@ -412,7 +364,7 @@ func (s *Store) RecentPRs(days, limit int, state string) ([]PR, error) {
 		where, args = `(created_at >= ? OR (merged_at <> '' AND merged_at >= ?))`, []any{since, since}
 	}
 	q := `SELECT full_name,number,title,author,state,draft,created_at,updated_at,merged_at,closed_at
-		FROM gh_prs WHERE ` + where + ` ORDER BY COALESCE(NULLIF(merged_at,''), updated_at) DESC LIMIT ?`
+		FROM gh_tracked_prs WHERE ` + where + ` ORDER BY COALESCE(NULLIF(merged_at,''), updated_at) DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {

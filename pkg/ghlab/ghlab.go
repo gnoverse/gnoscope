@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS gh_repos (
 	name         TEXT NOT NULL DEFAULT '',
 	source       TEXT NOT NULL DEFAULT 'seed',   -- seed | discovered
 	kind         TEXT NOT NULL DEFAULT '',       -- core | go-import | js-import | realm | topic
-	tracked      INTEGER NOT NULL DEFAULT 0,     -- 1 = we pull its PRs and contributors
+	tracked      INTEGER NOT NULL DEFAULT 0,     -- 1 = shown in the activity tables; every seed and discovered repo is walked for the score
 	description  TEXT NOT NULL DEFAULT '',
 	homepage     TEXT NOT NULL DEFAULT '',
 	language     TEXT NOT NULL DEFAULT '',
@@ -123,6 +123,47 @@ CREATE TABLE IF NOT EXISTS gh_contributors (
 	PRIMARY KEY (full_name, login)
 );
 CREATE INDEX IF NOT EXISTS idx_gh_contrib_login ON gh_contributors(login);
+
+-- Who reviewed and who commented on each pull request, one row per review
+-- submitted or comment posted, dated so a window can be scored as well as
+-- all time. Rewritten whole each time a pull request is re-read, which is
+-- what keeps an edited or deleted comment from being counted forever.
+--
+-- The author's own reviews and comments on their own pull request are never
+-- written: replying to a reviewer is part of the pull request, already
+-- counted once as the merge, and counting it again would pay people for long
+-- threads on their own work.
+CREATE TABLE IF NOT EXISTS gh_pr_events (
+	full_name TEXT    NOT NULL,
+	number    INTEGER NOT NULL,
+	login     TEXT    NOT NULL,
+	kind      TEXT    NOT NULL,   -- review | comment
+	at        TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_gh_pr_events_pr    ON gh_pr_events(full_name, number);
+CREATE INDEX IF NOT EXISTS idx_gh_pr_events_login ON gh_pr_events(login);
+
+-- Where each repository's pull-request walk stands. A first walk reads every
+-- pull request a repository ever had, which for gnolang/gno is ~90 GraphQL
+-- pages, and a pass that stops halfway (rate limit, restart) resumes from
+-- cursor instead of starting over. watermark is when the last complete walk
+-- started: the next one stops once it reaches pull requests not updated
+-- since, so a steady-state pass costs a page per repository.
+CREATE TABLE IF NOT EXISTS gh_walks (
+	full_name   TEXT PRIMARY KEY,
+	started     TEXT NOT NULL DEFAULT '',
+	cursor      TEXT NOT NULL DEFAULT '',
+	watermark   TEXT NOT NULL DEFAULT '',
+	last_walked TEXT NOT NULL DEFAULT ''
+);
+
+-- gh_prs holds every walked repository, discovered ones included, because
+-- the contributor score reads all of them. Every window figure on the page
+-- (opened, merged, median, new contributors, recent) is about the curated
+-- set, and reads it through this view so that adding a repository to the
+-- score never quietly changes what "merged this month" means.
+CREATE VIEW IF NOT EXISTS gh_tracked_prs AS
+	SELECT p.* FROM gh_prs p JOIN gh_repos r ON r.full_name = p.full_name WHERE r.tracked = 1;
 
 -- Free-form sync bookkeeping: last run, per-stage timings, rate-limit state
 -- and the last error, so the page can say why it is showing stale numbers
@@ -316,6 +357,97 @@ func (s *Store) ReplaceContributors(fullName string, cs []Contributor) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// PREvent is one review or comment on a pull request, by somebody other than
+// its author.
+type PREvent struct {
+	FullName string
+	Number   int
+	Login    string
+	Kind     string // review | comment
+	At       string
+}
+
+// StorePage writes one page of a pull-request walk: the pull requests, and
+// for each of them its full set of reviews and comments, replacing what was
+// there. One transaction, so a pull request is never stored without its
+// events or with half of them.
+func (s *Store) StorePage(prs []PR, evs []PREvent) error {
+	if err := s.UpsertPRs(prs); err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, p := range prs {
+		if _, err := tx.Exec(`DELETE FROM gh_pr_events WHERE full_name=? AND number=?`, p.FullName, p.Number); err != nil {
+			return err
+		}
+	}
+	stmt, err := tx.Prepare(`INSERT INTO gh_pr_events(full_name,number,login,kind,at) VALUES(?,?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, e := range evs {
+		if _, err := stmt.Exec(e.FullName, e.Number, e.Login, e.Kind, e.At); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Walk is where one repository's pull-request walk stands. See gh_walks.
+type Walk struct {
+	Started    string
+	Cursor     string
+	Watermark  string
+	LastWalked string
+}
+
+func (s *Store) Walk(fullName string) (Walk, error) {
+	var w Walk
+	err := s.db.QueryRow(`SELECT started,cursor,watermark,last_walked FROM gh_walks WHERE full_name=?`, fullName).
+		Scan(&w.Started, &w.Cursor, &w.Watermark, &w.LastWalked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Walk{}, nil
+	}
+	return w, err
+}
+
+func (s *Store) SetWalk(fullName string, w Walk) error {
+	_, err := s.db.Exec(`INSERT INTO gh_walks(full_name,started,cursor,watermark,last_walked) VALUES(?,?,?,?,?)
+		ON CONFLICT(full_name) DO UPDATE SET started=excluded.started, cursor=excluded.cursor,
+		  watermark=excluded.watermark, last_walked=excluded.last_walked`,
+		fullName, w.Started, w.Cursor, w.Watermark, w.LastWalked)
+	return err
+}
+
+// ScoreQueue lists the discovered non-fork repositories, least recently
+// walked first, so a budget that cannot reach all of them in one pass reaches
+// the rest in the next. Seeds are not here: the curated pass walks every one
+// of them, tracked or not, because it already holds their metadata.
+func (s *Store) ScoreQueue() ([]string, error) {
+	rows, err := s.db.Query(`SELECT r.full_name FROM gh_repos r
+		LEFT JOIN gh_walks w ON w.full_name = r.full_name
+		WHERE r.source = 'discovered' AND r.is_fork = 0
+		ORDER BY COALESCE(w.last_walked, ''), r.full_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 func b2i(b bool) int {
