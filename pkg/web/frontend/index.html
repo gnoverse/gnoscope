@@ -20022,14 +20022,6 @@ function renderRealmDefi(into, d, ctx) {
     const gas = d.gas_ugnot || 0;
     const dep = d.storage_deposit_ugnot || 0;
     const left = d.unexplained_ugnot || 0;
-    // The term the arithmetic used to miss: sends from before the chain
-    // emitted transfer events, which sat in the residual and were called
-    // genesis along with it.
-    if (d.bank_sends) {
-      note.appendChild(el('div', {}, fmtNum(d.bank_sends) + ' bank send' + (d.bank_sends === 1 ? '' : 's')
-        + ' left no transfer event, netting ' + signedGnot(d.bank_sends_ugnot || 0)
-        + '. they are read from the sends themselves and counted below.'));
-    }
     if (gas || dep) {
       const terms = [];
       if (gas) terms.push(fmtGnotAmount(gas) + ' in gas');

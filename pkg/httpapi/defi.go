@@ -106,17 +106,10 @@ type realmDefiResponse struct {
 	// to begin with. See store.UnemittedSpendFor.
 	store.UnemittedSpend
 
-	// BankSendsUgnot is the net of the BankMsgSends that left no leg in the
-	// coin ledger, and BankSends how many. Early mainnet sends predate
-	// TransferEvent, so without this term they landed in the residual below
-	// and were described, along with the real genesis allocation, as one.
-	BankSendsUgnot int64 `json:"bank_sends_ugnot"`
-	BankSends      int   `json:"bank_sends"`
-
-	// UnexplainedUgnot is what is left once the reconstruction, the
-	// unledgered bank sends and both unemitted spends are accounted for:
+	// UnexplainedUgnot is what is left once the reconstruction and both
+	// unemitted spends are accounted for:
 	//
-	//	live - (derived + bank_sends - gas - storage_deposit)
+	//	live - (derived - gas - storage_deposit)
 	//
 	// Zero means the history here is complete and the arithmetic closes, which
 	// is a check rather than a promise. Positive means the account was credited
@@ -250,14 +243,9 @@ func (a *API) writeDefiFor(w http.ResponseWriter, r *http.Request, network, path
 	if spend, err := a.db.UnemittedSpendFor(network, addr); err == nil {
 		resp.UnemittedSpend = spend
 	}
-	// Best-effort for the same reason: it turns part of the residual into
-	// arithmetic, and losing it should cost that, not the page.
-	if net, n, err := a.db.UnledgeredBankSends(network, addr); err == nil {
-		resp.BankSendsUgnot, resp.BankSends = net, n
-	}
 	if resp.BalanceKnown {
 		resp.UnexplainedUgnot = resp.LiveUgnot -
-			(resp.DerivedUgnot + resp.BankSendsUgnot - resp.GasUgnot - resp.StorageDepositUgnot)
+			(resp.DerivedUgnot - resp.GasUgnot - resp.StorageDepositUgnot)
 	}
 	// Truncated changed meaning with the source and kept its name, because it
 	// answers the same reader question: may the reconstruction below be short?

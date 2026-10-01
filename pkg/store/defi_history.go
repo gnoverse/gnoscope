@@ -19,11 +19,11 @@ import (
 // This is that join, done once in SQL. Every asset is a leg in one view, legs
 // are summed per transaction and asset, and the page is cut by transaction.
 //
-// The native half is two sources, not one, and the reason is measured: on
-// mainnet the coin ledger (TransferEvent) is missing the early BankMsgSends,
-// which predate the event. A bank send is counted only when the coin ledger has
-// no leg for the same transaction, sender and recipient, so a send that did
-// emit the event is not counted twice.
+// The native half is the coin ledger alone. bank_sends is not read: a
+// BankMsgSend emits TransferEvent like every other bank transfer, from the
+// first block on (checked on mainnet 2026-10-01 at heights 92,300 and 225,867,
+// both carrying the event), so its legs are already in coin_transfers and
+// reading the sends as well would count each one twice.
 
 // DefiLeg is one asset's net movement inside one transaction, from the
 // account's point of view: positive is received.
@@ -76,17 +76,7 @@ const defiMovesSQL = `
 	       0
 	  FROM coin_transfers
 	 WHERE network = ?2 AND (from_addr = ?1 OR to_addr = ?1) AND ugnot <> 0
-	UNION ALL
-	SELECT b.tx_hash, b.block_height, COALESCE(b.block_time, ''), 'ugnot', '',
-	       CASE WHEN b.from_address = b.to_address THEN 0
-	            WHEN b.to_address = ?1 THEN b.ugnot_amount ELSE -b.ugnot_amount END,
-	       0
-	  FROM bank_sends b
-	 WHERE b.network = ?2 AND (b.from_address = ?1 OR b.to_address = ?1)
-	   AND b.success AND COALESCE(b.ugnot_amount, 0) <> 0
-	   AND NOT EXISTS (SELECT 1 FROM coin_transfers c
-	                    WHERE c.network = b.network AND c.tx_hash = b.tx_hash
-	                      AND c.from_addr = b.from_address AND c.to_addr = b.to_address)`
+`
 
 // defiPayerSQL lists the transactions this account signed, which are the ones
 // whose gas it paid. Same four sources UnemittedSpendFor reads, for the same
@@ -379,34 +369,4 @@ func (d *DB) defiBuckets(network, addr, token string, prefix int) ([]DefiBucket,
 		out = append(out, b)
 	}
 	return out, rows.Err()
-}
-
-// UnledgeredBankSends is the net ugnot this address moved by BankMsgSend
-// without a matching leg in the coin ledger, and how many sends that was.
-//
-// It is the term the holdings reconciliation was missing. Early mainnet sends
-// predate TransferEvent, so they never reached coin_transfers, and the page
-// folded them into the unexplained residual it then called a probable genesis
-// allocation. On g1qyfled… (2026-10-01) that residual was 758k GNOT against a
-// 728k genesis vesting allocation: about 30k of it was sends sitting in
-// bank_sends with a sender and a block height, not genesis.
-func (d *DB) UnledgeredBankSends(network, addr string) (net int64, sends int, err error) {
-	if addr == "" {
-		return 0, 0, nil
-	}
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	err = d.db.QueryRow(`
-		SELECT COALESCE(SUM(CASE WHEN b.from_address = b.to_address THEN 0
-		                         WHEN b.to_address = ?1 THEN b.ugnot_amount
-		                         ELSE -b.ugnot_amount END), 0),
-		       COUNT(*)
-		  FROM bank_sends b
-		 WHERE b.network = ?2 AND (b.from_address = ?1 OR b.to_address = ?1)
-		   AND b.success AND COALESCE(b.ugnot_amount, 0) <> 0
-		   AND NOT EXISTS (SELECT 1 FROM coin_transfers c
-		                    WHERE c.network = b.network AND c.tx_hash = b.tx_hash
-		                      AND c.from_addr = b.from_address AND c.to_addr = b.to_address)`,
-		addr, network).Scan(&net, &sends)
-	return net, sends, err
 }

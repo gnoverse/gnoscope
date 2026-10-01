@@ -45,16 +45,18 @@ func TestDefiHistory(t *testing.T) {
 		}
 	}
 
-	// TXFUND: an early bank send with no TransferEvent, the mainnet case.
+	// TXFUND: received, signed and paid for by somebody else.
 	if err := db.InsertBankSend(net, "TXFUND", 1, day1, friend, me, "5000ugnot", true); err != nil {
 		t.Fatal(err)
 	}
-	// TXSEND: a bank send that did emit the event. Counted once, not twice.
+	mustCoin("TXFUND", 0, 1, day1, friend, me, 5000)
+	// TXSEND: a send this account signed. The bank_sends row and the coin leg
+	// are the same movement, and it is counted once.
 	if err := db.InsertBankSend(net, "TXSEND", 2, day1, me, friend, "300ugnot", true); err != nil {
 		t.Fatal(err)
 	}
 	mustCoin("TXSEND", 0, 2, day1, me, friend, 300)
-	// A failed send moved nothing.
+	// A failed send emitted no event and moved nothing.
 	if err := db.InsertBankSend(net, "TXFAIL", 3, day1, me, friend, "999ugnot", false); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +115,7 @@ func TestDefiHistory(t *testing.T) {
 		t.Errorf("send legs = %+v, want one -300 ugnot leg, counted once", l)
 	}
 	if l := byHash["TXFUND"].Legs; len(l) != 1 || l[0].Token != NativeKey || l[0].Delta != 5000 {
-		t.Errorf("fund legs = %+v, want +5000 ugnot from bank_sends", l)
+		t.Errorf("fund legs = %+v, want +5000 ugnot", l)
 	}
 	if f := byHash["TXFUND"].FeeUgnot; f != 0 {
 		t.Errorf("fund fee = %d, want 0: the sender paid it, not us", f)
@@ -174,12 +176,5 @@ func TestDefiHistory(t *testing.T) {
 	first, last, err := db.DefiSpan(net, me)
 	if err != nil || first != day1 || last != day3 {
 		t.Errorf("span = %q..%q (%v), want %q..%q", first, last, err, day1, day3)
-	}
-
-	// The reconciliation's missing term: only the send with no coin-ledger leg,
-	// and never the failed one.
-	net2, sends, err := db.UnledgeredBankSends(net, me)
-	if err != nil || net2 != 5000 || sends != 1 {
-		t.Errorf("UnledgeredBankSends = %d over %d (%v), want 5000 over 1", net2, sends, err)
 	}
 }
