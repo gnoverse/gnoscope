@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gnoverse/gnoscope/pkg/store"
@@ -51,11 +50,7 @@ func (a *API) HandleUserSearch(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "missing q parameter", 400)
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 {
-		limit = userSearchLimit
-	}
-	found, err := a.db.SearchUsers(network, q, limit)
+	found, err := a.db.SearchUsers(network, q, clampParam(r, "limit", userSearchLimit, 100))
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
