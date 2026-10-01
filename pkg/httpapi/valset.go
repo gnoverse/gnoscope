@@ -308,8 +308,8 @@ func parseValopers(raw string) (map[string]Valoper, error) {
 // valsetUpdateRe matches one line of r/sys/validators' "## Validator Updates"
 // section, as gov/dao renders an executor built by it:
 //
-//	- g1manfred47kzduec920z88wfr64ylksmdcedlf5: add (power 4)
-//	- g1…: remove
+//   - g1manfred47kzduec920z88wfr64ylksmdcedlf5: add (power 4)
+//   - g1…: remove
 var valsetUpdateRe = regexp.MustCompile(`^-\s*(g1[0-9a-z]{38}):\s*(add|remove)\b(?:\s*\(power\s+(\d+)\))?`)
 
 // parseValsetUpdates reads the changes out of one proposal's render. Only the
