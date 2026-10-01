@@ -101,14 +101,14 @@ func seedAchievementWorld(t *testing.T, db *DB) {
 	must("call", db.InsertCall(net, "TX21", 34, 0, "2026-01-21T00:00:00Z", "g1alice", "gno.land/r/alice/shop", "Buy", "", "", true))
 	must("session tx", db.RecordSessionTx(net, "TX21", "g1carol", 34))
 
-	// Tool memos. All four on bob's calls, so no other badge's expected set
-	// moves, plus one on a send of alice's: that leg of the union is a
-	// different table, and the LIKE that covers gnomi's two spellings has to
-	// match the second one too.
+	// Tool memos. All on bob's calls, so no other badge's expected set moves,
+	// plus one on a send of alice's: that leg of the union is a different
+	// table, and the LIKE that covers gnomi's two spellings has to match the
+	// second one too. TX23 carries a stamp that no longer has a badge, so a
+	// memo badge that matched too loosely would show up here.
 	for i, m := range []struct{ hash, memo, fn string }{
 		{"TX22", "Executed through gnoswap.io", "Swap"},
 		{"TX23", "gnopublish", "Deploy"},
-		{"TX24", "Posted from gnoblog-cli", "Post"},
 		{"TX25", "Gnomi.fun", "Buy"},
 	} {
 		h := 35 + i
@@ -117,6 +117,15 @@ func seedAchievementWorld(t *testing.T, db *DB) {
 	}
 	must("send", db.InsertBankSend(net, "TX27", 40, "2026-01-23T00:00:00Z", "g1alice", "g1bob", "1ugnot", true))
 	must("memo", db.UpsertTxMemos(net, []TxMemoRow{{Hash: "TX27", Memo: "gnomi", BlockHeight: 40, BlockTime: "2026-01-23T00:00:00Z"}}))
+
+	// Bubble Rumble. bob bids on the fifth generation. alice, who already
+	// calls realms so no other badge moves, creates a pool on the real realm
+	// (the host's call, not a play) and bids on a lookalike under her own
+	// namespace. Only bob plays.
+	const br = "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble"
+	must("call", db.InsertCall(net, "TX28", 41, 0, "2026-01-24T00:00:00Z", "g1bob", br+"5", "Bid", "", "", true))
+	must("call", db.InsertCall(net, "TX29", 42, 0, "2026-01-24T00:00:00Z", "g1alice", br+"5", "CreatePool", "", "", true))
+	must("call", db.InsertCall(net, "TX30", 43, 0, "2026-01-24T00:00:00Z", "g1alice", "gno.land/r/alice/bubblerumble", "Bid", "", "", true))
 
 	// whale is the volume control: the tiers are the only badges that need an
 	// account with more history than a hand-written fixture would otherwise
@@ -278,9 +287,8 @@ func TestAchievementsAwardTheRightAddresses(t *testing.T) {
 
 		// The tool badges, which read a memo rather than a message.
 		{"tool-gnoswap", []string{"g1bob"}, "bob's TX22 carries gnoswap's stamp"},
-		{"tool-gnopublish", []string{"g1bob"}, "bob's TX23 carries gnopublish's"},
-		{"tool-gnoblog", []string{"g1bob"}, "bob's TX24 carries gnoblog-cli's"},
 		{"tool-gnomi", []string{"g1alice", "g1bob"}, "bob's call says Gnomi.fun and alice's send says gnomi; one LIKE covers both"},
+		{"bubblerumble", []string{"g1bob"}, "bob bid; alice only created a pool and bid on a lookalike path"},
 	}
 
 	// Every indexed definition must appear above. A badge added to the catalog
