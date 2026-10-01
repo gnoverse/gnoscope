@@ -138,7 +138,7 @@ test('an unreadable chain does not read as an empty account', async ({ page }) =
 
 // A GRC20-only realm has no bank account at all, which is the shape that made
 // the page look broken. It has to point at the tab that does hold the answer.
-test('a realm with no bank account points at holdings', async ({ page }) => {
+test('a realm with no bank account points at the defi tab', async ({ page }) => {
   await stubIdentity(page, {
     address: HUB_BANKER, network: 'alpha', kind: 'package',
     package: { address: HUB_BANKER, path: HUB, deposit: false },
@@ -150,6 +150,6 @@ test('a realm with no bank account points at holdings', async ({ page }) => {
 
   const card = page.locator(CARD).first();
   await expect(card).toContainText('no bank account at all');
-  await card.getByText('the holdings tab').click();
-  await expect(page.locator('#address-detail-content .tab.active')).toContainText('holdings');
+  await card.getByText('the defi tab').click();
+  await expect(page.locator('#address-detail-content .tab.active')).toContainText('defi');
 });

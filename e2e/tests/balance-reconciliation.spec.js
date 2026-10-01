@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { settle } from './helpers.js';
 
-// The balance reconciliation, on the account page's holdings tab.
+// The balance reconciliation, in the ledgers on the account page's defi tab.
 //
 // A reconstructed balance and the chain's own figure disagree for a spending
 // account, and the page used to explain that in a sentence: "gas and storage
@@ -21,7 +21,7 @@ import { settle } from './helpers.js';
 // of them.
 
 const ADDR = 'g1recon0000000000000000000000000000000';
-const CARD = '[data-pane="holdings"]';
+const CARD = '[data-pane="defi"]';
 
 function stub(page, holdings, identity) {
   page.route('**/api/address/*/identity*', r => r.fulfill({
@@ -42,7 +42,7 @@ function stub(page, holdings, identity) {
 }
 
 async function openHoldings(page) {
-  await page.goto(`/address/${ADDR}?network=alpha&tab=holdings`);
+  await page.goto(`/address/${ADDR}?network=alpha&tab=defi`);
   await settle(page);
   return page.locator(CARD);
 }

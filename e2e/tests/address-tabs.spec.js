@@ -25,7 +25,7 @@ test('the strip offers overview first, and every tab is reachable', async ({ pag
   // The set an account with deploys gets. sessions is absent because this
   // account has granted none, which is the point of the next test.
   const names = await tabs(page).evaluateAll(els => els.map(e => e.getAttribute('data-tab')));
-  expect(names).toEqual(['overview', 'transactions', 'holdings', 'deploys', 'achievements']);
+  expect(names).toEqual(['overview', 'transactions', 'defi', 'deploys', 'achievements']);
 
   for (const name of names) {
     await page.locator(`#address-detail-content .tab[data-tab="${name}"]`).click();
@@ -143,33 +143,100 @@ test('a filter typed on one page survives turning to the next', async ({ page })
 });
 
 // Same deferral the realm page's defi tab has, and for the same reason: the
-// fetch reconstructs a position from every transfer leg the address ever had,
-// and most readers of an address page never open it.
-test('holdings is not fetched until the tab is opened', async ({ page }) => {
+// fetch reconstructs every position from every leg the address ever had, and
+// most readers of an address page never open it.
+test('defi is not fetched until the tab is opened', async ({ page }) => {
   const asked = [];
+  await page.route('**/api/address/*/defi*', route => { asked.push(route.request().url()); route.continue(); });
   await page.route('**/api/address/*/holdings*', route => { asked.push(route.request().url()); route.continue(); });
 
   await page.goto(`/address/${GRC20_FUNDER}?network=alpha`);
   await settle(page);
-  expect(asked, 'holdings was fetched before anyone asked for it').toEqual([]);
+  expect(asked, 'defi was fetched before anyone asked for it').toEqual([]);
 
-  await page.locator('#address-detail-content .tab[data-tab="holdings"]').click();
+  await page.locator('#address-detail-content .tab[data-tab="defi"]').click();
   await settle(page);
   expect(asked.length, 'opening the tab did not fetch it').toBeGreaterThan(0);
 });
 
-// The question #324 asked: an account page could say what it did and never what
-// it holds, though the GRC20 ledger could answer it exactly. It is the realm
-// tab's own renderer pointed at an address that has no package path.
-test('the holdings tab reads the GRC20 ledger for a plain account', async ({ page }) => {
-  const seen = watch(page);
+// The tab was called holdings until defi replaced it, and links to it are out
+// there: they land on its successor, not on the overview.
+test('an old holdings link opens the defi tab', async ({ page }) => {
   await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=holdings`);
   await settle(page);
+  await expect(page.locator('#address-detail-content .tab.active')).toHaveAttribute('data-tab', 'defi');
+  await expect(pane(page, 'defi')).toBeVisible();
+});
 
-  const holdings = pane(page, 'holdings');
-  await expect(holdings).toContainText('GRC20 positions');
-  await expect(holdings.locator('#defi-tokens tbody tr')).toHaveCount(1);
-  await expect(holdings.locator('#defi-tokens tbody tr').first()).toContainText('hubcoin');
+// The point of the tab: positions, and one history row per transaction with
+// every asset that moved in it, read from the same ledger the endpoint reports.
+test('the defi tab draws positions and a per-transaction history', async ({ page }) => {
+  const seen = watch(page);
+  await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=defi`);
+  await settle(page);
+
+  const api = await (await page.request.get(`/api/address/${GRC20_FUNDER}/defi?network=alpha`)).json();
+  expect(api.history_total, 'the fixture funder moved nothing?').toBeGreaterThan(0);
+  const defi = pane(page, 'defi');
+  await expect(defi.locator('#defi-positions')).toContainText('hubcoin');
+  await expect(defi.locator('#defi-history tbody tr')).toHaveCount(Math.min(api.history_total, 25));
+  // Every row carries its own legs, signed.
+  await expect(defi.locator('#defi-history tbody tr').first()).toContainText(/[+−]/);
+  expect(unexpected(seen.consoleErrors)).toEqual([]);
+});
+
+// The history is paged by the server, one page in the DOM at a time. Stubbed:
+// the fixture funder has a handful of transactions, and what is under test is
+// that "older" asks the server for the next page and replaces the rows.
+test('the defi history pages through the server', async ({ page }) => {
+  const TOTAL = 60;
+  const row = (i) => ({
+    tx_hash: `tx-${i}`, block_height: 9000 - i, block_time: '2026-02-01T00:00:00Z', action: 'receive',
+    legs: [{ token: 'ugnot', delta: 1000000, items: 0, symbol: 'GNOT', kind: 'native', decimals: 6, priced: false }],
+    in_usd: 0, out_usd: 0,
+  });
+  const offsets = [];
+  await page.route('**/api/address/*/defi*', route => {
+    const u = new URL(route.request().url());
+    const offset = Number(u.searchParams.get('offset') || 0);
+    offsets.push(offset);
+    const limit = Number(u.searchParams.get('limit') || 25);
+    const history = [];
+    for (let i = offset; i < Math.min(TOTAL, offset + limit); i++) history.push(row(i));
+    route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        network: 'alpha', address: GRC20_FUNDER, total_usd: 0, assets: [], balance_known: true,
+        history, history_total: TOTAL, history_offset: offset, history_limit: limit, series: null,
+      }),
+    });
+  });
+
+  await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=defi`);
+  await settle(page);
+  const rows = pane(page, 'defi').locator('#defi-history tbody tr');
+  await expect(rows).toHaveCount(25);
+
+  await pane(page, 'defi').locator('.pager button', { hasText: 'older' }).first().click();
+  await settle(page);
+  // Replaced, not appended: one page in the DOM, whatever page it is.
+  await expect(rows).toHaveCount(25);
+  expect(offsets).toContain(25);
+  await expect(pane(page, 'defi').locator('.pager-info').first()).toContainText('page 2 / 3');
+});
+
+// The question #324 asked: an account page could say what it did and never what
+// it holds, though the GRC20 ledger could answer it exactly. The ledgers sit
+// under the defi tab now, the realm tab's own renderer pointed at an address.
+test('the defi tab still reads the GRC20 ledger for a plain account', async ({ page }) => {
+  const seen = watch(page);
+  await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=defi`);
+  await settle(page);
+
+  const defi = pane(page, 'defi');
+  await expect(defi).toContainText('GRC20 positions');
+  await expect(defi.locator('#defi-tokens tbody tr')).toHaveCount(1);
+  await expect(defi.locator('#defi-tokens tbody tr').first()).toContainText('hubcoin');
 
   // The figure itself is checked against the ledger rather than against a
   // number typed twice: the funder was minted 1,000,000, sent 650,000 to the
@@ -178,8 +245,8 @@ test('the holdings tab reads the GRC20 ledger for a plain account', async ({ pag
   const api = await (await page.request.get(`/api/address/${GRC20_FUNDER}/holdings?network=alpha`)).json();
   expect(api.tokens, 'the endpoint found no position to render').toHaveLength(1);
   expect(api.tokens[0].balance).toBe(1000000 + 150000 - (400000 + 250000));
-  const row = await holdings.locator('#defi-tokens tbody tr').first().textContent();
-  expect(row.replace(/[^0-9]/g, ''), 'the drawn row does not carry the balance the endpoint reported')
+  const r = await defi.locator('#defi-tokens tbody tr').first().textContent();
+  expect(r.replace(/[^0-9]/g, ''), 'the drawn row does not carry the balance the endpoint reported')
     .toContain(String(api.tokens[0].balance));
 
   expect(unexpected(seen.consoleErrors)).toEqual([]);
@@ -187,63 +254,65 @@ test('the holdings tab reads the GRC20 ledger for a plain account', async ({ pag
 
 // The renderer was written for a realm, which owns a banker whose reconstruction
 // is exact. A signing account also pays gas and storage deposits, and neither
-// emits a transfer event, so its reconstruction is short by exactly that spend
-// on every active account, permanently. Offering the realm's explanation here
-// would send a reader hunting for transfers that are not missing.
+// emits a transfer event. Offering the realm's explanation here would send a
+// reader hunting for transfers that are not missing.
 test('an account is told why its reconstruction is short, not a realm’s reason', async ({ page }) => {
-  await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=holdings`);
+  await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=defi`);
   await settle(page);
-  const holdings = pane(page, 'holdings');
-  await expect(holdings).not.toContainText('this realm’s account');
+  await expect(pane(page, 'defi')).not.toContainText('this realm’s account');
 });
 
-// The holdings tab reuses the realm renderer, whose flow table draws 250 rows
-// because on a realm page it is the only place those legs appear. An address
-// page also has a transactions tab listing the same movements from the signer's
-// side, so 250 here is a second copy of it: measured on mainnet the moment this
-// shipped, moul's holdings tab came to 11,728px, thirteen screens, on a page
-// whose whole point was to stop being eleven.
+// The ledger tables are one server page each, and the pager replaces the rows
+// rather than appending them. It used to fetch 5,000 legs and unfold them 25 at
+// a time, so a reader who kept pressing grew the page without bound.
 //
 // Stubbed rather than seeded. The fixture has five native legs chain-wide, and
-// adding sixty more to exercise a render cap would move every chain-wide coin
-// figure every other spec reads.
-test('the holdings flow table starts short on an address, and offers the rest', async ({ page }) => {
+// adding sixty more to exercise a pager would move every chain-wide coin figure
+// every other spec reads.
+test('the native ledger table is one server page, and pages', async ({ page }) => {
   const legs = Array.from({ length: 60 }, (_, i) => ({
     tx_hash: `leg-${i}`, account: 'account', counterparty: 'g1counterparty000000000000000000000000',
-    amount: (i + 1) * 1000, coins: `${(i + 1) * 1000}ugnot`, block_height: 5000 + i,
+    amount: (i + 1) * 1000, coins: `${(i + 1) * 1000}ugnot`, block_height: 5000 - i,
     block_time: '2026-02-01T00:00:00Z',
   }));
-  await page.route('**/api/address/*/holdings*', route => route.fulfill({
-    status: 200, contentType: 'application/json',
-    body: JSON.stringify({
-      network: 'alpha', path: '', address: GRC20_FUNDER,
-      balance: '9000000ugnot', balance_known: true, live_ugnot: 9000000,
-      derived_ugnot: 9000000, flows_total: legs.length, flows_shown: legs.length,
-      flows_offset: 0, flows: legs, counterparties: [], counterparties_total: 0,
-      tokens: [], token_flows: [],
-    }),
-  }));
+  const offsets = [];
+  await page.route('**/api/address/*/holdings*', route => {
+    const u = new URL(route.request().url());
+    const offset = Number(u.searchParams.get('flows_offset') || 0);
+    const limit = Number(u.searchParams.get('flows_limit') || 50);
+    offsets.push(offset);
+    route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        network: 'alpha', path: '', address: GRC20_FUNDER,
+        balance: '9000000ugnot', balance_known: true, live_ugnot: 9000000,
+        derived_ugnot: 9000000, flows_total: legs.length, flows_shown: Math.min(limit, legs.length - offset),
+        flows_offset: offset, flows: legs.slice(offset, offset + limit), counterparties: [], counterparties_total: 0,
+        tokens: [], token_flows: [],
+      }),
+    });
+  });
 
-  await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=holdings`);
+  await page.goto(`/address/${GRC20_FUNDER}?network=alpha&tab=defi`);
   await settle(page);
 
-  const rows = pane(page, 'holdings').locator('#defi-flows tbody tr');
-  await expect(rows, 'the address tab drew the realm page’s 250-row table').toHaveCount(25);
+  const rows = pane(page, 'defi').locator('#defi-flows tbody tr');
+  await expect(rows, 'the page asked for more than one page of legs').toHaveCount(50);
+  expect(offsets[0], 'the first request was not the first page').toBe(0);
 
-  // Nothing is hidden, only undrawn, and the control says so and works.
-  const more = pane(page, 'holdings').locator('button, a').filter({ hasText: /more/i }).first();
-  await expect(more).toBeVisible();
-  await more.click();
+  const older = pane(page, 'defi').locator('#defi-flows ~ .pager button', { hasText: 'older' });
+  await older.click();
   await settle(page);
-  await expect(rows).toHaveCount(50);
+  await expect(rows).toHaveCount(10);
+  expect(offsets).toContain(50);
 });
 
 // Denominated figures cannot be blended across chains, and the realm tab
 // refuses that case rather than inventing a number. The account tab has to
 // refuse it the same way, or the same question answers differently depending
 // which page asked it.
-test('holdings refuses the all-networks view instead of adding two chains up', async ({ page }) => {
-  await page.goto(`/address/${GRC20_FUNDER}?tab=holdings`);
+test('defi refuses the all-networks view instead of adding two chains up', async ({ page }) => {
+  await page.goto(`/address/${GRC20_FUNDER}?tab=defi`);
   await settle(page);
-  await expect(pane(page, 'holdings')).toContainText('denominated per chain');
+  await expect(pane(page, 'defi')).toContainText('denominated per chain');
 });

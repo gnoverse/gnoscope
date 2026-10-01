@@ -180,24 +180,24 @@ test('the GRC20 transfers page, and the response says how many there are', async
   expect(tail.token_flows_offset).toBe(total);
 });
 
-test('a truncated GRC20 table offers to load the rest', async ({ page }) => {
+test('a GRC20 table longer than a page offers the next one', async ({ page }) => {
   const seen = watch(page);
-  // The fixture cannot reach the 5,000-row page the frontend asks for, so the
-  // truncation is stubbed: what is under test is that the page believes
-  // token_flows_total over the length of the array it was handed.
+  // The fixture cannot fill a 50-row page, so the length is stubbed: what is
+  // under test is that the pager believes token_flows_total over the length of
+  // the array it was handed.
   await page.route('**/api/realm/defi/**', async route => {
     const res = await route.fetch();
     const body = await res.json();
-    body.token_flows_total = body.token_flows.length + 42;
+    body.token_flows_total = body.token_flows.length + 60;
     await route.fulfill({ response: res, json: body });
   });
 
   await page.goto(`/realm/${HUB_ROUTE}?network=alpha&tab=defi`);
   await settle(page);
 
-  const note = page.locator('#tab-defi .detail-chart-note', { hasText: 'across every token above' });
-  await expect(note).toContainText('most recent of');
-  await expect(note.locator('button.pager-btn')).toContainText('load 42 older');
+  const pager = page.locator('#tab-defi .pager', { hasText: 'transfers, every token' });
+  await expect(pager).toContainText('page 1 / 2');
+  await expect(pager.locator('button.pager-btn', { hasText: 'older' })).toBeEnabled();
 
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
   expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);

@@ -1108,6 +1108,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/achievements/{slug}", a.HandleAchievement)
 	mux.HandleFunc("GET /api/address/{addr}/achievements", a.HandleAddressAchievements)
 	mux.HandleFunc("GET /api/address/{addr}/holdings", a.HandleAddressHoldings)
+	mux.HandleFunc("GET /api/address/{addr}/defi", a.HandleAddressDefi)
 	mux.HandleFunc("GET /api/directory/people", a.HandleDirectoryPeople)
 
 	// Badges. Registered through the same recorder as everything above so they

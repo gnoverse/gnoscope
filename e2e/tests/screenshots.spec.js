@@ -111,7 +111,7 @@ const PAGES = [
   // to be the default would show a change to none of the others.
   ['address-detail', `/address/${BUSY_CALLER}`],
   ['address-transactions', `/address/${BUSY_CALLER}?tab=transactions`],
-  ['address-holdings', `/address/${GRC20_FUNDER}?network=alpha&tab=holdings`],
+  ['address-defi', `/address/${GRC20_FUNDER}?network=alpha&tab=defi`],
   ['address-deploys', `/address/${HUB_CREATOR}?network=alpha&tab=deploys`],
   ['address-achievements', `/address/${BUSY_CALLER}?tab=achievements`],
 ];
