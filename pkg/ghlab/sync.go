@@ -16,20 +16,24 @@ const (
 	// reading "who contributed this month" needs it fresher than three hours.
 	DefaultInterval = 3 * time.Hour
 
-	// prWindow is how far back a pull-request walk goes. Long enough that the
-	// 90-day windows the page offers are complete, with a month of slack for
-	// a PR whose merge lands long after it was opened.
-	prWindow = 180 * 24 * time.Hour
+	// walkMaxPages bounds one repository's pull-request walk in one pass, at
+	// 50 pull requests a page. The walk is all time, not a window: the score
+	// counts every merged pull request a person ever landed, and a 180-day
+	// table (what this was until 2026-10-01) ranked by commits because it had
+	// nothing older to rank by. 120 pages is 6,000 pull requests, more than
+	// gnolang/gno has; anything bigger resumes from its cursor next pass.
+	walkMaxPages = 120
 
-	// prMaxPages and contributorMaxPages bound one repository's cost.
-	//
-	// 12, not 6, and the difference is not caution. Measured 2026-09-29:
-	// gnolang/gno alone filled 6 pages and reached only 2026-06-11, 110 days,
-	// so the cap and not prWindow was deciding how far back the table went.
-	// A window bounded by a page count is the quiet kind of wrong: every
-	// count still adds up, over a period nobody stated. Every other tracked
-	// repository stops on its own well before page 3.
-	prMaxPages          = 12
+	// walkSlack is how far before the watermark an incremental walk keeps
+	// reading. GitHub's updatedAt and our clock are not the same clock.
+	walkSlack = time.Hour
+
+	// discoveredWalkBudget caps how many discovered repositories get their
+	// walk in one pass. A cold start finds ~120; most are one page and one
+	// contributors call, so this spreads a first fill over a few passes
+	// rather than refusing it.
+	discoveredWalkBudget = 60
+
 	contributorMaxPages = 3
 
 	// searchMaxPages bounds each discovery query. GitHub caps any search at
@@ -111,6 +115,14 @@ func (s *Syncer) Once(ctx context.Context) error {
 		note("discovery stopped early on the rate limit; it resumes next pass")
 	}
 
+	if err := s.syncDiscoveredWalks(ctx, note); err != nil {
+		if !IsRateLimited(err) {
+			s.finish(start, problems, err)
+			return err
+		}
+		note("discovered-repository walks stopped on the rate limit; they resume next pass")
+	}
+
 	_ = s.store.SetMeta("tracked_repos", strconv.Itoa(tracked))
 	_ = s.store.SetMeta("discovered_this_pass", strconv.Itoa(found))
 	s.finish(start, problems, nil)
@@ -129,13 +141,16 @@ func (s *Syncer) finish(start time.Time, problems []string, err error) {
 	core, search := s.client.Rates()
 	_ = s.store.SetMeta("rate_core", fmt.Sprintf("%d/%d", core.Remaining, core.Limit))
 	_ = s.store.SetMeta("rate_search", fmt.Sprintf("%d/%d", search.Remaining, search.Limit))
+	if gq := s.client.GraphQLRate(); gq.Limit > 0 {
+		_ = s.store.SetMeta("rate_graphql", fmt.Sprintf("%d/%d", gq.Remaining, gq.Limit))
+	}
 	if !core.Reset.IsZero() {
 		_ = s.store.SetMeta("rate_core_reset", core.Reset.Format(time.RFC3339))
 	}
 }
 
-// syncCurated refreshes Seeds plus -github-repos, and returns how many
-// repositories got the full pull-request and contributor walk.
+// syncCurated refreshes Seeds plus -github-repos, walks every one of them for
+// the score, and returns how many are tracked (shown in the activity tables).
 func (s *Syncer) syncCurated(ctx context.Context, note func(string, ...any)) (int, error) {
 	type want struct {
 		name    string
@@ -154,7 +169,6 @@ func (s *Syncer) syncCurated(ctx context.Context, note func(string, ...any)) (in
 		list = append(list, want{e, "operator", true})
 	}
 
-	since := time.Now().Add(-prWindow)
 	tracked := 0
 	for _, w := range list {
 		if ctx.Err() != nil {
@@ -181,35 +195,103 @@ func (s *Syncer) syncCurated(ctx context.Context, note func(string, ...any)) (in
 		if err := s.store.UpsertRepo(repo, time.Now()); err != nil {
 			return tracked, fmt.Errorf("store repo %s: %w", repo.FullName, err)
 		}
-		if !w.tracked {
-			continue
-		}
 		// repo.FullName, not w.name: GitHub answers a renamed repository
 		// under its current name and the rows have to agree with each other.
-		prs, err := s.client.FetchPulls(ctx, repo.FullName, since, prMaxPages)
-		if err != nil {
-			if IsRateLimited(err) {
-				return tracked, err
-			}
-			note("pulls %s: %v", repo.FullName, err)
+		// Untracked seeds are walked too: they are staff picks, and tier 3 of
+		// the score, whether or not the activity tables list them.
+		if err := s.walkRepo(ctx, repo.FullName, note); err != nil {
+			return tracked, err
 		}
-		if err := s.store.UpsertPRs(prs); err != nil {
-			return tracked, fmt.Errorf("store pulls %s: %w", repo.FullName, err)
+		if w.tracked {
+			tracked++
 		}
-		cs, err := s.client.FetchContributors(ctx, repo.FullName, contributorMaxPages)
-		if err != nil {
-			if IsRateLimited(err) {
-				return tracked, err
-			}
-			note("contributors %s: %v", repo.FullName, err)
-		} else if len(cs) > 0 {
-			if err := s.store.ReplaceContributors(repo.FullName, cs); err != nil {
-				return tracked, fmt.Errorf("store contributors %s: %w", repo.FullName, err)
-			}
-		}
-		tracked++
 	}
 	return tracked, nil
+}
+
+// walkRepo brings one repository's pull requests, reviews, comments and
+// commit counts up to date. Only a rate limit or a store failure is returned;
+// anything else is noted and the pass moves on to the next repository.
+func (s *Syncer) walkRepo(ctx context.Context, fullName string, note func(string, ...any)) error {
+	st, err := s.store.Walk(fullName)
+	if err != nil {
+		return err
+	}
+	if st.Cursor == "" {
+		// A fresh walk, not a resumed one. Its start time becomes the next
+		// watermark, so anything updated while it runs is read again.
+		st.Started = time.Now().UTC().Format(time.RFC3339)
+	}
+	var stop time.Time
+	if st.Watermark != "" {
+		if t, err := time.Parse(time.RFC3339, st.Watermark); err == nil {
+			stop = t.Add(-walkSlack)
+		}
+	}
+	var storeErr error
+	complete, err := s.client.WalkPulls(ctx, fullName, st.Cursor, stop, walkMaxPages, func(p WalkPage) error {
+		if err := s.store.StorePage(p.PRs, p.Events); err != nil {
+			storeErr = fmt.Errorf("store pulls %s: %w", fullName, err)
+			return storeErr
+		}
+		st.Cursor = p.EndCursor
+		if err := s.store.SetWalk(fullName, st); err != nil {
+			storeErr = err
+		}
+		return storeErr
+	})
+	if storeErr != nil {
+		return storeErr
+	}
+	st.LastWalked = time.Now().UTC().Format(time.RFC3339)
+	if complete {
+		st.Watermark, st.Cursor = st.Started, ""
+	}
+	if serr := s.store.SetWalk(fullName, st); serr != nil {
+		return serr
+	}
+	if err != nil {
+		if IsRateLimited(err) {
+			return err
+		}
+		note("pulls %s: %v", fullName, err)
+	} else if !complete {
+		note("pulls %s: %d pages read, the walk resumes next pass", fullName, walkMaxPages)
+	}
+
+	cs, err := s.client.FetchContributors(ctx, fullName, contributorMaxPages)
+	if err != nil {
+		if IsRateLimited(err) {
+			return err
+		}
+		note("contributors %s: %v", fullName, err)
+	} else if len(cs) > 0 {
+		if err := s.store.ReplaceContributors(fullName, cs); err != nil {
+			return fmt.Errorf("store contributors %s: %w", fullName, err)
+		}
+	}
+	return nil
+}
+
+// syncDiscoveredWalks walks discovered repositories for tier 4 of the score,
+// least recently walked first, up to discoveredWalkBudget a pass.
+func (s *Syncer) syncDiscoveredWalks(ctx context.Context, note func(string, ...any)) error {
+	queue, err := s.store.ScoreQueue()
+	if err != nil {
+		return err
+	}
+	if len(queue) > discoveredWalkBudget {
+		queue = queue[:discoveredWalkBudget]
+	}
+	for _, name := range queue {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := s.walkRepo(ctx, name, note); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // syncDiscovery runs every DiscoveryQuery and writes the repositories they

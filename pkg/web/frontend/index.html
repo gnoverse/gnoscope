@@ -26378,7 +26378,8 @@ function ghgSyncNote(ov) {
   if (m.sync_finished) {
     n.appendChild(document.createTextNode('Last refreshed ' + timeAgo(m.sync_finished) +
       ', in ' + (m.sync_seconds || '?') + 's. ' +
-      'GitHub budget left: ' + (m.rate_core || '?') + ' core, ' + (m.rate_search || '?') + ' search.'));
+      'GitHub budget left: ' + (m.rate_core || '?') + ' core, ' + (m.rate_search || '?') + ' search' +
+      (m.rate_graphql ? ', ' + m.rate_graphql + ' graphql' : '') + '.'));
   } else {
     n.appendChild(document.createTextNode('No refresh has completed yet.'));
   }
@@ -26438,15 +26439,35 @@ function ghgNewContributors(people) {
 
 function ghgTopContributors(people) {
   const list = (people && people.top) || [];
-  const rows = list.map(c => el('tr', {},
+  const sc = (people && people.scoring) || {};
+  const pts = sc.points || {};
+  const rows = list.map((c, i) => el('tr', {},
+    el('td', {}, String(i + 1)),
     el('td', {}, ghgUser(c.login)),
+    el('td', { title: (c.by_tier || []).map((v, t) => 'tier ' + (t + 1) + ': ' + v).join(', ') },
+      ghgScore(c.score)),
+    el('td', {}, ghgScore(c.window_score)),
+    el('td', {}, fmtNum(c.merged_prs || 0)),
+    el('td', {}, fmtNum(c.reviews || 0)),
+    el('td', {}, fmtNum(c.comments || 0)),
     el('td', {}, fmtNum(c.commits || 0)),
-    el('td', {}, fmtNum(c.recent_merged || 0)),
-    el('td', { className: 'gh-dim' }, (c.repos || []).join(', '))));
+    el('td', { className: 'gh-dim' }, (c.repos || []).slice(0, 4).join(', ') +
+      ((c.repos || []).length > 4 ? ' +' + (c.repos.length - 4) : ''))));
+  const legend = (sc.tiers || []).map(t => 'tier ' + t.tier + ' ×' + t.weight + ' ' + t.rule).join(' · ');
   return ghgSection('who is building',
-    'All-time commits, summed across the curated repositories only. The second column is what ' +
-    'separates somebody who built a large part of this in 2022 from somebody who is here now.',
-    ghgTable(['who', 'commits (all time)', 'merged in window', 'repositories'], rows));
+    'Ranked by score, all time. A merged pull request is ' + (pts.merged_pr || 1) + ' point; a review or ' +
+    'a comment on somebody else\'s pull request ' + (pts.review || 0.1) + '; a commit beyond your merged ' +
+    'pull requests ' + (pts.extra_commit || 0.1) + ', which is what a repository that merges with merge ' +
+    'commits adds. Every point is then weighed by where it was earned: ' + legend + '. ' +
+    'Raw commit counts are not the ranking because they measure how a repository merges: a squashed ' +
+    'pull request is one commit, a merged branch is all of them. The window column is the same rule over ' +
+    'the window, without the commit term, which GitHub does not date.',
+    ghgTable(['#', 'who', 'score', 'in window', 'merged PRs', 'reviews', 'comments', 'commits', 'mostly in'], rows));
+}
+
+function ghgScore(v) {
+  if (!v) return '0';
+  return v >= 100 ? fmtNum(Math.round(v)) : String(Math.round(v * 10) / 10);
 }
 
 function ghgRepoActivity(prs) {

@@ -1723,14 +1723,52 @@ network its realms end up on, so a selector would be a parameter that changes
 nothing, which is worse than no parameter.
 
 Two halves. `overview`, `contributors` and `prs` describe a curated list of
-ecosystem repositories, walked in full: their pull requests over the last 180
-days and their all-time contributor counts. `repos` is the other half, projects
-found by searching GitHub that nobody curated, each row carrying the query and
-the file that matched.
+ecosystem repositories: every pull request they ever had, with its reviews and
+comments, and their all-time contributor counts. `repos` is the other half,
+projects found by searching GitHub that nobody curated, each row carrying the
+query and the file that matched. Discovered repositories are walked too, but
+only the contributor score reads them; every window figure is the curated set.
 
-`days` defaults to 30 and is capped at 365; the pull-request walk only reaches
-180 days back, so a longer window returns a real number computed over data the
-instance never fetched.
+`days` defaults to 30 and is capped at 365.
+
+### How `contributors.top` is ranked
+
+By a score, all time, not by commits. A raw commit count measures how a
+repository merges: gnolang/gno squashes, so a pull request is one commit, while
+a repository that merges with merge commits keeps every commit of the branch
+(measured 2026-10-01: 1,072 commits from 612 merged pull requests for one such
+repository's top contributor, against 464 from 427 for gnolang/gno's top
+pull-request author).
+
+| Action | Points |
+|---|---|
+| merged pull request | 1 |
+| review on somebody else's pull request | 0.1 |
+| comment on somebody else's pull request | 0.1 |
+| commit beyond your merged pull requests in that repository | 0.1 |
+
+Every point is multiplied by the repository's tier:
+
+| Tier | Weight | Repositories |
+|---|---|---|
+| 1 | 1.0 | gnolang/gno |
+| 2 | 0.5 | the rest of gnolang/* |
+| 3 | 0.25 | gnoverse/* and the staff-picked list (`pkg/ghlab/seeds.go`, `-github-repos`) |
+| 4 | 0.1 | everything else discovery found, capped at 25 points per person per repository (one discovered repository had 2,000 pull requests merged by their own author) |
+
+Each row carries `score`, `window_score` (the same rule over `days`, without the
+commit term, which GitHub does not date), `by_tier`, and the raw `merged_prs`,
+`reviews`, `comments` and `commits` it was built from. The response carries the
+rules themselves under `scoring`, so a client prints the legend from the code
+that applies it. Weights live in `pkg/ghlab/score.go`.
+
+Bots are out of every count: the `[bot]` suffix, GraphQL's `Bot` actor type
+(normalized to the same suffix), and a list in `pkg/ghlab/seeds.go` for bots
+that are ordinary user accounts, such as gnolang's Gno2D2.
+
+The walk is GraphQL: 50 pull requests with their reviews and comments cost one
+point of the 5,000-an-hour budget, so the first full read of gnolang/gno is
+about 90 points and a steady-state pass is a page per repository.
 
 Off by default. All four answer `{"enabled": false, "reason": "..."}` rather
 than 404 when the instance runs without `-github-db` and a token, so a page can

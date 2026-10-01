@@ -22,6 +22,24 @@ func openTest(t *testing.T) *Store {
 	return s
 }
 
+// openTracked is openTest plus a tracked o/r, the fixture repository the
+// window tests write into: the window figures read gh_tracked_prs, and a
+// pull request in a repository with no gh_repos row is invisible to them.
+func openTracked(t *testing.T) *Store {
+	t.Helper()
+	s := openTest(t)
+	addRepo(t, s, "o/r", "seed", true)
+	return s
+}
+
+func addRepo(t *testing.T, s *Store, name, source string, tracked bool) {
+	t.Helper()
+	owner, n, _ := strings.Cut(name, "/")
+	if err := s.UpsertRepo(Repo{FullName: name, Owner: owner, Name: n, Source: source, Tracked: tracked}, time.Now()); err != nil {
+		t.Fatalf("add repo %s: %v", name, err)
+	}
+}
+
 func ago(days int) string {
 	return time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339)
 }
@@ -107,7 +125,7 @@ func TestNotBotSQLMatchesIsBot(t *testing.T) {
 // cohort: somebody who has been merging for years and merged again this month
 // is not a new contributor, and the obvious query says they are.
 func TestNewContributorsIsFirstEverNotFirstInWindow(t *testing.T) {
-	s := openTest(t)
+	s := openTracked(t)
 	// A veteran: first merge 400 days ago, another one yesterday.
 	seedPR(t, s, "o/r", 1, "veteran", 401, 400)
 	seedPR(t, s, "o/r", 2, "veteran", 2, 1)
@@ -137,7 +155,7 @@ func TestNewContributorsIsFirstEverNotFirstInWindow(t *testing.T) {
 // TestNewContributorsDedupesSameSecond covers the join: an author whose first
 // two merges share a timestamp matches twice and is one person.
 func TestNewContributorsDedupesSameSecond(t *testing.T) {
-	s := openTest(t)
+	s := openTracked(t)
 	at := ago(3)
 	prs := []PR{
 		{FullName: "o/r", Number: 1, Author: "twin", State: "closed", CreatedAt: ago(4), MergedAt: at},
@@ -156,7 +174,7 @@ func TestNewContributorsDedupesSameSecond(t *testing.T) {
 }
 
 func TestWindowStatsAndMedian(t *testing.T) {
-	s := openTest(t)
+	s := openTracked(t)
 	// Three merges at 1h, 5h and 100h. Median is 5, the mean would be 35.3.
 	base := time.Now().UTC().AddDate(0, 0, -3)
 	mk := func(n int, hours float64) PR {

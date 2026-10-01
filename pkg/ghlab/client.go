@@ -55,8 +55,9 @@ type Client struct {
 	// lastCore and lastSearch are the most recent rate-limit headers seen,
 	// reported on the overview so an operator can see the budget rather
 	// than guess at it.
-	lastCore   RateState
-	lastSearch RateState
+	lastCore    RateState
+	lastSearch  RateState
+	lastGraphQL RateState
 }
 
 // RateState is what GitHub's rate-limit headers last said.
@@ -148,7 +149,11 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 	if err != nil {
 		return err
 	}
-	c.recordRate(resp.Header, search)
+	fam := famCore
+	if search {
+		fam = famSearch
+	}
+	c.recordRate(resp.Header, fam)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		snippet := string(body)
 		if len(snippet) > 300 {
@@ -187,7 +192,22 @@ func (c *Client) pace(ctx context.Context, search bool) {
 	}
 }
 
-func (c *Client) recordRate(h http.Header, search bool) {
+// The three budgets GitHub keeps separately: REST core, REST search, and
+// GraphQL, which is metered in points rather than requests.
+const (
+	famCore = iota
+	famSearch
+	famGraphQL
+)
+
+// GraphQLRate returns the last seen GraphQL budget.
+func (c *Client) GraphQLRate() RateState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastGraphQL
+}
+
+func (c *Client) recordRate(h http.Header, fam int) {
 	st := RateState{Seen: time.Now().UTC()}
 	st.Limit, _ = strconv.Atoi(h.Get("X-RateLimit-Limit"))
 	rem := h.Get("X-RateLimit-Remaining")
@@ -200,9 +220,12 @@ func (c *Client) recordRate(h http.Header, search bool) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if search {
+	switch fam {
+	case famSearch:
 		c.lastSearch = st
-	} else {
+	case famGraphQL:
+		c.lastGraphQL = st
+	default:
 		c.lastCore = st
 	}
 	// Nearly out of budget: hold every later request until the window
@@ -281,67 +304,6 @@ func (c *Client) FetchRepo(ctx context.Context, fullName, source, kind, evidence
 		return Repo{}, fmt.Errorf("github /repos/%s: empty full_name", fullName)
 	}
 	return g.toRepo(source, kind, evidence), nil
-}
-
-type ghPull struct {
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	State     string `json:"state"`
-	Draft     bool   `json:"draft"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	MergedAt  string `json:"merged_at"`
-	ClosedAt  string `json:"closed_at"`
-	User      *struct {
-		Login string `json:"login"`
-	} `json:"user"`
-}
-
-// FetchPulls reads pull requests newest-updated first and stops once a page
-// ends older than since, or after maxPages.
-//
-// Sorting by update rather than creation is what makes an incremental pass
-// possible: a PR opened a year ago and merged this morning has to be
-// re-read, and a creation-ordered walk would never reach it.
-func (c *Client) FetchPulls(ctx context.Context, fullName string, since time.Time, maxPages int) ([]PR, error) {
-	var out []PR
-	for page := 1; page <= maxPages; page++ {
-		q := url.Values{}
-		q.Set("state", "all")
-		q.Set("sort", "updated")
-		q.Set("direction", "desc")
-		q.Set("per_page", "100")
-		q.Set("page", strconv.Itoa(page))
-		var batch []ghPull
-		if err := c.get(ctx, "/repos/"+fullName+"/pulls", q, &batch); err != nil {
-			return out, err
-		}
-		if len(batch) == 0 {
-			return out, nil
-		}
-		oldest := time.Time{}
-		for _, p := range batch {
-			author := ""
-			if p.User != nil {
-				author = p.User.Login
-			}
-			out = append(out, PR{
-				FullName: fullName, Number: p.Number, Title: p.Title, Author: author,
-				State: p.State, Draft: p.Draft,
-				CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
-				MergedAt: p.MergedAt, ClosedAt: p.ClosedAt,
-			})
-			if t, err := time.Parse(time.RFC3339, p.UpdatedAt); err == nil {
-				if oldest.IsZero() || t.Before(oldest) {
-					oldest = t
-				}
-			}
-		}
-		if len(batch) < 100 || (!oldest.IsZero() && oldest.Before(since)) {
-			return out, nil
-		}
-	}
-	return out, nil
 }
 
 type ghContributor struct {

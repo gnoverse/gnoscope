@@ -44,10 +44,9 @@ func (a *API) ghOffline(w http.ResponseWriter) bool {
 
 // ghWindow reads ?days=, defaulting to 30 and capped at 365.
 //
-// Capped rather than free because the pull-request walk only reaches 180 days
-// back (ghlab.prWindow): a 2-year window would return a real number computed
-// over data this instance never fetched, and a wrong number with a plausible
-// shape is the failure mode worth spending a clamp on.
+// The pull-request walk is all time since 2026-10-01 (it reached 180 days back
+// before), so the cap is no longer about missing data; it stays because a
+// "window" longer than a year is the all-time figure the score already gives.
 func ghWindow(r *http.Request) int {
 	return intParam(r.URL.Query(), "days", 30, 365)
 }
@@ -94,7 +93,8 @@ func (a *API) HandleLabGitHubContributors(w http.ResponseWriter, r *http.Request
 		Days    int                    `json:"days"`
 		New     []ghlab.NewContributor `json:"new"`
 		Top     []ghlab.TopContributor `json:"top"`
-	}{true, days, fresh, top})
+		Scoring ghlab.Scoring          `json:"scoring"`
+	}{true, days, fresh, top, ghlab.ScoringRules()})
 }
 
 // HandleLabGitHubPRs answers GET /api/lab/github/prs?days=&limit=&state=

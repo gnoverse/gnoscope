@@ -137,6 +137,10 @@ var botLogins = map[string]bool{
 	"semantic-release":  true,
 	"web-flow":          true,
 	"copilot-swe-agent": true,
+	// gnolang's PR bot, a regular User account rather than a GitHub App, so
+	// neither the [bot] suffix nor GraphQL's Bot type catches it. Measured
+	// 2026-10-01: 2,451 comments on gnolang/gno, sixth in the score.
+	"gno2d2": true,
 }
 
 // IsBot reports whether a login is machine output rather than a contributor.
