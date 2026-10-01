@@ -1070,6 +1070,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/validators", a.HandleValidators)
 	mux.HandleFunc("GET /api/validators/monikers", a.HandleValidatorMonikers)
 	mux.HandleFunc("GET /api/validators/live", a.HandleValidatorsLive)
+	mux.HandleFunc("GET /api/validators/addresses", a.HandleValidatorAddresses)
 	mux.HandleFunc("GET /api/tokens", a.HandleTokens)
 	mux.HandleFunc("GET /api/accounts", a.HandleAccounts)
 	mux.HandleFunc("GET /api/labels", a.HandleLabels)

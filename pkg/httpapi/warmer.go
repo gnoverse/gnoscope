@@ -74,6 +74,7 @@ var warmTargets = []string{
 	"/api/bankstats",
 	"/api/labels",
 	"/api/validators/monikers",
+	"/api/validators/addresses",
 	"/api/graph/active",
 	// The section landings.
 	"/api/accounts",

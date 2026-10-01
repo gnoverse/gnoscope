@@ -781,6 +781,7 @@ tr.total-row td { font-weight: bold; color: var(--accent); }
 .table-filter-note a { color: var(--accent); }
 .addr-inferred { color: var(--fg2); font-size: 10px; vertical-align: super; cursor: help; margin-left: 1px; }
 .addr-watched { color: var(--accent); font-size: 10px; vertical-align: super; cursor: help; margin-left: 1px; }
+.addr-validator { font-size: 11px; margin-left: 3px; cursor: pointer; text-decoration: none; }
 .watch-btn { background: var(--bg2); border: 1px solid var(--border); color: var(--fg2); border-radius: 4px;
   padding: 3px 9px; font-family: inherit; font-size: 12px; cursor: pointer; }
 .watch-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -1312,6 +1313,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 <!-- Tab icons. Same 16x16 stroke grid as the rail's, referenced from the
      script below through the icon() helper rather than from markup, which is
      why TestFrontendSpriteHasNoOrphansOrDanglingRefs reads those calls too. -->
+<symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.8 2.8 3.8v4c0 3.1 2.2 5.4 5.2 6.4 3-1 5.2-3.3 5.2-6.4v-4z"/></symbol>
 <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.3v4"/><path d="M8 4.7h.01"/></symbol>
 <symbol id="i-doc" viewBox="0 0 16 16"><path d="M9.2 1.8H4.2a1 1 0 0 0-1 1v10.4a1 1 0 0 0 1 1h7.6a1 1 0 0 0 1-1V5.4z"/><path d="M9.2 1.8v3.6h3.6"/><path d="M5.8 8.6h4.4"/><path d="M5.8 11h4.4"/></symbol>
 <symbol id="i-code" viewBox="0 0 16 16"><path d="m5.4 5.4-3 2.6 3 2.6"/><path d="m10.6 5.4 3 2.6-3 2.6"/><path d="M9.4 3.2 6.6 12.8"/></symbol>
@@ -1610,7 +1612,6 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-asset-detail"><main><div id="asset-detail-content"></div></main></div>
   <div class="view" id="view-validators"><main><div class="section"><div class="section-title">validators</div>
     <div id="validators-content"></div></div></main></div>
-  <div class="view" id="view-validator-detail"><main><div id="validator-detail-content"></div></main></div>
   <div class="view" id="view-govdao"><main><div id="govdao-content"></div></main></div>
   <div class="view" id="view-govdao-detail"><main><div id="govdao-detail-content"></div></main></div>
   <div class="view" id="view-analytics"><main><div id="analytics-content"></div></main></div>
@@ -1973,19 +1974,14 @@ async function loadNamespaceOwners() {
   }
 }
 
-// Consensus-address -> moniker, from gnockpit (see proposerEl). Best-effort
+// Consensus-address -> moniker, for the two places that bake a name into a
+// string and cannot redraw (the block strip tooltip, the share donut). Links
+// get theirs from the validator index below instead. Best-effort
 // and independent of loadAddrLabels' network-selector gate: a proposer name
 // arriving a moment late just means the first paint shows raw addresses.
 let _proposerMonikers = {};
-// Set once the fetch has settled, either way. Until then every proposerEl is
-// provisional and joins _proposerPending so it can fill itself in later.
+// Set once the fetch has settled, either way.
 let _proposerMonikersReady = false;
-// The spans painted before the names arrived. A Set rather than a re-route:
-// this used to be `loadProposerMonikers().then(route)`, which re-ran the whole
-// current view (every loader, every endpoint, a second time) on every cold
-// visit to every page, including the many that show no proposer at all. The
-// three cells that actually wanted the names now patch themselves.
-const _proposerPending = new Set();
 // Memoised, so a caller that needs the names before drawing (the validator
 // share donut bakes them into chart labels and cannot patch itself afterwards)
 // joins the one in-flight request rather than issuing a second.
@@ -1995,13 +1991,80 @@ function proposerMonikersReady() {
 }
 async function loadProposerMonikers() {
   try {
-    _proposerMonikers = await api('validators/monikers') || {};
+    // validatorNet, not api()'s default: this runs before route() has copied
+    // a ?network= into the selector, so getNetwork() alone named whichever
+    // chain the last visit used, and /block/N?network=onyx drew mainnet's names.
+    _proposerMonikers = await api('validators/monikers', validatorNet() || undefined) || {};
   } catch (_) {
     _proposerMonikers = {};
   }
   _proposerMonikersReady = true;
-  for (const span of _proposerPending) fillProposer(span, span.getAttribute('data-proposer'));
-  _proposerPending.clear();
+}
+
+// Validator addresses, per network: both keys of every validator (the
+// consensus key that proposes blocks, and the operator key its r/gnops/valopers
+// profile is registered under) -> {role, moniker, signing, operator, in_set},
+// from /api/validators/addresses. addrLink draws a validator the way it draws a
+// registered name, moniker in place of the address, plus VALIDATOR_MARK at the
+// end, so a validator reads as one on every page and not only on /validators.
+//
+// Loaded per network the first time a link on that network is drawn, and
+// best-effort like the monikers above: a link painted before the index lands
+// leaves a redraw in _validatorPending and fills itself in when it does.
+const VALIDATOR_MARK = '\u{1F6E1}\uFE0F';
+const _validatorIdx = {};
+const _validatorIdxP = {};
+const _validatorPending = new Map();
+// validatorNet is the one network an address link is about, or '' in
+// all-networks mode, where a validator on one chain is nobody on another. The
+// URL wins over the selector because route() copies it across only once it
+// runs, and links drawn before that would otherwise ask the wrong chain.
+function validatorNet(network) {
+  const n = network || urlParam('network') || getNetwork();
+  return n && n !== 'all' ? n : '';
+}
+function validatorIndexFor(net) {
+  if (!net) return Promise.resolve({});
+  return _validatorIdxP[net] || (_validatorIdxP[net] = (async () => {
+    let idx = {};
+    try {
+      // Only a configured network: anything else (a stale bookmark, a payload
+      // naming a chain this instance does not sync) is a 404 from
+      // RejectUnknownNetwork, and a console error on every page that draws an
+      // address for it.
+      const known = (await networksList()).some(x => x.id === net);
+      if (known) idx = await api('validators/addresses', net) || {};
+    } catch (_) {
+      idx = {};
+    }
+    _validatorIdx[net] = idx;
+    const pending = _validatorPending.get(net) || [];
+    _validatorPending.delete(net);
+    for (const redraw of pending) redraw();
+    return idx;
+  })());
+}
+// validatorInfo answers from a loaded index only, starting the load when there
+// is none: undefined is "not known yet", null is "not a validator".
+function validatorInfo(addr, network) {
+  const net = validatorNet(network);
+  if (!net) return null;
+  const idx = _validatorIdx[net];
+  if (!idx) { validatorIndexFor(net); return undefined; }
+  return idx[addr] || null;
+}
+// validatorHref is the one place a validator is linked to: its address page,
+// opened on the validator tab. /validator/<addr> still resolves, to the same.
+function validatorHref(addr, network) {
+  const sfx = netSuffix(network);
+  return '/address/' + addr + sfx + (sfx ? '&' : '?') + 'tab=validator';
+}
+function validatorWhy(v) {
+  return 'validator: ' + (v.role === 'operator'
+    ? 'the operator key, which registered its r/gnops/valopers profile'
+    : 'the consensus key it signs blocks with')
+    + (v.in_set ? '' : ', not in the current set')
+    + (v.moniker ? '\nthe moniker is self-declared on r/gnops/valopers' : '');
 }
 
 // addrInfo resolves an address to {label, why, inferred}.
@@ -2038,31 +2101,12 @@ function addrInfo(addr) {
 // valoper profiles by an *operator* key. Until 2026-10-01 this comment said the
 // two could never be joined, which was true of the realm #84 measured and is
 // not of the one on mainnet and onyx-1 now: r/gnops/valopers stores each
-// profile's SigningAddress, and /api/validators/monikers reads the whole map in
-// one vm/qeval (see valset.go). gnockpit fills gaps on the one chain it
-// describes. _proposerMonikers is that map, fetched once; a miss means the
-// validator never registered a profile, not a bug.
-function proposerEl(addr) {
-  const span = el('span');
-  span.setAttribute('data-hl', addr);
-  span.setAttribute('data-proposer', addr);
-  fillProposer(span, addr);
-  if (!_proposerMonikersReady) _proposerPending.add(span);
-  return span;
-}
-
-// Rebuilt rather than appended to, because this runs a second time on any span
-// painted before the names landed.
-function fillProposer(span, addr) {
-  span.textContent = '';
-  const moniker = _proposerMonikers[addr];
-  if (moniker) {
-    const name = el('span', { style: { fontWeight: 'bold' } }, moniker);
-    name.title = addr;
-    span.appendChild(name);
-    span.append(' ');
-  }
-  span.appendChild(addrLink(addr));
+// profile's SigningAddress. It is an addrLink now, because every address link
+// draws a validator by its moniker (see validatorInfo); it used to prepend the
+// name itself, which left the block page's proposer row, an addrLink, as the
+// one proposer on the site with no name.
+function proposerEl(addr, network) {
+  return addrLink(addr, network);
 }
 function addrLabel(addr) { return (addrInfo(addr) || {}).label || ''; }
 // Single source of truth for abbreviating an address: keep the g1 prefix and the
@@ -2214,9 +2258,32 @@ function identicon(addr, px) {
 }
 
 function addrLinkImpl(addr, network, fallback, plain) {
-  const info = addrInfo(addr);
   const span = el('span');
   span.setAttribute('data-hl', addr);
+  fillAddrLink(span, addr, network, fallback, plain);
+  return span;
+}
+// Rebuilt rather than appended to, because this runs a second time on a link
+// painted before its network's validator index landed.
+function fillAddrLink(span, addr, network, fallback, plain) {
+  span.textContent = '';
+  const val = validatorInfo(addr, network);
+  if (val === undefined && looksLikeAddress(addr)) {
+    const net = validatorNet(network);
+    if (!_validatorPending.has(net)) _validatorPending.set(net, []);
+    _validatorPending.get(net).push(() => fillAddrLink(span, addr, network, fallback, plain));
+  }
+  let info = addrInfo(addr);
+  // A validator is drawn by its moniker, the way a registered account is
+  // drawn by its @name, and without the @: a moniker is not an r/sys/users
+  // name. It wins over a registry label, which moves into the tooltip, so one
+  // validator reads the same on every page whichever of its keys a row holds.
+  if (val) {
+    const also = info && info.label && info.label !== val.moniker ? '\nalso known as ' + info.label : '';
+    info = val.moniker
+      ? { label: val.moniker, why: validatorWhy(val) + also, mark: null }
+      : (info ? { ...info, why: validatorWhy(val) + (info.why ? '\n' + info.why : '') } : null);
+  }
   const icon = identicon(addr);
   if (icon) span.appendChild(icon);
   const a = link(info && !plain ? info.label : fallback, () => navigate('/address/' + addr + netSuffix(network)));
@@ -2245,8 +2312,17 @@ function addrLinkImpl(addr, network, fallback, plain) {
     // taken on trust.
     if (plain) a.title = info.label + '\n' + a.title;
     else span.appendChild(el('span', { className: 'block-ctx' }, ' ' + fallback));
+  } else if (val) {
+    a.title = addr + '\n' + validatorWhy(val);
   }
-  return span;
+  // Last, after the address, and a link of its own: the shield is the way to
+  // the validator tab, where the link text goes to the address's overview.
+  if (val) {
+    const shield = el('a', { className: 'addr-validator', href: validatorHref(addr, network) }, VALIDATOR_MARK);
+    shield.title = validatorWhy(val);
+    shield.addEventListener('click', (e) => { e.preventDefault(); navigate(validatorHref(addr, network)); });
+    span.appendChild(shield);
+  }
 }
 // copyButton returns a small button that puts `text` on the clipboard.
 //
@@ -3308,7 +3384,7 @@ function renderFooterIndexer() {
 // on /govdao/proposals against production on 2026-09-24, both copies of
 // /api/govdao/overview cost the full 2.4s, because both missed a cold server
 // cache at the same moment. The monikers now patch their own cells instead of
-// re-routing (see fillProposer), so that second pass is gone.
+// re-routing (see proposerEl), so that second pass is gone.
 //
 // This map stays, because route() can still be entered twice back to back from
 // a popstate or a fast click, and because two sections of one page can want the
@@ -4271,7 +4347,17 @@ function route() {
   // both slashes and dots and neither is a route separator here.
   else if (path.startsWith('/grc20/')) { view = 'asset-detail'; data = decodeURIComponent(path.slice(7)); }
   else if (path === '/validators') { view = 'validators'; }
-  else if (path.startsWith('/validator/')) { view = 'validator-detail'; data = path.slice(11); }
+  // One page per address: a validator's history is a tab on its address page,
+  // because the key that proposes blocks is also an account, and a reader
+  // should not have to know which of the two pages a key "belongs" on. The old
+  // URL keeps working and lands on the tab.
+  else if (path.startsWith('/validator/')) {
+    const url = new URL(window.location);
+    url.pathname = '/address/' + path.slice(11);
+    url.searchParams.set('tab', 'validator');
+    history.replaceState(null, '', url);
+    return route();
+  }
   else if (path === '/govdao') { view = 'govdao'; }
   // Before the /govdao/<id> prefix below, or parseInt('proposals') sends
   // every named subpage to the proposal-not-found page.
@@ -4376,7 +4462,6 @@ function route() {
     case 'holders': loadHolders(); break;
     case 'asset-detail': loadAssetDetail(data); break;
     case 'validators': loadValidators(); break;
-    case 'validator-detail': loadValidatorDetail(data); break;
     case 'govdao': loadGovDAO(); break;
     case 'govdao-proposals': loadGovDAOProposals(); break;
     case 'govdao-voters': loadGovDAOVoters(); break;
@@ -6654,7 +6739,7 @@ function renderBlockRows() {
       el('td', {}, blockLink(b.height, b.network)),
       el('td', {}, timeEl(b.time)),
       el('td', { style: b.num_txs === 0 ? { color: 'var(--fg2)' } : {} }, String(b.num_txs)),
-      el('td', { className: 'truncate' }, proposerEl(b.proposer_address_raw)),
+      el('td', { className: 'truncate' }, proposerEl(b.proposer_address_raw, b.network)),
       el('td', { className: 'truncate' }, b.hash)
     ), liveRowKey(b.network, b.height), Date.parse(b.time) || 0));
   }
@@ -6679,7 +6764,7 @@ async function loadBlockDetail(height) {
         tbl.appendChild(el('tr', {}, el('td', { style: { color: 'var(--fg2)' } }, l), cell));
       }
       const propRow = el('tr', {}, el('td', { style: { color: 'var(--fg2)' } }, 'proposer'));
-      propRow.appendChild(el('td', {}, addrLink(b.proposer_address_raw)));
+      propRow.appendChild(el('td', {}, proposerEl(b.proposer_address_raw, b.network || data.network)));
       tbl.appendChild(propRow);
       container.appendChild(tbl);
       // Transactions in this block
@@ -8842,13 +8927,17 @@ function livenessSpark(blocks, addr) {
 // either key: the consensus (signing) address that proposes blocks, or the
 // operator address its r/gnops/valopers profile is registered under, which the
 // server resolves through the profile's SigningAddress.
-async function loadValidatorDetail(addr) {
-  const container = clear('validator-detail-content');
+// The address page's validator tab. The address may be either key; the server
+// resolves an operator to the key it signs with.
+async function loadValidatorInto(pane, addr) {
+  pane.textContent = '';
+  const container = el('div');
+  pane.appendChild(container);
   skeletonBlock(container);
   try {
     await apiSWR('validator/' + encodeURIComponent(addr), (data) => renderValidatorDetail(container, data, addr));
   } catch (err) {
-    failBlock(container, err, () => loadValidatorDetail(addr));
+    failBlock(container, err, () => loadValidatorInto(pane, addr));
   }
 }
 
@@ -8858,11 +8947,11 @@ function renderValidatorDetail(container, data, addr) {
   // The URL may name the operator; everything keyed below is the signing key.
   addr = v.address || addr;
 
-  container.appendChild(el('div', { style: { marginBottom: '12px' } },
-    link('\u2190 all validators', () => navigate('/validators' + netSuffix()))));
-
   const head = el('div', { className: 'section' });
-  head.appendChild(el('div', { className: 'section-title' }, v.moniker || v.name || truncAddr(v.address || addr)));
+  const title = el('div', { className: 'section-title' }, (v.moniker || v.name || 'validator') + ' ' + VALIDATOR_MARK + ' ');
+  title.appendChild(el('span', { style: { fontSize: '12px', fontWeight: 'normal' } },
+    link('all validators \u2192', () => navigate('/validators' + netSuffix()))));
+  head.appendChild(title);
   const sub = el('div', { className: 'section-sub' });
   sub.append('signs as ');
   sub.appendChild(addrLink(v.address || addr));
@@ -9043,7 +9132,7 @@ async function loadValidators() {
         // Through to the per-validator page, which is the one view this table
         // cannot be: it is a snapshot, and a validator's story is over time.
         nameCell.appendChild(el('div', { style: { fontSize: '11px' } },
-          link('history', () => navigate('/validator/' + addr + netSuffix()))));
+          link('history', () => navigate(validatorHref(addr)))));
         const vp = Number(m.voting_power || 0);
         const prop = (m.proposals || [])[0];
         const cells = [
@@ -9143,7 +9232,7 @@ function renderValoperRows(container) {
     // validator by the key the chain and every alert name it by.
     const seat = seated.get(addr);
     toggleRow.appendChild(el('td', {}, seat
-      ? el('span', {}, link('power ' + fmtNum(Number(seat.voting_power)), () => navigate('/validator/' + seat.address + netSuffix())),
+      ? el('span', {}, link('power ' + fmtNum(Number(seat.voting_power)), () => navigate(validatorHref(seat.address))),
         el('div', { style: { fontSize: '11px', color: 'var(--fg2)' } }, seat.address))
       : el('span', { style: { color: 'var(--fg2)' } }, 'no')));
     toggleRow.appendChild(el('td', {}, blockWithAge(created.block_height, created.block_time)));
@@ -17538,7 +17627,7 @@ function renderAddressIdentity(container, ident, addr, network, deploys) {
   if (vs) {
     const name = vs.moniker ? el('span', { style: { color: 'var(--accent)' } }, vs.moniker) : el('span', {}, 'unnamed');
     const r = row('validator', name, ' · ');
-    r.appendChild(link('its validator page →', () => navigate('/validator/' + vs.signing + netSuffix(network))));
+    r.appendChild(link('the validator tab →', () => { urlSetParam('tab', 'validator'); location.reload(); }));
     if (vs.moniker) r.append(' · self-declared on r/gnops/valopers, so anyone may claim any name');
     if (vs.role === 'operator') {
       const k = row('signs as', addrLink(vs.signing));
@@ -17800,6 +17889,7 @@ const ADDRESS_TAB_ICONS = {
   deploys: () => icon('bubbles'),
   sessions: () => icon('call'),
   achievements: () => icon('info'),
+  validator: () => icon('shield'),
 };
 
 // How many transaction rows one page of the transactions tab draws.
@@ -17824,9 +17914,13 @@ async function loadAddressDetail(addr, urlTab) {
     // like the two above: it makes a live RPC call, and a node that is down must
     // cost this page its identity panel and not its transactions.
     const whatPath = { path: 'address/' + addr + '/identity', fallback: null };
-    await apiSWR(['address/' + addr, 'blocks?limit=50', sessionsPath, identityPath, whatPath],
-      ([data, blocksData, sessionsData, identityData, whatData]) => {
-        renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, whatData, urlTab);
+    // Whether the validator tab exists. A path of the page's own rather than a
+    // read of validatorInfo, which on a cold load is still empty when this
+    // renders and, unlike a link, a tab strip cannot patch itself afterwards.
+    const valPath = { path: 'validators/addresses', fallback: {} };
+    await apiSWR(['address/' + addr, 'blocks?limit=50', sessionsPath, identityPath, whatPath, valPath],
+      ([data, blocksData, sessionsData, identityData, whatData, valIdx]) => {
+        renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, whatData, urlTab, (valIdx || {})[addr]);
       });
   } catch (err) {
     container.textContent = '';
@@ -17834,7 +17928,7 @@ async function loadAddressDetail(addr, urlTab) {
   }
 }
 
-function renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, whatData, urlTab) {
+function renderAddressDetail(container, addr, data, blocksData, sessionsData, identityData, whatData, urlTab, valEntry) {
   ++_detailGen;
   const gen = _detailGen;
   destroyDetailCharts();
@@ -17857,7 +17951,22 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
   container.appendChild(titleRow);
 
   const info = addrInfo(addr);
-  if (info) {
+  // The identity endpoint places the address in the set whenever one network
+  // is selected; the index is the fallback for when its live read failed.
+  const network = txs[0]?.network || urlParam('network');
+  // Not in all-networks mode, where the server answers for its first chain and
+  // a validator there is nobody on the others: the links say so by drawing no
+  // shield, and the header and the tab must agree with them.
+  const vset = whatData?.valset || (validatorNet(network) ? valEntry || validatorInfo(addr, network) : null);
+  if (vset) {
+    // Moniker first, as every link to this address draws it, and the shield
+    // says why the name is not an @name.
+    const labelRow = el('div', { style: { color: 'var(--accent)', marginBottom: '4px', fontSize: '16px' } },
+      (vset.moniker || 'validator') + ' ' + VALIDATOR_MARK);
+    labelRow.title = validatorWhy(vset);
+    if (info && info.label !== vset.moniker) labelRow.appendChild(el('span', { style: { color: 'var(--fg2)', fontSize: '13px' } }, ' \u00b7 ' + info.label));
+    container.appendChild(labelRow);
+  } else if (info) {
     const labelRow = el('div', { style: { color: 'var(--accent)', marginBottom: '4px', fontSize: '16px' } }, info.label);
     if (info.why) { labelRow.title = info.why; }
     if (info.inferred) labelRow.append(' (inferred)');
@@ -17887,7 +17996,7 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
   // identical otherwise, and the empty table below is the wrong first answer to
   // both. The panel is the summary; the session card under it is the detail,
   // and it only draws for the one kind that has any.
-  renderAddressIdentity(container, whatData, addr, txs[0]?.network || urlParam('network'), pkgs.length);
+  renderAddressIdentity(container, whatData, addr, network, pkgs.length);
   renderSessionIdentity(container, identityData, addr);
 
   const sessionCount = (sessionsData?.supported && (sessionsData.sessions || []).length) || 0;
@@ -17973,8 +18082,14 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
   }
 
   // --- the strip ---
+  const requested = urlParam('tab') || urlTab;
   const spec = [
     { id: 'overview', build: (pane) => renderAddressOverview(pane, addr, data, txs, d) },
+    // Second, because for a validator it is the reason anyone opened the page.
+    // Also drawn when the URL asks for it, which is what /validator/<addr>
+    // redirects to: the tab then says whether this is a validator at all
+    // rather than the page quietly falling back to the overview.
+    { id: 'validator', when: !!vset || requested === 'validator', build: (pane) => loadValidatorInto(pane, addr) },
     // Transactions, matching the headline tile and the rows below: the tab
     // draws one per transaction, so counting messages here would promise a
     // number the pane cannot reach.
@@ -17993,7 +18108,6 @@ function renderAddressDetail(container, addr, data, blocksData, sessionsData, id
   // paints twice: a reader who switches tab during the cached pass would be
   // thrown back to the default when the fresh one lands. The tab click writes
   // the URL, so the URL is the state that survives.
-  const requested = urlParam('tab') || urlTab;
   const activeTab = names.includes(requested) ? requested : 'overview';
 
   const strip = el('div', { className: 'tabs' });
@@ -21710,7 +21824,7 @@ document.querySelectorAll('.stat-link').forEach(tile => {
 // first paint would show raw addresses that then silently rewrite themselves.
 loadAddrLabels().then(loadNamespaceOwners).then(() => { initNetworkSelector(); startHealthPolling(); });
 // Not gated on anything, and it no longer re-routes: the proposer cells patch
-// themselves when the names land (see fillProposer). Re-routing here doubled
+// themselves when the names land (see fillAddrLink). Re-routing here doubled
 // every endpoint on every cold page load, on every page, to repaint at most
 // three cells on three of them.
 proposerMonikersReady();
@@ -22408,7 +22522,7 @@ function onLiveBlock(block, network) {
     el('td', {}, blockLink(block.height, network)),
     el('td', {}, timeEl(block.time || new Date().toISOString())),
     el('td', { style: block.num_txs === 0 ? { color: 'var(--fg2)' } : {} }, String(block.num_txs || 0)),
-    el('td', { className: 'truncate' }, proposerEl(block.proposer_address_raw)),
+    el('td', { className: 'truncate' }, proposerEl(block.proposer_address_raw, network)),
     el('td', { className: 'truncate' }, block.hash || '-')
   );
   tr.classList.add('live-new');
