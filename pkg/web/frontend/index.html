@@ -26873,10 +26873,18 @@ function loadCarto() {
 // place, a repository is the same repository whichever network its realms end
 // up on, and a selector that changes nothing is worse than no selector.
 //
-// The window (7/30/90 days) is module state rather than a URL parameter for
-// now, which is a real limitation: a link to this page cannot carry it. Worth
-// promoting to the query string if anyone links a window.
-let _ghgWindow = 30;
+// The window is all time by default, or one calendar year, and it lives in
+// ?window= so a link carries it: "who was building in 2024" is a question
+// somebody sends to somebody else. The year pills come from the data (the
+// overview's `years`), so there is never a pill for a year with nothing in it.
+function ghgWindow() {
+  const w = urlParam('window');
+  return /^\d{4}$/.test(w || '') ? w : 'all';
+}
+
+function ghgWindowName(w) {
+  return w === 'all' ? 'all time' : w;
+}
 
 function loadLabGitHub() {
   const root = clear('labgithub-content');
@@ -26888,18 +26896,30 @@ function loadLabGitHub() {
       'Both halves are here: activity on the repositories somebody curated, and discovery of ' +
       'the ones nobody did.')));
 
-  const pills = el('div', { className: 'gh-pills' },
-    el('span', { className: 'gh-pills-label' }, 'window'));
-  for (const d of [7, 30, 90]) {
-    const b = el('button', { className: 'gh-pill' + (d === _ghgWindow ? ' on' : '') }, d + ' days');
-    b.addEventListener('click', () => { if (d === _ghgWindow) return; _ghgWindow = d; loadLabGitHub(); });
-    pills.appendChild(b);
-  }
-  root.appendChild(pills);
-
   const body = el('div');
   root.appendChild(body);
   ghgRender(body);
+}
+
+// ghgPills draws "all" and one pill per year that holds a pull request,
+// newest first. A year from a link that the data does not hold still gets a
+// pill, lit, so the reader can see which window the empty tables are for.
+function ghgPills(years) {
+  const cur = ghgWindow();
+  const list = ['all', ...(years || []).map(String)];
+  if (!list.includes(cur)) list.push(cur);
+  const pills = el('div', { className: 'gh-pills' },
+    el('span', { className: 'gh-pills-label' }, 'window'));
+  for (const w of list) {
+    const b = el('button', { className: 'gh-pill' + (w === cur ? ' on' : '') }, w);
+    b.addEventListener('click', () => {
+      if (w === ghgWindow()) return;
+      urlSetParam('window', w === 'all' ? '' : w);
+      loadLabGitHub();
+    });
+    pills.appendChild(b);
+  }
+  return pills;
 }
 
 // ghgRender paints the four sections. The render callback rebuilds `into`
@@ -26907,11 +26927,11 @@ function loadLabGitHub() {
 // fresh) and appending to what the first pass drew is how you get two of
 // everything.
 function ghgRender(into) {
-  const d = _ghgWindow;
+  const d = ghgWindow();
   apiSWR([
-    { path: 'lab/github/overview?days=' + d },
-    { path: 'lab/github/contributors?days=' + d + '&limit=40' },
-    { path: 'lab/github/prs?days=' + d + '&limit=40' },
+    { path: 'lab/github/overview?window=' + d },
+    { path: 'lab/github/contributors?window=' + d + '&limit=40' },
+    { path: 'lab/github/prs?window=' + d + '&limit=40' },
     { path: 'lab/github/repos?limit=500' },
   ], ([ov, people, prs, repos]) => {
     into.textContent = '';
@@ -26939,10 +26959,11 @@ function ghgRender(into) {
           'A run of 401s means the token is wrong or expired. The zeros below are ',
           'the absence of data, not a measurement.')));
     }
+    into.appendChild(ghgPills(ov.years));
     into.appendChild(ghgStats(ov));
     into.appendChild(ghgSyncNote(ov));
     into.appendChild(ghgNewContributors(people));
-    into.appendChild(ghgTopContributors(people));
+    into.appendChild(ghgTopContributors(people, d));
     into.appendChild(ghgRepoActivity(prs));
     into.appendChild(ghgRecentPRs(prs));
     into.appendChild(ghgDiscovered(repos));
@@ -27051,32 +27072,53 @@ function ghgNewContributors(people) {
     ghgTable(['who', 'repo', 'their first merge', 'when', 'merges since'], rows));
 }
 
-function ghgTopContributors(people) {
+// All time and a year are two different tables, not one table with a filter:
+// a year ranks by what was earned in it and counts that year's pull requests,
+// reviews and comments, with the all-time score beside it for scale. Commits
+// are all-time only, GitHub does not date them, so the year table drops the
+// column rather than print a number that is not that year's.
+function ghgTopContributors(people, win) {
   const list = (people && people.top) || [];
   const sc = (people && people.scoring) || {};
   const pts = sc.points || {};
-  const rows = list.map((c, i) => el('tr', {},
-    el('td', {}, String(i + 1)),
-    el('td', {}, ghgUser(c.login)),
-    el('td', { title: (c.by_tier || []).map((v, t) => 'tier ' + (t + 1) + ': ' + v).join(', ') },
-      ghgScore(c.score)),
-    el('td', {}, ghgScore(c.window_score)),
-    el('td', {}, fmtNum(c.merged_prs || 0)),
-    el('td', {}, fmtNum(c.reviews || 0)),
-    el('td', {}, fmtNum(c.comments || 0)),
-    el('td', {}, fmtNum(c.commits || 0)),
-    el('td', { className: 'gh-dim' }, (c.repos || []).slice(0, 4).join(', ') +
-      ((c.repos || []).length > 4 ? ' +' + (c.repos.length - 4) : ''))));
+  const year = win !== 'all';
+  const tierTitle = c => (c.by_tier || []).map((v, t) => 'tier ' + (t + 1) + ': ' + v).join(', ');
+  const mostly = c => el('td', { className: 'gh-dim' }, (c.repos || []).slice(0, 4).join(', ') +
+    ((c.repos || []).length > 4 ? ' +' + (c.repos.length - 4) : ''));
+  const rows = list.map((c, i) => year
+    ? el('tr', {},
+      el('td', {}, String(i + 1)),
+      el('td', {}, ghgUser(c.login)),
+      el('td', { title: tierTitle(c) }, ghgScore(c.window_score)),
+      el('td', {}, ghgScore(c.score)),
+      el('td', {}, fmtNum(c.recent_merged || 0)),
+      el('td', {}, fmtNum(c.window_reviews || 0)),
+      el('td', {}, fmtNum(c.window_comments || 0)),
+      mostly(c))
+    : el('tr', {},
+      el('td', {}, String(i + 1)),
+      el('td', {}, ghgUser(c.login)),
+      el('td', { title: tierTitle(c) }, ghgScore(c.score)),
+      el('td', {}, fmtNum(c.merged_prs || 0)),
+      el('td', {}, fmtNum(c.reviews || 0)),
+      el('td', {}, fmtNum(c.comments || 0)),
+      el('td', {}, fmtNum(c.commits || 0)),
+      mostly(c)));
   const legend = (sc.tiers || []).map(t => 'tier ' + t.tier + ' ×' + t.weight + ' ' + t.rule).join(' · ');
+  const headers = year
+    ? ['#', 'who', 'score in ' + win, 'all time', 'merged PRs', 'reviews', 'comments', 'mostly in']
+    : ['#', 'who', 'score', 'merged PRs', 'reviews', 'comments', 'commits', 'mostly in'];
   return ghgSection('who is building',
-    'Ranked by score, all time. A merged pull request is ' + (pts.merged_pr || 1) + ' point; a review or ' +
+    (year ? 'Ranked by the score earned in ' + win + ', with the all-time score beside it; nobody who ' +
+      'earned nothing that year is listed. ' : 'Ranked by score, all time. ') +
+    'A merged pull request is ' + (pts.merged_pr || 1) + ' point; a review or ' +
     'a comment on somebody else\'s pull request ' + (pts.review || 0.1) + '; a commit beyond your merged ' +
     'pull requests ' + (pts.extra_commit || 0.1) + ', which is what a repository that merges with merge ' +
     'commits adds. Every point is then weighed by where it was earned: ' + legend + '. ' +
     'Raw commit counts are not the ranking because they measure how a repository merges: a squashed ' +
-    'pull request is one commit, a merged branch is all of them. The window column is the same rule over ' +
-    'the window, without the commit term, which GitHub does not date.',
-    ghgTable(['#', 'who', 'score', 'in window', 'merged PRs', 'reviews', 'comments', 'commits', 'mostly in'], rows));
+    'pull request is one commit, a merged branch is all of them.' +
+    (year ? ' A year\'s score has no commit term, because GitHub does not date commits.' : ''),
+    ghgTable(headers, rows));
 }
 
 function ghgScore(v) {

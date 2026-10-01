@@ -1770,9 +1770,9 @@ its own, and this table is not it.
 ## The GitHub lab
 
 ```
-GET /api/lab/github/overview?days=
-GET /api/lab/github/contributors?days=&limit=
-GET /api/lab/github/prs?days=&limit=&state=merged|open
+GET /api/lab/github/overview?window=all|<year>
+GET /api/lab/github/contributors?window=&limit=
+GET /api/lab/github/prs?window=&limit=&state=merged|open
 GET /api/lab/github/repos?kind=&source=&limit=
 ```
 
@@ -1789,7 +1789,12 @@ projects found by searching GitHub that nobody curated, each row carrying the
 query and the file that matched. Discovered repositories are walked too, but
 only the contributor score reads them; every window figure is the curated set.
 
-`days` defaults to 30 and is capped at 365.
+`window` is `all` (the default) or a calendar year in UTC, such as `2025`;
+anything else is a 400. `overview.years` lists the years that hold at least one
+tracked pull request, newest first, which is what the page draws its pills
+from. The older `days` (a trailing window, capped at 365) is still honoured
+when `window` is absent. Every windowed response echoes the window it counted
+under `window`, as `{label, since, until}`, the bounds half-open.
 
 ### How `contributors.top` is ranked
 
@@ -1816,9 +1821,12 @@ Every point is multiplied by the repository's tier:
 | 3 | 0.25 | gnoverse/* and the staff-picked list (`pkg/ghlab/seeds.go`, `-github-repos`) |
 | 4 | 0.1 | everything else discovery found, capped at 25 points per person per repository (one discovered repository had 2,000 pull requests merged by their own author) |
 
-Each row carries `score`, `window_score` (the same rule over `days`, without the
-commit term, which GitHub does not date), `by_tier`, and the raw `merged_prs`,
-`reviews`, `comments` and `commits` it was built from. The response carries the
+All time ranks by `score`. A year (or `days`) ranks by `window_score`, the same
+rule over the window without the commit term, which GitHub does not date, and
+leaves out anyone who earned nothing in it. Each row carries both scores,
+`by_tier` (split of whichever one ranked), the all-time `merged_prs`,
+`reviews`, `comments` and `commits`, and the window's `recent_merged`,
+`window_reviews` and `window_comments`. The response carries the
 rules themselves under `scoring`, so a client prints the legend from the code
 that applies it. Weights live in `pkg/ghlab/score.go`.
 
