@@ -13,11 +13,11 @@ import (
 //     interns and what gnockpit reports, and the two agree exactly (verified
 //     against mainnet 2026-09-20: all four addresses matched).
 //   - The **operator** address registers in `r/gnops/valopers`. It is what
-//     `valoper_registrations` holds, and nothing on chain maps it to the
-//     consensus key.
+//     `valoper_registrations` holds. The realm itself maps it to the consensus
+//     key (each profile stores SigningAddress), and the API joins the two live
+//     from the realm rather than from this log (pkg/httpapi/valset.go).
 //
-// Everything in this file is keyed on the consensus address. The registration
-// log is deliberately left alone rather than joined to it.
+// Everything in this file is keyed on the consensus address.
 
 // ProposedBlock is one block a validator proposed.
 type ProposedBlock struct {

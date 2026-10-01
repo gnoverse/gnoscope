@@ -47,12 +47,12 @@ func gnockpitDown(t *testing.T) {
 // gnockpitUp serves a two-validator set whose addresses match the seeded
 // proposers, which is the real-world case: verified against mainnet on
 // 2026-09-20, gnockpit's addresses and the interned proposer addresses agreed
-// exactly.
+// exactly. It claims chain alpha-1, which is what fakeChain reports.
 func gnockpitUp(t *testing.T) {
 	t.Helper()
 	resetGnockpitCache(t)
 	useGnockpitFake(t, func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"validators":[
+		io.WriteString(w, `{"chain":"alpha-1","validators":[
 			{"name":"val-a","address":"g1val_a","voting_power":"60","spof":false,"missed_100":0,"missed_24h":3,"avg_block_ms":3300},
 			{"name":"val-b","address":"g1val_b","voting_power":"60","spof":true,"missed_100":1,"missed_24h":0,"avg_block_ms":3100}
 		]}`)
@@ -63,6 +63,7 @@ func gnockpitUp(t *testing.T) {
 func TestValidatorDetail(t *testing.T) {
 	api, db := newTestAPI(t)
 	gnockpitDown(t)
+	resetValset(t)
 	seedProposedBlocks(t, db)
 
 	rec := httptest.NewRecorder()
@@ -80,7 +81,7 @@ func TestValidatorDetail(t *testing.T) {
 	if resp.Validator.Blocks != 4 {
 		t.Errorf("blocks = %d, want 4", resp.Validator.Blocks)
 	}
-	// Not in the live set, because gnockpit is unreachable here. The page uses
+	// Not in the live set, because no RPC is configured here. The page uses
 	// this to say "proposed blocks but is not listed now" rather than showing a
 	// validator that looks active.
 	if resp.InSet {
@@ -99,6 +100,7 @@ func TestValidatorDetail(t *testing.T) {
 func TestValidatorDetailUnknownAddress(t *testing.T) {
 	api, db := newTestAPI(t)
 	gnockpitDown(t)
+	fakeChain(t, api, "alpha-1")
 	seedProposedBlocks(t, db)
 
 	rec := httptest.NewRecorder()
@@ -143,6 +145,7 @@ func TestValidatorShareSeries(t *testing.T) {
 func TestValidatorDetailMergesLiveWithHistory(t *testing.T) {
 	api, db := newTestAPI(t)
 	gnockpitUp(t)
+	fakeChain(t, api, "alpha-1")
 	seedProposedBlocks(t, db)
 
 	rec := httptest.NewRecorder()
@@ -160,7 +163,7 @@ func TestValidatorDetailMergesLiveWithHistory(t *testing.T) {
 	if !resp.InSet {
 		t.Error("in_set = false with gnockpit listing this address")
 	}
-	if resp.Validator.Name != "val-a" || resp.Validator.Missed24h != 3 {
+	if resp.Validator.Missed24h == nil || *resp.Validator.Missed24h != 3 {
 		t.Errorf("live half missing: %+v", resp.Validator)
 	}
 	if resp.Validator.Blocks != 4 {
@@ -173,6 +176,7 @@ func TestValidatorDetailMergesLiveWithHistory(t *testing.T) {
 func TestValidatorDetailForALiveMemberWithNoBlocks(t *testing.T) {
 	api, _ := newTestAPI(t)
 	gnockpitUp(t)
+	fakeChain(t, api, "alpha-1")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/validator/x?network=alpha", nil)

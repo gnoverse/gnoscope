@@ -96,34 +96,39 @@ func (a *API) HandleValidators(w http.ResponseWriter, r *http.Request) {
 	JSONResponse(w, regs)
 }
 
-// HandleValidatorMonikers serves consensus-address -> name, sourced from
-// gnockpit (see gnockpit.go) rather than this chain's own data: a block
-// proposer is identified by its consensus key, which the valopers realm
-// never records (it registers the *operator* key instead — see the comment
-// on proposerEl in frontend/index.html), so nothing indexed here can answer
-// this. Best-effort: an empty map means gnockpit could not be reached, not
-// an error, since a page that can label proposers most of the time is
-// better than one that breaks whenever a third party is briefly down.
-
+// HandleValidatorMonikers serves signing-address -> name for one network, for
+// labelling block proposers. r/gnops/valopers is the source, through the
+// SigningAddress it stores per profile (see valset.go), so it names validators
+// on any chain, including ones registered and not yet in the set. gnockpit
+// fills the gaps, on the one chain it describes. Best-effort: an unreachable
+// RPC yields {}, not an error.
 func (a *API) HandleValidatorMonikers(w http.ResponseWriter, r *http.Request) {
-	monikers := FetchGnockpitMonikers(r.Context())
-	if monikers == nil {
-		monikers = map[string]string{}
+	vs := a.FetchValset(r.Context(), a.singleNetwork(r))
+	monikers := map[string]string{}
+	for signing, p := range vs.Valopers {
+		if p.Moniker != "" {
+			monikers[signing] = p.Moniker
+		}
+	}
+	for _, m := range vs.Members {
+		if m.Name != "" {
+			monikers[m.Address] = m.Name
+		}
 	}
 	JSONResponse(w, monikers)
 }
 
-// HandleValidatorsLive serves gnockpit's live consensus validator set —
-// voting power, missed-block counts, SPOF and average block time — the same
-// disjoint consensus-address identity space as HandleValidatorMonikers (see
-// its comment). Best-effort like that handler: an empty list means gnockpit
-// could not be reached, not an error.
+// HandleValidatorsLive serves one network's current validator set, from that
+// network's own RPC, joined with the valopers profile and the proposals that
+// changed each member (see valset.go). Until 2026-10-01 this served gnockpit's
+// mainnet set for every network. Best-effort: an unreachable RPC yields [].
 func (a *API) HandleValidatorsLive(w http.ResponseWriter, r *http.Request) {
-	validators := FetchGnockpitValidators(r.Context())
-	if validators == nil {
-		validators = []GnockpitValidator{}
+	vs := a.FetchValset(r.Context(), a.singleNetwork(r))
+	members := vs.Members
+	if members == nil {
+		members = []ValsetMember{}
 	}
-	JSONResponse(w, validators)
+	JSONResponse(w, members)
 }
 
 func (a *API) HandleTokens(w http.ResponseWriter, r *http.Request) {
