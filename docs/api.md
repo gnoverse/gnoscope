@@ -926,12 +926,14 @@ awards the badge when a grant's `Sequence` has moved. A live read can only ever
 add a badge, never remove one, so the two cannot disagree; the directory does
 not do it, because that would be one RPC call per row.
 
-Four badges in the `tools` group are decided by the transaction **memo**, which
-is the only place the chain records which client composed a transaction.
-⚠️ A memo is free text the signer chose, so these are evidence of a claim and
-not proof of one: anyone can type `gnopublish` into a memo. The `what` line of
-each says so. Adena, gnoweb and `gnokey` stamp nothing (measured over 46,445
-mainnet transactions on 2026-09-29), which is why there is no badge for them.
+Two badges in the `tools` group (`tool-gnoswap`, `tool-gnomi`) are decided by
+the transaction **memo**, which is the only place the chain records which client
+composed a transaction. ⚠️ A memo is free text the signer chose, so these are
+evidence of a claim and not proof of one: anyone can type `gnomi` into a memo.
+The `what` line of each says so. Adena, gnoweb and `gnokey` stamp nothing
+(measured over 46,445 mainnet transactions on 2026-09-29), which is why there is
+no badge for them. The third, `bubblerumble`, reads the realm instead: a `Bid`
+on any of Jae's `bubblerumble*` realms, which is a recorded call and not a claim.
 
 Badges in the `volume` group carry `of` and `threshold`: the slug of the rung
 below and the count it takes, so a page can draw `first-tx -> tx-10 -> tx-100 ->

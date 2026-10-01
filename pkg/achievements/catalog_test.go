@@ -165,28 +165,34 @@ func TestTiersFormALadder(t *testing.T) {
 	}
 }
 
-// A tool badge reads a memo, and a memo is free text the signer chose.
+// A tool badge reads either a memo or the realm itself, and a memo is free
+// text the signer chose.
 //
-// The What line is the only place that honesty is recorded, so it has to quote
-// the string being matched: "signed a transaction stamped X" is a claim about
-// the memo, and "used X" would be a claim about the client, which the chain
-// does not record and nobody can check.
+// The What line is the only place that honesty is recorded, so a memo badge has
+// to quote the string being matched: "signed a transaction stamped X" is a
+// claim about the memo, and "used X" would be a claim about the client, which
+// the chain does not record and nobody can check. A badge that reads the realm
+// instead (bubblerumble) is a fact about a call, and is held to naming the call.
 func TestToolBadgesReadTheMemoAndSaySo(t *testing.T) {
-	tools := 0
+	memos, realms := 0, 0
 	for _, d := range Catalog {
 		if d.Group != GroupTools {
 			continue
 		}
-		tools++
-		if !strings.Contains(d.SQL, "tx_memos") {
-			t.Errorf("%s is a tool badge that does not read tx_memos: %s", d.Slug, d.SQL)
-		}
-		if !strings.Contains(d.What, "memo") && !strings.Contains(d.What, "stamped") {
-			t.Errorf("%s: What claims the tool was used rather than that the memo says so: %q", d.Slug, d.What)
+		switch {
+		case strings.Contains(d.SQL, "tx_memos"):
+			memos++
+			if !strings.Contains(d.What, "memo") && !strings.Contains(d.What, "stamped") {
+				t.Errorf("%s: What claims the tool was used rather than that the memo says so: %q", d.Slug, d.What)
+			}
+		case strings.Contains(d.SQL, "FROM calls") && strings.Contains(d.SQL, "pkg_path"):
+			realms++
+		default:
+			t.Errorf("%s is a tool badge that reads neither tx_memos nor a realm's calls: %s", d.Slug, d.SQL)
 		}
 	}
-	if tools == 0 {
-		t.Error("no tool badges in the catalog, so this test proves nothing")
+	if memos == 0 || realms == 0 {
+		t.Errorf("tools group has %d memo badges and %d realm badges; both kinds should be exercised", memos, realms)
 	}
 }
 

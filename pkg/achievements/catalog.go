@@ -192,16 +192,16 @@ func nthSQL(inner, dedup string, n int) string {
 // memoBadgeSQL awards a badge to the signer of any transaction whose memo
 // matches pred, which is a SQL predicate over the alias `m` (tx_memos).
 //
-// Written as a builder because the four tool badges differ only in that
-// predicate, and a hand-copied four-way union per badge is four chances to
-// forget one of the message tables. The join is driven from tx_memos, which is
+// Written as a builder because the memo badges differ only in that predicate,
+// and a hand-copied four-way union per badge is four chances to forget one of
+// the message tables. The join is driven from tx_memos, which is
 // both the small side (only transactions carrying a memo are stored) and the
 // indexed one (idx_tx_memos_memo), so the predicate narrows first and the
 // message tables are then hit by (network, tx_hash).
 //
 // pred is interpolated, not bound: every caller is a constant in this file, and
 // a bound parameter cannot express the LIKE one of them needs alongside the
-// three equalities. Nothing here may ever take a predicate from a request.
+// equality. Nothing here may ever take a predicate from a request.
 func memoBadgeSQL(pred string) string {
 	return fmt.Sprintf(`SELECT address, MIN(block_height) AS block_height, block_time, tx_hash FROM (
 		SELECT c.caller AS address, m.block_height, m.block_time, m.tx_hash
@@ -547,11 +547,14 @@ var Catalog = []Def{
 	// composed a transaction. Nothing else survives: the signature says who,
 	// the messages say what, and the tool that assembled them is gone by the
 	// time a block has it. Four tools stamp one, measured over 46,445 mainnet
-	// transactions sampled 2026-09-29 at five points across the chain.
+	// transactions sampled 2026-09-29 at five points across the chain. Two of
+	// them get a badge: gnopublish and gnoblog-cli had one each and lost it,
+	// because a badge for a single-purpose CLI teaches too narrow a thing to
+	// be worth a slot in the grid.
 	//
 	// ⚠️ A memo is free text the signer chooses, so every badge here is
 	// evidence of a claim rather than proof of one: anyone can type
-	// "gnopublish" into a memo and earn the badge without ever running it.
+	// "gnomi" into a memo and earn the badge without ever opening the app.
 	// That is worth having anyway, because the honest reading of the badge is
 	// "this transaction says it came from X", which is exactly what the What
 	// lines say. Nothing downstream should treat it as attestation.
@@ -561,23 +564,15 @@ var Catalog = []Def{
 	// stamps nothing and there is no honest query to write. The same is true of
 	// gnoweb and of gnokey itself. If Adena ever starts stamping one, this is
 	// the group the badge belongs in.
+	//
+	// A dapp that stamps nothing can still have a badge here when its realm is
+	// the evidence: a call to the realm is a fact the chain records, not a
+	// claim the signer typed, so it needs no memo and no caveat.
 	{
 		Slug: "tool-gnoswap", Name: "Traded on gnoswap.io", Emoji: "🔀", Group: GroupTools,
 		What: "signed a transaction stamped `Executed through gnoswap.io`, the memo the GnoSwap web app writes",
 		How:  "swap something on gnoswap.io. The app stamps the memo for you; the DEX itself is a set of realms you can also call directly.",
 		SQL:  memoBadgeSQL(`m.memo = 'Executed through gnoswap.io'`),
-	},
-	{
-		Slug: "tool-gnopublish", Name: "Deployed with gnopublish", Emoji: "🚀", Group: GroupTools,
-		What: "signed a transaction stamped `gnopublish`",
-		How:  "gnopublish wraps addpkg so publishing a package is one command rather than a path, a directory and a gas figure you had to measure first.",
-		SQL:  memoBadgeSQL(`m.memo = 'gnopublish'`),
-	},
-	{
-		Slug: "tool-gnoblog", Name: "Posted with gnoblog-cli", Emoji: "✍️", Group: GroupTools,
-		What: "signed a transaction stamped `Posted from gnoblog-cli`",
-		How:  "gnoblog-cli publishes a markdown file to a blog realm as one call, front matter and all, instead of hand-escaping a post into an argument.",
-		SQL:  memoBadgeSQL(`m.memo = 'Posted from gnoblog-cli'`),
 	},
 	{
 		Slug: "tool-gnomi", Name: "Used Gnomi", Emoji: "🎰", Group: GroupTools,
@@ -589,6 +584,23 @@ var Catalog = []Def{
 		// awarding this. LIKE is case-insensitive for ASCII in SQLite, which is
 		// what makes one pattern cover both.
 		SQL: memoBadgeSQL(`m.memo LIKE 'gnomi%'`),
+	},
+	{
+		Slug: "bubblerumble", Name: "Played Bubble Rumble", Emoji: "🫧", Group: GroupTools,
+		What: "placed a Bid on one of Jae's bubblerumble realms (`gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble*`)",
+		How:  "open bubblerumble.net, pick a bubble and bid on it. Every bid is a call to the realm, so the game is also a working example of a realm that holds a pot, runs a clock and pays out on chain.",
+		// Bid, and only Bid: it is the one crossing function every generation
+		// of the realm has, and the one a player calls. CreatePool, Claim and
+		// Cancel are the host's or the payout, and the keeper functions from
+		// bubblerumble4 on (Heartbeat, Commit, Reveal, Settle) are the
+		// operator's. The path is matched by prefix because the realm is
+		// redeployed under a new number (bubblerumble2 through 5 so far) rather
+		// than upgraded in place, and a sixth must not silently stop awarding.
+		SQL: `SELECT caller AS address, MIN(block_height) AS block_height, block_time, tx_hash
+			FROM calls
+			WHERE network = @net AND success = 1 AND func_name = 'Bid'
+			  AND pkg_path LIKE 'gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble%'
+			GROUP BY caller`,
 	},
 
 	// --- governance --------------------------------------------------------
