@@ -76,10 +76,6 @@
 .carto-empty { padding: 60px 20px; text-align: center; color: var(--fg2); }
 .carto-err { padding: 40px 20px; text-align: center; color: var(--accent2); }
 
-/* Hover affordance for the SVG views. Cursor only: a stroke change on hover
-   fights the highlight each view already paints, and two highlights reading as
-   one thing is how you end up pointing at the wrong building. */
-.carto-stage [data-cp] { cursor: pointer; }
 
 /* Which chain is drawn. These endpoints resolve "all networks" to one chain of
    their own accord, so the answer is not derivable from the header selector. */
@@ -98,3 +94,29 @@
   .carto-stage { overflow-x: auto; overflow-y: hidden; }
   .carto-stage svg, .carto-stage canvas { min-width: 760px; width: 760px; }
 }
+
+/* The camera chrome: zoom in, zoom out, reset. Floated over the stage rather
+   than added to the control bar, because it acts on the drawing under it and a
+   reader who has panned somewhere wants the way back next to where they are
+   looking, not back up at the top of the page. */
+.carto-cam { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px;
+  z-index: 2; }
+.carto-cam button { background: rgba(20,20,20,.86); border: 1px solid var(--border);
+  color: var(--fg2); font: inherit; font-size: 12px; line-height: 1; padding: 5px 9px;
+  border-radius: 4px; cursor: pointer; backdrop-filter: blur(3px); }
+.carto-cam button:hover { color: var(--fg); border-color: var(--fg2); }
+
+/* Grab affordance. The drawing is pannable everywhere, so the cursor is the
+   only thing that says so before the reader tries it. */
+.carto-stage svg, .carto-stage canvas { cursor: grab; }
+.carto-stage.carto-dragging svg { cursor: grabbing; }
+/* A shape that navigates keeps its own pointer, over the grab. */
+.carto-stage [data-cp] { cursor: pointer; }
+
+/* A hint that there is more map than is on screen, shown only once the reader
+   has actually moved the camera. */
+.carto-stage.carto-zoomed { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* The compass readout sits with the rotate buttons and is a button itself
+   (click to face north again), so it must not look like a label. */
+.carto-bar .carto-grp button { white-space: nowrap; }

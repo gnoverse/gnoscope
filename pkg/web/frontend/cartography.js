@@ -75,12 +75,21 @@ var S = {
   window: '30d',
   metric: 'calls',
   roads: true,     // the city's import highways between districts
+  scale: 'log',    // how a metric becomes a size: 'log' or 'linear'
+  yaw: 0,          // the city's compass, in 15-degree steps
+  flat: false,     // the city as a plan rather than a model
+  tilt: 0.42,      // the orbits' viewing angle: 1 is overhead, 0.12 is edge-on
+  sun: 315,        // the relief's light direction, degrees clockwise from north
   gen: 0,          // bumped per load; a late response checks it before painting
   data: null,      // { nodes, imports, callers, people }
   dataKey: null,   // network + window the cached data is for
   reliefPos: null, // the relief layout, which depends on the data and not the metric
   reliefFor: null, // the dataKey reliefPos was laid out for
   anim: null,      // requestAnimationFrame handle owned by the current view
+  // Per-view camera, kept across a redraw so changing the metric does not also
+  // throw away where the reader had navigated to. Keyed by view because the
+  // five are different spaces and a pan in one means nothing in another.
+  cam: {},
 };
 
 var VIEWS = [
@@ -157,10 +166,24 @@ function nsHue(ns) {
 }
 function nsColor(ns, l, s) { return 'hsl(' + nsHue(ns).toFixed(1) + ',' + (s || 52) + '%,' + (l || 58) + '%)'; }
 
-// Most quantities on this chain are power-law: 8071 calls at the top, zero for
-// 499 of 589 packages. Linear sizing would draw one building and 588 paving
-// slabs, so everything sized by a metric goes through this.
+// lg is the log transform, used wherever the *drawing* needs a compressed
+// number regardless of what the reader asked for: a road's stroke width, a
+// traveller's speed, a star's radius. Nothing a reader compares across two
+// shapes goes through this directly.
 function lg(v) { return Math.log10(1 + Math.max(0, v || 0)); }
+
+// sc is the one a reader controls, and the reason the control exists.
+//
+// Most quantities on this chain are power-law: 8071 calls at the top and zero
+// for 499 of 589 packages. Under a linear scale that draws one tower and 588
+// paving slabs, which is the honest picture of the distribution and a useless
+// picture of everything below the top. Under log it is a legible city that
+// understates how extreme the top really is.
+//
+// Neither is the right default for every question, so both are offered and the
+// caption always says which one is on. Log is the default because the first
+// thing a reader wants is to see the shape of the chain at all.
+function sc(v) { return S.scale === 'linear' ? Math.max(0, v || 0) : lg(v); }
 
 function fmtBytes(b) {
   if (!b) return '0 B';
@@ -240,6 +263,160 @@ function nodeCard(n, extra) {
   if (n.deployed_at) rows.push(['deployed', n.deployed_at.slice(0, 10)]);
   if (extra) extra.forEach(function (r) { rows.push(r); });
   return rows;
+}
+
+// -----------------------------------------------------------------------------
+// The camera: pan and zoom, shared by every view
+// -----------------------------------------------------------------------------
+
+// mountSVG takes a finished svg, wraps everything already in it in one group,
+// and makes that group pannable and zoomable. One call per view, in place of
+// stage.appendChild(svg), so no view has to know this exists.
+//
+// A group transform rather than a viewBox rewrite, deliberately: the viewBox is
+// what fits the drawing to the stage in the first place, and editing it would
+// fight preserveAspectRatio and make the reset button a different calculation
+// per view. A transform composes cleanly and resets to the identity.
+//
+// Strokes are left to scale with the zoom. The alternative, dividing every
+// stroke-width by k on each frame, keeps lines a constant pixel width, and that
+// is wrong here: zooming into the city should magnify the city, not magnify the
+// buildings while the roads stay hairlines on top of them.
+function mountSVG(stage, svg, opts) {
+  var o = opts || {};
+  var g = svgEl('g');
+  while (svg.firstChild) g.appendChild(svg.firstChild);
+  svg.appendChild(g);
+  stage.appendChild(svg);
+
+  var cam = S.cam[S.view] || { x: 0, y: 0, k: 1 };
+  S.cam[S.view] = cam;
+
+  function apply() {
+    g.setAttribute('transform', 'translate(' + cam.x + ',' + cam.y + ') scale(' + cam.k + ')');
+    stage.classList.toggle('carto-zoomed', cam.k !== 1 || cam.x !== 0 || cam.y !== 0);
+  }
+  apply();
+
+  // Wheel zoom about the cursor, so the thing under the pointer stays under the
+  // pointer. That is the whole difference between a zoom a reader can aim and
+  // one they have to chase with the pan.
+  //
+  // Not passive: a map that scrolls the page out from under itself on the first
+  // wheel tick is unusable, and preventDefault is the only way to stop that.
+  svg.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
+    var r = svg.getBoundingClientRect();
+    // Into the svg's own user space first: the stage scales the viewBox to fit,
+    // so a client pixel is not a user unit and treating it as one makes the
+    // zoom drift away from the cursor on every tick.
+    var vb = svg.viewBox.baseVal;
+    var ux = vb.x + (ev.clientX - r.left) / r.width * vb.width;
+    var uy = vb.y + (ev.clientY - r.top) / r.height * vb.height;
+    var f = Math.exp(-ev.deltaY * 0.0014);
+    var k = Math.min(24, Math.max(0.4, cam.k * f));
+    f = k / cam.k;
+    cam.x = ux - (ux - cam.x) * f;
+    cam.y = uy - (uy - cam.y) * f;
+    cam.k = k;
+    apply();
+    if (o.onZoom) o.onZoom(cam);
+  }, { passive: false });
+
+  // Drag to pan. Pointer events rather than mouse events so a trackpad, a
+  // stylus and a touch drag all work from one implementation, and setPointer-
+  // Capture so a drag that leaves the stage keeps panning instead of sticking.
+  var drag = null;
+  svg.addEventListener('pointerdown', function (ev) {
+    if (ev.button !== 0) return;
+    var r = svg.getBoundingClientRect();
+    var vb = svg.viewBox.baseVal;
+    drag = { x: ev.clientX, y: ev.clientY, sx: vb.width / r.width, sy: vb.height / r.height,
+      moved: false, id: ev.pointerId };
+    // Capture is deliberately NOT taken here. Capturing on pointerdown makes
+    // the svg the target of the subsequent click, so a plain click on a
+    // building never reaches that building's handler and nothing is clickable
+    // any more. It is taken below, the moment a drag is real, which is the only
+    // point at which it is needed (to keep panning when the pointer leaves).
+  });
+  svg.addEventListener('pointermove', function (ev) {
+    if (!drag) return;
+    var dx = (ev.clientX - drag.x) * drag.sx, dy = (ev.clientY - drag.y) * drag.sy;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      try { svg.setPointerCapture(drag.id); } catch (_) { /* pointer already gone */ }
+    }
+    stage.classList.add('carto-dragging');
+    cam.x += dx; cam.y += dy;
+    drag.x = ev.clientX; drag.y = ev.clientY;
+    apply();
+    tipHide();
+  });
+  // A drag that moved has to swallow the click that follows it, or releasing
+  // the pointer over a building navigates to it and the reader loses the view
+  // they just framed.
+  //
+  // A flag cleared on the next task, not a one-shot listener. The listener
+  // version removed itself when it fired, and a drag whose press and release
+  // land on different elements produces no click at all: the listener then
+  // stayed armed and ate the reader's *next* genuine click, so after one pan
+  // nothing on the map was clickable until a redraw. A flag that clears itself
+  // whether or not a click arrives cannot do that.
+  var swallow = false;
+  svg.addEventListener('click', function (e) {
+    if (!swallow) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+
+  function endDrag(ev) {
+    if (!drag) return;
+    if (drag.moved) {
+      swallow = true;
+      setTimeout(function () { swallow = false; }, 0);
+    }
+    stage.classList.remove('carto-dragging');
+    if (ev && ev.pointerId !== undefined && svg.hasPointerCapture(ev.pointerId)) {
+      svg.releasePointerCapture(ev.pointerId);
+    }
+    drag = null;
+  }
+  svg.addEventListener('pointerup', endDrag);
+  svg.addEventListener('pointercancel', endDrag);
+
+  // Double-click zooms in a step, which is the gesture people try first.
+  svg.addEventListener('dblclick', function (ev) {
+    ev.preventDefault();
+    svg.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: ev.shiftKey ? 320 : -320, clientX: ev.clientX, clientY: ev.clientY, bubbles: false }));
+  });
+
+  stage.appendChild(camChrome(function () {
+    cam.x = 0; cam.y = 0; cam.k = 1; apply(); if (o.onZoom) o.onZoom(cam);
+  }, function (f) {
+    var r = svg.getBoundingClientRect();
+    svg.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: f, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: false }));
+  }));
+  return { cam: cam, apply: apply };
+}
+
+// The zoom buttons and the reset. A wheel is not available to everyone and is
+// awkward on a trackpad inside a page that also scrolls, so the same two
+// operations are reachable by click.
+function camChrome(reset, zoom) {
+  var el = window.el;
+  var box = el('div', { className: 'carto-cam' });
+  var mk = function (label, title, fn) {
+    var b = el('button', { title: title }, label);
+    b.addEventListener('click', function (e) { e.preventDefault(); fn(); });
+    return b;
+  };
+  box.appendChild(mk('+', 'zoom in', function () { zoom(-320); }));
+  box.appendChild(mk('\u2212', 'zoom out', function () { zoom(320); }));
+  box.appendChild(mk('reset', 'back to the whole map', reset));
+  return box;
 }
 
 // -----------------------------------------------------------------------------
@@ -361,51 +538,110 @@ function render(root) {
   draw();
 }
 
+// restate rebuilds the control bar in place and repaints the drawing, without
+// touching the intro or the view picker.
+//
+// render() would do both and also rebuild those, which costs the reader their
+// scroll position on a page where the drawing is below the fold. Every control
+// goes through here; none of them calls render().
+function restate(root) {
+  var bar = document.getElementById('carto-bar');
+  if (bar) bar.replaceWith(controls(root));
+  draw();
+}
+
+// btnGroup is the one shape every control in this bar has: a label, then a row
+// of buttons of which exactly one is on.
+function btnGroup(label, options, isOn, pick) {
+  var el = window.el;
+  var g = el('div', { className: 'carto-grp' }, el('span', {}, label));
+  options.forEach(function (o) {
+    var b = el('button', { className: isOn(o[1]) ? 'on' : '', title: o[2] || '' }, o[0]);
+    b.addEventListener('click', function () { pick(o[1]); });
+    g.appendChild(b);
+  });
+  return g;
+}
+
 function controls(root) {
   var el = window.el;
   var bar = el('div', { className: 'carto-bar', id: 'carto-bar' });
+  var sized = S.view === 'city' || S.view === 'orbits' || S.view === 'relief';
 
-  var wg = el('div', { className: 'carto-grp' }, el('span', {}, 'window'));
-  WINDOWS.forEach(function (w) {
-    var b = el('button', { className: S.window === w ? 'on' : '' }, w);
-    b.addEventListener('click', function () {
-      if (S.window === w) return;
-      S.window = w; writeURL(); render(root);
-    });
-    wg.appendChild(b);
-  });
-  bar.appendChild(wg);
-
-  // Roads belong to the city and nowhere else: the metro view is entirely
-  // about imports and the others place by something imports cannot express.
-  if (S.view === 'city') {
-    var rg = el('div', { className: 'carto-grp' }, el('span', {}, 'roads'));
-    [['on', true], ['off', false]].forEach(function (o) {
-      var b = el('button', { className: S.roads === o[1] ? 'on' : '' }, o[0]);
-      b.addEventListener('click', function () {
-        if (S.roads === o[1]) return;
-        S.roads = o[1]; writeURL(); render(root);
-      });
-      rg.appendChild(b);
-    });
-    bar.appendChild(rg);
-  }
+  bar.appendChild(btnGroup('window', WINDOWS.map(function (w) { return [w, w]; }),
+    function (v) { return S.window === v; },
+    function (v) { if (S.window !== v) { S.window = v; writeURL(); restate(root); } }));
 
   // The metric picker is hidden on the two views that do not have a size
   // channel to give it. A control that is present and inert is worse than one
   // that is absent: a reader clicks it, nothing moves, and they conclude the
   // page is broken rather than that the control does not apply.
-  if (S.view === 'city' || S.view === 'orbits' || S.view === 'relief') {
-    var mg = el('div', { className: 'carto-grp' }, el('span', {}, 'size by'));
-    Object.keys(METRICS).forEach(function (m) {
-      var b = el('button', { className: S.metric === m ? 'on' : '' }, METRICS[m].label);
+  if (sized) {
+    bar.appendChild(btnGroup('size by',
+      Object.keys(METRICS).map(function (m) { return [METRICS[m].label, m]; }),
+      function (v) { return S.metric === v; },
+      function (v) { if (S.metric !== v) { S.metric = v; writeURL(); restate(root); } }));
+
+    // Log or linear, wherever a metric becomes a size.
+    //
+    // This is not a cosmetic preference. On mainnet the top realm has 8071
+    // calls and 499 of 589 packages have none, so linear draws one tower and
+    // 588 slabs: the true shape of the distribution, and useless for seeing
+    // anything below the top. Log makes the city legible and understates how
+    // extreme the top is. Both are worth having and the caption says which is
+    // on, which is the only way the picture stays honest either way.
+    bar.appendChild(btnGroup('scale', [['log', 'log', 'compresses a power-law into a legible range'],
+      ['linear', 'linear', 'true proportions: one tower and a lot of slabs']],
+      function (v) { return S.scale === v; },
+      function (v) { if (S.scale !== v) { S.scale = v; writeURL(); restate(root); } }));
+  }
+
+  // Roads belong to the city and nowhere else: the metro view is entirely
+  // about imports and the others place by something imports cannot express.
+  if (S.view === 'city') {
+    bar.appendChild(btnGroup('roads', [['on', true], ['off', false]],
+      function (v) { return S.roads === v; },
+      function (v) { if (S.roads !== v) { S.roads = v; writeURL(); restate(root); } }));
+
+    bar.appendChild(btnGroup('view', [['model', false, 'isometric, with heights'],
+      ['plan', true, 'straight down, no heights: nothing hides behind a tower']],
+      function (v) { return S.flat === v; },
+      function (v) { if (S.flat !== v) { S.flat = v; writeURL(); restate(root); } }));
+
+    // The compass. Fifteen-degree steps rather than a slider: the whole city is
+    // rebuilt per step (589 buildings, ~1800 polygons), so a control that fires
+    // on every pixel of a drag would queue redraws faster than they finish.
+    var rot = el('div', { className: 'carto-grp' }, el('span', {}, 'rotate'));
+    [['\u21ba', -15], ['\u21bb', 15]].forEach(function (o) {
+      var b = el('button', { title: 'turn the city ' + (o[1] < 0 ? 'left' : 'right') + ' 15\u00b0' }, o[0]);
       b.addEventListener('click', function () {
-        if (S.metric === m) return;
-        S.metric = m; writeURL(); render(root);
+        S.yaw = (((S.yaw + o[1]) % 360) + 360) % 360; writeURL(); restate(root);
       });
-      mg.appendChild(b);
+      rot.appendChild(b);
     });
-    bar.appendChild(mg);
+    var deg = el('button', { className: S.yaw ? 'on' : '', title: 'back to north' }, S.yaw + '\u00b0');
+    deg.addEventListener('click', function () { if (S.yaw) { S.yaw = 0; writeURL(); restate(root); } });
+    rot.appendChild(deg);
+    bar.appendChild(rot);
+  }
+
+  // The orbits' viewing angle, which is the one genuinely three-dimensional
+  // thing on that drawing: overhead reads the rings as circles and makes two
+  // systems comparable, edge-on stacks them and makes a single system's
+  // deploy history read as a timeline.
+  if (S.view === 'orbits') {
+    bar.appendChild(btnGroup('tilt', [['overhead', 1], ['angled', 0.42], ['edge-on', 0.12]],
+      function (v) { return Math.abs(S.tilt - v) < 0.01; },
+      function (v) { S.tilt = v; writeURL(); restate(root); }));
+  }
+
+  // The relief's light. Hillshading is what turns a banded field into terrain a
+  // reader can see the shape of, and the direction it comes from decides which
+  // slopes are legible, so it is the reader's to move.
+  if (S.view === 'relief') {
+    bar.appendChild(btnGroup('light', [['NW', 315], ['NE', 45], ['SE', 135], ['SW', 225]],
+      function (v) { return S.sun === v; },
+      function (v) { if (S.sun !== v) { S.sun = v; writeURL(); restate(root); } }));
   }
 
   return bar;
@@ -415,6 +651,11 @@ function writeURL() {
   var q = new URLSearchParams(window.location.search);
   q.set('v', S.view); q.set('w', S.window); q.set('m', S.metric);
   q.set('r', S.roads ? '1' : '0');
+  q.set('s', S.scale);
+  if (S.yaw) q.set('yaw', String(S.yaw)); else q.delete('yaw');
+  if (S.flat) q.set('flat', '1'); else q.delete('flat');
+  q.set('tilt', String(S.tilt));
+  q.set('sun', String(S.sun));
   var net = window.getNetwork ? window.getNetwork() : null;
   if (net && net !== 'all') q.set('network', net); else q.delete('network');
   history.replaceState(null, '', '/cartography?' + q.toString());
@@ -428,6 +669,18 @@ function readURL() {
   if (m && METRICS[m]) S.metric = m;
   var r = q.get('r');
   if (r === '0' || r === '1') S.roads = r === '1';
+  var sc2 = q.get('s');
+  if (sc2 === 'log' || sc2 === 'linear') S.scale = sc2;
+  // Every one of these is clamped rather than trusted. A hand-edited yaw of
+  // 1e9 or a tilt of 0 is not a crash, but it is a drawing nobody can read,
+  // and a shared link is exactly where a nonsense value arrives from.
+  var yaw = parseFloat(q.get('yaw'));
+  if (isFinite(yaw)) S.yaw = ((Math.round(yaw / 15) * 15 % 360) + 360) % 360;
+  S.flat = q.get('flat') === '1';
+  var tilt = parseFloat(q.get('tilt'));
+  if (isFinite(tilt)) S.tilt = Math.min(1, Math.max(0.12, tilt));
+  var sun = parseFloat(q.get('sun'));
+  if (isFinite(sun)) S.sun = ((Math.round(sun) % 360) + 360) % 360;
 }
 
 function stopAnim() {
@@ -520,7 +773,42 @@ function legend(below, items) {
 
 var ISO = { tw: 26, th: 13, storey: 9 };   // tile half-width, half-height, storey height
 
-function isoXY(gx, gy) { return [(gx - gy) * ISO.tw, (gx + gy) * ISO.th]; }
+// The camera for the city, as three numbers the reader controls.
+//
+// _cityCam is set once per draw rather than read from S inside the projection,
+// so every shape in one frame is projected through the same camera even if the
+// control moves mid-render.
+var _cityCam = { cos: 1, sin: 0, cx: 0, cy: 0, th: ISO.th, flat: false };
+
+function cityCamera(gridW, gridH) {
+  var a = (S.yaw || 0) * Math.PI / 180;
+  _cityCam = {
+    cos: Math.cos(a), sin: Math.sin(a),
+    cx: gridW / 2, cy: gridH / 2,
+    // Flat is the plan view: the same map from directly overhead, with the
+    // vertical squash removed and the heights dropped. It is the honest
+    // counterpart to the model, because an isometric drawing hides whatever
+    // stands behind a tower and a plan hides nothing.
+    th: S.flat ? ISO.tw : ISO.th,
+    flat: !!S.flat,
+  };
+}
+
+// isoXY projects a grid cell to the canvas: rotate about the grid centre, then
+// the standard 2:1 dimetric projection (or a plain overhead one when flat).
+//
+// The rotation is in grid space rather than applied to the finished drawing,
+// which matters: rotating the output would turn the buildings with the city and
+// leave them leaning. Rotating the ground and re-projecting keeps every box
+// upright and axis-aligned, which is what makes this read as a camera moving
+// around a model rather than a picture being spun.
+function isoXY(gx, gy) {
+  var c = _cityCam;
+  var dx = gx - c.cx, dy = gy - c.cy;
+  var rx = dx * c.cos - dy * c.sin, ry = dx * c.sin + dy * c.cos;
+  if (c.flat) return [rx * ISO.tw, ry * ISO.tw * 0.52];
+  return [(rx - ry) * ISO.tw, (rx + ry) * ISO.th];
+}
 
 function drawCity(stage, below, d) {
   var groups = groupNamespaces(d.nodes);
@@ -543,9 +831,9 @@ function drawCity(stage, below, d) {
   });
   var gridW = rowMax, gridH = cursorY + rowH + 2;
 
-  // Buildings are drawn back to front so a nearer one overlaps the one behind
-  // it, which is the entire illusion. In this projection "behind" is smaller
-  // gx+gy, so one sort by depth does it.
+  // The camera is set before anything is projected, because isoXY reads it.
+  cityCamera(gridW, gridH);
+
   var cells = [];
   placed.forEach(function (g) {
     g.nodes.forEach(function (n, i) {
@@ -555,7 +843,17 @@ function drawCity(stage, below, d) {
       cells.push({ n: n, g: g, gx: gx, gy: gy });
     });
   });
-  cells.sort(function (a, b) { return (a.gx + a.gy) - (b.gx + b.gy); });
+
+  // Buildings are drawn back to front so a nearer one overlaps the one behind
+  // it, which is the entire illusion.
+  //
+  // Depth is the projected y, not gx+gy. Those agree only at yaw 0; at any
+  // other angle "behind" is a different direction in grid space, and sorting by
+  // the old key turns the city inside out, with far towers painted over near
+  // ones. Costs one projection per cell and is the only thing that makes the
+  // rotation look like a solid model instead of a pile of stickers.
+  cells.forEach(function (c) { c.p = isoXY(c.gx, c.gy); });
+  cells.sort(function (a, b) { return a.p[1] - b.p[1]; });
 
   var maxM = Math.max(1, d.nodes.reduce(function (m, n) { return Math.max(m, met.get(n) || 0); }, 0));
   var maxStorey = 16;
@@ -566,19 +864,31 @@ function drawCity(stage, below, d) {
   // every chain where nothing reaches sixteen storeys, and an SVG that scales
   // to fit turns that empty third into a smaller city.
   var pureRises = met.pure;
+  var denom = Math.max(1e-9, sc(maxM));
   cells.forEach(function (c) {
     var v = met.get(c.n) || 0;
     var rises = c.n.is_realm || pureRises;
-    c.storeys = rises && v > 0 ? Math.max(1, Math.round(lg(v) / lg(maxM) * maxStorey)) : 1;
-    c.h = rises ? c.storeys * ISO.storey : ISO.storey * 0.7;
+    c.storeys = rises && v > 0 ? Math.max(1, Math.round(sc(v) / denom * maxStorey)) : 1;
+    // A plan view has no heights to draw. The storey count is still computed,
+    // because the tooltip reports it and the plan still colours by it.
+    c.h = _cityCam.flat ? 0 : (rises ? c.storeys * ISO.storey : ISO.storey * 0.7);
   });
 
+  // Bounds from what is actually projected. Under rotation the grid's corners
+  // are no longer the extremes, so taking min and max over the four of them
+  // plus every cell is the only way the frame stays tight at every angle.
   var pad = 34;
-  var minX = isoXY(0, gridH)[0] - pad, maxX = isoXY(gridW, 0)[0] + pad;
-  var topY = cells.reduce(function (m, c) {
-    return Math.min(m, isoXY(c.gx, c.gy)[1] - c.h - ISO.th);
-  }, isoXY(0, 0)[1]);
-  var minY = topY - pad, maxY = isoXY(gridW, gridH)[1] + pad + 18;
+  var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  [[0, 0], [gridW, 0], [0, gridH], [gridW, gridH]].forEach(function (q) {
+    var p = isoXY(q[0], q[1]);
+    minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+    minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+  });
+  cells.forEach(function (c) {
+    minX = Math.min(minX, c.p[0] - ISO.tw); maxX = Math.max(maxX, c.p[0] + ISO.tw);
+    minY = Math.min(minY, c.p[1] - c.h - ISO.th); maxY = Math.max(maxY, c.p[1] + ISO.th);
+  });
+  minX -= pad; maxX += pad; minY -= pad; maxY += pad + 18;
   var vbW = maxX - minX, vbH = maxY - minY;
 
   var svg = svgEl('svg', { viewBox: minX + ' ' + minY + ' ' + vbW + ' ' + vbH,
@@ -588,6 +898,8 @@ function drawCity(stage, below, d) {
   // under a building never show through a gap between two of them.
   var ground = svgEl('g');
   placed.forEach(function (g) {
+    // Four projected corners, so a plate turns with the city and squares up
+    // in the plan without either case needing its own geometry.
     var a = isoXY(g.gx - 0.6, g.gy - 0.6), b = isoXY(g.gx + g.cols + 0.1, g.gy - 0.6),
         c = isoXY(g.gx + g.cols + 0.1, g.gy + g.rows + 0.1), e = isoXY(g.gx - 0.6, g.gy + g.rows + 0.1);
     var plate = svgEl('polygon', {
@@ -668,43 +980,67 @@ function drawCity(stage, below, d) {
   cells.forEach(function (c) {
     var n = c.n;
     var storeys = c.storeys, h = c.h;
-    var p = isoXY(c.gx, c.gy);
-    var x = p[0], y = p[1];
-    var tw = ISO.tw * 0.74, th = ISO.th * 0.74;
+    var x = c.p[0], y = c.p[1];
+    var tw = ISO.tw * 0.74, th = (_cityCam.flat ? ISO.tw * 0.52 : ISO.th) * 0.74;
 
     var g = svgEl('g');
     var base = n.is_realm ? 58 : 34;
-    var top = nsColor(n.namespace, base + 8);
+    // In the plan view the roof carries the metric on its own, because there is
+    // no height left to carry it: a tall building is a bright plot. Without
+    // this the plan is a flat quilt of namespace colours saying nothing the
+    // legend does not already say.
+    var liftL = _cityCam.flat ? (storeys / 16) * 26 : 0;
+    var top = nsColor(n.namespace, base + 8 + liftL);
     var left = nsColor(n.namespace, base - 16);
     var right = nsColor(n.namespace, base - 28);
 
     // Roof, then the two visible walls. Three polygons per building, 589
     // buildings: ~1800 nodes, which paints in one frame and stays interactive.
-    g.appendChild(svgEl('polygon', { points:
-      [[x, y - h - th], [x + tw, y - h], [x, y - h + th], [x - tw, y - h]]
-        .map(function (q) { return q.join(','); }).join(' '),
-      fill: top, stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.5 }));
-    g.appendChild(svgEl('polygon', { points:
-      [[x - tw, y - h], [x, y - h + th], [x, y + th], [x - tw, y]]
-        .map(function (q) { return q.join(','); }).join(' '),
-      fill: left, stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.5 }));
-    g.appendChild(svgEl('polygon', { points:
-      [[x + tw, y - h], [x, y - h + th], [x, y + th], [x + tw, y]]
-        .map(function (q) { return q.join(','); }).join(' '),
-      fill: right, stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.5 }));
+    //
+    // The plan draws one axis-aligned rectangle instead. A diamond is the
+    // shape a square plot *projects to* when the camera is oblique; keeping it
+    // overhead would say the plots are diamonds, which they are not, and the
+    // whole point of the plan is that it does not distort what it shows.
+    if (_cityCam.flat) {
+      g.appendChild(svgEl('rect', { x: x - tw * 0.86, y: y - th * 0.86,
+        width: tw * 1.72, height: th * 1.72, rx: 1,
+        fill: top, stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.5 }));
+    } else {
+      g.appendChild(svgEl('polygon', { points:
+        [[x, y - h - th], [x + tw, y - h], [x, y - h + th], [x - tw, y - h]]
+          .map(function (q) { return q.join(','); }).join(' '),
+        fill: top, stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.5 }));
+    }
+    if (!_cityCam.flat) {
+      g.appendChild(svgEl('polygon', { points:
+        [[x - tw, y - h], [x, y - h + th], [x, y + th], [x - tw, y]]
+          .map(function (q) { return q.join(','); }).join(' '),
+        fill: left, stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.5 }));
+      g.appendChild(svgEl('polygon', { points:
+        [[x + tw, y - h], [x, y - h + th], [x, y + th], [x + tw, y]]
+          .map(function (q) { return q.join(','); }).join(' '),
+        fill: right, stroke: 'rgba(0,0,0,.35)', 'stroke-width': 0.5 }));
+    }
 
     // Lit windows: called in the window. Count scales with the call count so a
     // busy realm glows rather than merely being on, but any call at all lights
     // at least one, because "somebody used this" is the fact worth seeing.
     if (n.calls > 0) {
       lit++;
-      var lamps = Math.min(storeys, Math.max(1, Math.round(lg(n.calls) * 1.6)));
-      for (var k = 0; k < lamps; k++) {
-        var ly = y - (k + 0.6) * (h / Math.max(1, storeys));
-        g.appendChild(svgEl('rect', { x: x - tw * 0.62, y: ly - 2.4, width: 2.6, height: 2.6,
-          fill: '#ffd93d', opacity: 0.85 }));
-        g.appendChild(svgEl('rect', { x: x + tw * 0.36, y: ly - 2.4 + ISO.th * 0.3, width: 2.6, height: 2.6,
-          fill: '#ffd93d', opacity: 0.6 }));
+      if (_cityCam.flat) {
+        // No facade to light from overhead, so the lamp becomes a mark on the
+        // plot. Still the same fact in the same colour, which is what keeps the
+        // two views readable as one map.
+        g.appendChild(svgEl('circle', { cx: x, cy: y, r: 2.1, fill: '#ffd93d', opacity: 0.9 }));
+      } else {
+        var lamps = Math.min(storeys, Math.max(1, Math.round(lg(n.calls) * 1.6)));
+        for (var k = 0; k < lamps; k++) {
+          var ly = y - (k + 0.6) * (h / Math.max(1, storeys));
+          g.appendChild(svgEl('rect', { x: x - tw * 0.62, y: ly - 2.4, width: 2.6, height: 2.6,
+            fill: '#ffd93d', opacity: 0.85 }));
+          g.appendChild(svgEl('rect', { x: x + tw * 0.36, y: ly - 2.4 + ISO.th * 0.3, width: 2.6, height: 2.6,
+            fill: '#ffd93d', opacity: 0.6 }));
+        }
       }
     }
 
@@ -712,23 +1048,30 @@ function drawCity(stage, below, d) {
     // a building that exists and cannot be entered is exactly that, and the
     // chain's liveness probes cannot see it either.
     if (n.parked) {
-      g.appendChild(svgEl('polygon', { points:
-        [[x, y - h - th], [x + tw, y - h], [x, y + th], [x - tw, y]]
-          .map(function (q) { return q.join(','); }).join(' '),
-        fill: 'none', stroke: 'var(--amber)', 'stroke-width': 1, 'stroke-dasharray': '2 2', opacity: 0.8 }));
+      if (_cityCam.flat) {
+        g.appendChild(svgEl('rect', { x: x - tw * 0.86, y: y - th * 0.86,
+          width: tw * 1.72, height: th * 1.72, rx: 1, fill: 'none',
+          stroke: 'var(--amber)', 'stroke-width': 1, 'stroke-dasharray': '2 2', opacity: 0.9 }));
+      } else {
+        g.appendChild(svgEl('polygon', { points:
+          [[x, y - h - th], [x + tw, y - h], [x, y + th], [x - tw, y]]
+            .map(function (q) { return q.join(','); }).join(' '),
+          fill: 'none', stroke: 'var(--amber)', 'stroke-width': 1, 'stroke-dasharray': '2 2', opacity: 0.8 }));
+      }
     }
 
     bindNode(g, n, [['storeys', String(storeys) + ' (' + met.label + ')']]);
     town.appendChild(g);
   });
   svg.appendChild(town);
-  stage.appendChild(svg);
+  mountSVG(stage, svg);
 
   var realms = d.nodes.filter(function (n) { return n.is_realm; }).length;
   note(below, [
     'One building per deployed package, ', [String(d.nodes.length)], ' of them, grouped into ',
     [String(groups.length)], ' districts by namespace. Storeys are ', [met.label],
-    ', log-scaled, with a floor of one so nothing with a zero disappears. Hue is the namespace. ',
+    ' on a ', [S.scale], ' scale, with a floor of one so nothing with a zero disappears. ' +
+    'Hue is the namespace. ',
     'Lit windows mean the package was called in the last ', [S.window], ': ', [String(lit)],
     ' of ', [String(d.nodes.length)], ' are lit, which is the single most useful thing this drawing says. ',
     'The ', [String(d.nodes.length - realms)], ' pure packages ',
@@ -742,6 +1085,11 @@ function drawCity(stage, below, d) {
     'Which plot a building takes inside its district is arbitrary and seeded from its path, so it ' +
     'stays put between reloads; nothing in the position means anything. District area is member ' +
     'count, not importance. ',
+    S.yaw ? 'The city is turned ' + S.yaw + '\u00b0 from north; the angle is a camera and means ' +
+      'nothing about the data. ' : '',
+    _cityCam.flat
+      ? 'This is the plan view: straight down, no heights, so nothing hides behind a tower. The ' +
+        'metric moves to the brightness of each plot instead. ' : '',
     S.roads && roadPairs
       ? 'The roads are the import graph rolled up to districts: ' + roadPairs +
         ' routes carrying ' + roadCount + ' of the chain\u2019s ' + d.imports.length +
@@ -934,7 +1282,7 @@ function drawSettlement(stage, below, d) {
     vg.appendChild(g);
   });
   svg.appendChild(vg);
-  stage.appendChild(svg);
+  mountSVG(stage, svg);
 
   // The walk. One rAF for every traveller: 585 dots at 60 Hz is a few hundred
   // microseconds of setAttribute per frame, and the loop is cancelled the
@@ -1052,14 +1400,14 @@ function drawOrbits(stage, below, d) {
       var t = day === 'unknown' ? t0 : Date.parse(day + 'T00:00:00Z');
       var frac = span > 864e5 ? (t - t0) / span : di / Math.max(1, days.length - 1);
       var r = starR + 15 + frac * (rMax - starR - 15);
-      sys.appendChild(svgEl('ellipse', { cx: cx, cy: cy, rx: r, ry: r * 0.42, fill: 'none',
+      sys.appendChild(svgEl('ellipse', { cx: cx, cy: cy, rx: r, ry: r * S.tilt, fill: 'none',
         stroke: nsColor(g.ns, 30, 30), 'stroke-width': 0.6, opacity: 0.55 }));
       var a0 = rng() * Math.PI * 2;
       ring.forEach(function (n, i) {
         var a = a0 + (i / ring.length) * Math.PI * 2;
-        var x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * 0.42;
+        var x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * S.tilt;
         var v = met.get(n) || 0;
-        var pr = 1.1 + (v > 0 ? lg(v) / lg(maxM) * 5.2 : 0);
+        var pr = 1.1 + (v > 0 ? sc(v) / Math.max(1e-9, sc(maxM)) * 5.2 : 0);
         var pg = svgEl('g');
         pg.appendChild(svgEl('circle', { cx: x, cy: y, r: pr,
           fill: n.is_realm ? nsColor(n.namespace, n.calls > 0 ? 72 : 44)
@@ -1085,7 +1433,7 @@ function drawOrbits(stage, below, d) {
     svg.appendChild(sys);
   });
 
-  stage.appendChild(svg);
+  mountSVG(stage, svg);
 
   var all = groupNamespaces(d.nodes).length;
   note(below, [
@@ -1097,8 +1445,8 @@ function drawOrbits(stage, below, d) {
     [String(Math.round(span / 864e5)) + ' days'], ', which is the whole life of this chain and why ' +
     'the systems are compressed rather than sprawling. One ring per deploy day, so everything ' +
     'pushed in one session shares an orbit and a batch deploy reads as a batch. Planet size is ',
-    [met.label],
-    '; a gold rim means it was called in the last ', [S.window],
+    [met.label], ' on a ', [S.scale],
+    ' scale; a gold rim means it was called in the last ', [S.window],
     '; a faint circle around a planet means other code imports it, sized by how much. ' +
     'Angle around the orbit carries nothing and is seeded from the namespace name. ' +
     'The star is the namespace itself, sized by package count, its halo brightening with the ' +
@@ -1258,7 +1606,7 @@ function drawMetro(stage, below, d) {
     stG.appendChild(g);
   });
   svg.appendChild(stG);
-  stage.appendChild(svg);
+  mountSVG(stage, svg);
 
   var interchanges = stationNodes.filter(function (n, i) {
     return lineList.filter(function (L) { return L.order.indexOf(i) >= 0; }).length >= 2;
@@ -1397,37 +1745,31 @@ function drawRelief(stage, below, d) {
 // metric switch redraws the terrain without relaying it out.
 function drawReliefField(stage, below, d, pos, met) {
   var nodes = d.nodes;
-  var GW = 300, GH = 170;
+  var GW = 300, GH = 170;              // samples across the visible window
   var Hpx = Math.round(W * GH / GW);
   var i;
 
-  // The field: each package deposits a gaussian whose amplitude is its metric.
-  var field = new Float32Array(GW * GH);
   var maxM = Math.max(1, nodes.reduce(function (m, n) { return Math.max(m, met.get(n) || 0); }, 0));
-  nodes.forEach(function (n) {
-    var amp = 0.18 + 0.82 * (lg(met.get(n) || 0) / lg(maxM));
-    var cxp = pos[n.path].x * GW, cyp = pos[n.path].y * GH;
-    var rad = 9 + amp * 13, r2 = rad * rad;
-    var x0i = Math.max(0, Math.floor(cxp - rad)), x1i = Math.min(GW - 1, Math.ceil(cxp + rad));
-    var y0i = Math.max(0, Math.floor(cyp - rad)), y1i = Math.min(GH - 1, Math.ceil(cyp + rad));
-    for (var yy = y0i; yy <= y1i; yy++) {
-      for (var xx = x0i; xx <= x1i; xx++) {
-        var ddx = xx - cxp, ddy = yy - cyp, dd = ddx * ddx + ddy * ddy;
-        if (dd > r2) continue;
-        field[yy * GW + xx] += amp * Math.exp(-dd / (r2 * 0.34));
-      }
-    }
-  });
-  var maxF = 0;
-  for (i = 0; i < field.length; i++) if (field[i] > maxF) maxF = field[i];
-  maxF = maxF || 1;
+  var denom = Math.max(1e-9, sc(maxM));
 
-  // Canvas rather than SVG: 51000 cells as rects would be 51000 DOM nodes, and
-  // the only thing a reader does with this picture is look at it.
+  // The window being looked at, in the unit square the layout lives in. Zoom
+  // narrows it; pan slides it.
+  //
+  // This is why the relief zooms differently from the other four. The field is
+  // a continuous function of the layout, not an image: a grid is only where it
+  // was sampled. So zooming re-samples the same function over a smaller window
+  // at the same 300x170 and genuinely resolves more terrain, instead of
+  // magnifying pixels into squares. Two packages that merge into one hill at
+  // full extent separate into two when you zoom into them, which is a true
+  // statement about the data and not an artefact of the renderer.
+  var cam = S.cam.relief || { cx: 0.5, cy: 0.5, k: 1 };
+  S.cam.relief = cam;
+
   var dpr = Math.min(2, window.devicePixelRatio || 1);
   var cv = document.createElement('canvas');
   cv.width = Math.round(W * dpr); cv.height = Math.round(Hpx * dpr);
   cv.style.width = '100%'; cv.style.height = 'auto'; cv.style.maxHeight = '78vh';
+  cv.style.cursor = 'crosshair';
   var ctx = cv.getContext('2d');
   ctx.scale(dpr, dpr);
 
@@ -1435,119 +1777,325 @@ function drawReliefField(stage, below, d, pos, met) {
   // smooth gradient, because bands are what make a contour map readable at a
   // glance and a smooth one just looks like a blur.
   var BANDS = [
-    [0.00, '#07070b'], [0.06, '#0c1420'], [0.14, '#10202c'],
-    [0.26, '#13332f'], [0.40, '#1b4a33'], [0.55, '#2f6338'],
-    [0.70, '#6a7238'], [0.84, '#96702f'], [0.94, '#c98a3a'],
+    [0.00, [7, 7, 11]], [0.06, [12, 20, 32]], [0.14, [16, 32, 44]],
+    [0.26, [19, 51, 47]], [0.40, [27, 74, 51]], [0.55, [47, 99, 56]],
+    [0.70, [106, 114, 56]], [0.84, [150, 112, 47]], [0.94, [201, 138, 58]],
   ];
   function band(v) {
     for (var b = BANDS.length - 1; b >= 0; b--) if (v >= BANDS[b][0]) return BANDS[b][1];
     return BANDS[0][1];
   }
-  var cw = W / GW, ch = Hpx / GH;
-  for (var yy2 = 0; yy2 < GH; yy2++) {
-    for (var xx2 = 0; xx2 < GW; xx2++) {
-      ctx.fillStyle = band(field[yy2 * GW + xx2] / maxF);
-      ctx.fillRect(xx2 * cw, yy2 * ch, cw + 0.6, ch + 0.6);
-    }
+
+  var labelled = [], lastMaxF = 1;
+
+  // win returns the visible window in layout space, clamped so the camera can
+  // never leave the map entirely.
+  function win() {
+    var half = 0.5 / cam.k;
+    var cx = Math.min(1 - half, Math.max(half, cam.cx));
+    var cy = Math.min(1 - half, Math.max(half, cam.cy));
+    if (half >= 0.5) { cx = 0.5; cy = 0.5; }
+    cam.cx = cx; cam.cy = cy;
+    return { x0: cx - half, y0: cy - half, w: half * 2 };
   }
 
-  // Contour lines at each band edge, drawn as the cells where the level is
-  // crossed. Crude marching-squares-free version: one pass, cheap, and enough
-  // to read as contours at this resolution.
-  ctx.globalAlpha = 0.34; ctx.fillStyle = '#000';
-  for (var bi = 1; bi < BANDS.length; bi++) {
-    var lvl = BANDS[bi][0];
-    for (var yy3 = 1; yy3 < GH; yy3++) {
-      for (var xx3 = 1; xx3 < GW; xx3++) {
-        var v0 = field[yy3 * GW + xx3] / maxF;
-        var vl = field[yy3 * GW + xx3 - 1] / maxF, vu = field[(yy3 - 1) * GW + xx3] / maxF;
-        if ((v0 >= lvl) !== (vl >= lvl) || (v0 >= lvl) !== (vu >= lvl)) {
-          ctx.fillRect(xx3 * cw, yy3 * ch, cw, ch);
+  function paint() {
+    var v = win();
+    // Sample the field over the window. Radii are in window units, so a hill
+    // keeps its size on screen as you zoom and simply gains detail.
+    var field = new Float32Array(GW * GH);
+    // The window is square in layout space and the grid is not, so y is
+    // compressed on screen by GH/GW. That is the same distortion the first
+    // version had, and it is harmless here because the caption says absolute
+    // position and direction carry nothing: what matters is that it stays the
+    // same at every zoom, which it does, because both axes divide by the same
+    // window width.
+    var sxu = GW / v.w, syu = GH / v.w;
+    nodes.forEach(function (n) {
+      var amp = 0.18 + 0.82 * (sc(met.get(n) || 0) / denom);
+      var P = pos[n.path];
+      var cxp = (P.x - v.x0) * sxu, cyp = (P.y - v.y0) * syu;
+      var rad = (9 + amp * 13) * cam.k, r2 = rad * rad;
+      if (cxp < -rad || cxp > GW + rad || cyp < -rad || cyp > GH + rad) return;
+      var x0i = Math.max(0, Math.floor(cxp - rad)), x1i = Math.min(GW - 1, Math.ceil(cxp + rad));
+      var y0i = Math.max(0, Math.floor(cyp - rad)), y1i = Math.min(GH - 1, Math.ceil(cyp + rad));
+      for (var yy = y0i; yy <= y1i; yy++) {
+        for (var xx = x0i; xx <= x1i; xx++) {
+          var ddx = xx - cxp, ddy = yy - cyp, dd = ddx * ddx + ddy * ddy;
+          if (dd > r2) continue;
+          field[yy * GW + xx] += amp * Math.exp(-dd / (r2 * 0.34));
         }
       }
-    }
-  }
-  ctx.globalAlpha = 1;
-
-  // Peak labels: the highest-metric package in each of the top regions, so the
-  // terrain has place names. Without them this is a pretty texture that tells
-  // a reader nothing they can act on.
-  var top = nodes.slice().sort(function (a, b) { return (met.get(b) || 0) - (met.get(a) || 0); });
-  var labelled = [], MINDIST = 0.075;
-  for (i = 0; i < top.length && labelled.length < 12; i++) {
-    var p2 = pos[top[i].path];
-    if ((met.get(top[i]) || 0) <= 0) break;
-    var clash = labelled.some(function (q) {
-      var qx = pos[q.path].x - p2.x, qy = pos[q.path].y - p2.y;
-      return qx * qx + qy * qy < MINDIST * MINDIST;
     });
-    if (!clash) labelled.push(top[i]);
+
+    // Normalised against the whole map's peak, not the window's.
+    //
+    // Per-window normalisation was the first version and it lies: zooming into
+    // a quiet corner repainted it as a mountain range, because the brightest
+    // thing in frame is always full scale. A colour has to mean the same
+    // elevation at every zoom or the ramp is decoration.
+    var maxF = 0;
+    for (i = 0; i < field.length; i++) if (field[i] > maxF) maxF = field[i];
+    if (cam.k === 1 || !lastMaxF) lastMaxF = maxF || 1;
+    var norm = Math.max(lastMaxF, 1e-9);
+
+    // Hillshade: the Lambertian term from the field's own gradient, which is
+    // what turns a set of flat bands into something a reader sees the shape of.
+    // Cheap (two differences per cell) and it costs no channel: it modulates
+    // brightness within a band rather than changing which band a cell is in.
+    var sunA = (S.sun || 315) * Math.PI / 180;
+    var lx = Math.sin(sunA), ly = -Math.cos(sunA);
+
+    var img = ctx.createImageData(GW, GH);
+    var px = img.data;
+    for (var yy2 = 0; yy2 < GH; yy2++) {
+      for (var xx2 = 0; xx2 < GW; xx2++) {
+        var idx = yy2 * GW + xx2;
+        var h = field[idx] / norm;
+        var c = band(h);
+        var hl = field[yy2 * GW + Math.max(0, xx2 - 1)] / norm;
+        var hr = field[yy2 * GW + Math.min(GW - 1, xx2 + 1)] / norm;
+        var hu = field[Math.max(0, yy2 - 1) * GW + xx2] / norm;
+        var hd = field[Math.min(GH - 1, yy2 + 1) * GW + xx2] / norm;
+        var gx = (hl - hr) * 26, gy = (hu - hd) * 26;
+        var shade = 1 + (gx * lx + gy * ly) * 0.55;
+        shade = Math.max(0.45, Math.min(1.7, shade));
+        // A contour where this cell crosses a band edge below or to the left.
+        var cl = band(hl), cu = band(hu);
+        var edge = (cl !== c || cu !== c) ? 0.56 : 1;
+        var o = idx * 4;
+        px[o]     = Math.min(255, c[0] * shade * edge);
+        px[o + 1] = Math.min(255, c[1] * shade * edge);
+        px[o + 2] = Math.min(255, c[2] * shade * edge);
+        px[o + 3] = 255;
+      }
+    }
+
+    // The field is painted through an offscreen canvas because putImageData
+    // ignores the context transform, so it cannot be scaled up to the visible
+    // size on its own.
+    var off = document.createElement('canvas');
+    off.width = GW; off.height = GH;
+    off.getContext('2d').putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.clearRect(0, 0, W, Hpx);
+    ctx.drawImage(off, 0, 0, GW, GH, 0, 0, W, Hpx);
+
+    // Peak labels: the highest-metric packages inside the window, so the
+    // terrain has place names. Without them this is a pretty texture that
+    // tells a reader nothing they can act on. Recomputed per window, so
+    // zooming in names the things that were too crowded to name before.
+    var scrX = function (p) { return (p.x - v.x0) / v.w * W; };
+    var scrY = function (p) { return (p.y - v.y0) / v.w * Hpx; };
+    var top = nodes.filter(function (n) {
+      var P = pos[n.path];
+      return (met.get(n) || 0) > 0 &&
+        P.x >= v.x0 && P.x <= v.x0 + v.w && P.y >= v.y0 && P.y <= v.y0 + v.w;
+    }).sort(function (a, b) { return (met.get(b) || 0) - (met.get(a) || 0); });
+
+    labelled = [];
+    var MIND = 74;
+    for (i = 0; i < top.length && labelled.length < 14; i++) {
+      var P2 = pos[top[i].path], ax = scrX(P2), ay = scrY(P2);
+      var clash = labelled.some(function (q) {
+        var qx = scrX(pos[q.path]) - ax, qy = scrY(pos[q.path]) - ay;
+        return qx * qx + qy * qy < MIND * MIND;
+      });
+      if (!clash) labelled.push(top[i]);
+    }
+
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    labelled.forEach(function (n) {
+      var P3 = pos[n.path], ax = scrX(P3), ay = scrY(P3);
+      ctx.fillStyle = 'rgba(0,0,0,.65)';
+      ctx.beginPath(); ctx.arc(ax, ay, 3.2, 0, 6.284); ctx.fill();
+      ctx.fillStyle = n.calls > 0 ? '#ffd93d' : '#e0e0e0';
+      ctx.beginPath(); ctx.arc(ax, ay, 2, 0, 6.284); ctx.fill();
+      var txt = n.name;
+      ctx.fillStyle = 'rgba(0,0,0,.72)';
+      var tw2 = ctx.measureText(txt).width;
+      ctx.fillRect(ax - tw2 / 2 - 3, ay - 17, tw2 + 6, 13);
+      ctx.fillStyle = '#e8e8e8';
+      ctx.fillText(txt, ax, ay - 7);
+    });
+
+    cv.style.transform = '';
+    stage.classList.toggle('carto-zoomed', cam.k !== 1);
+    updateNote();
   }
-  ctx.font = '11px ui-monospace, monospace';
-  ctx.textAlign = 'center';
-  labelled.forEach(function (n) {
-    var px = pos[n.path].x * W, py = pos[n.path].y * Hpx;
-    ctx.fillStyle = 'rgba(0,0,0,.65)';
-    ctx.beginPath(); ctx.arc(px, py, 3.2, 0, 6.284); ctx.fill();
-    ctx.fillStyle = n.calls > 0 ? '#ffd93d' : '#e0e0e0';
-    ctx.beginPath(); ctx.arc(px, py, 2, 0, 6.284); ctx.fill();
-    var txt = n.name;
-    ctx.fillStyle = 'rgba(0,0,0,.72)';
-    var tw2 = ctx.measureText(txt).width;
-    ctx.fillRect(px - tw2 / 2 - 3, py - 17, tw2 + 6, 13);
-    ctx.fillStyle = '#e8e8e8';
-    ctx.fillText(txt, px, py - 7);
-  });
 
-  // Hover works off the same positions the field was built from: nearest
-  // package within a radius, which is what the reader means when they point at
-  // a peak.
-  cv.addEventListener('mousemove', function (ev) {
+  // Live gestures move the canvas with a CSS transform, which is one compositor
+  // operation, and the field is re-sampled once the gesture stops.
+  //
+  // Re-sampling per wheel tick was the first version: ~40 ms each, so a trackpad
+  // sending thirty events a second queued redraws faster than they finished and
+  // the map lagged a second behind the fingers. The transform is the preview
+  // and the resample is the answer.
+  var pend = null, prev = null;
+
+  // mark captures where the camera was when the gesture started. It has to run
+  // *before* the handler moves the camera: the first version initialised prev
+  // lazily inside the preview, by which time cam had already been updated, so
+  // base and target were the same numbers and every preview transform came out
+  // as the identity. The painted frame never moved until the resample landed,
+  // which read as a map that ignored the first scroll of every gesture.
+  function mark() { if (!prev) prev = { cx: cam.cx, cy: cam.cy, k: cam.k }; }
+
+  function previewing() {
+    if (!prev) return;
+    var sX = cam.k / prev.k;
+    // The painted frame shows prev's window. Sliding it by the camera's move,
+    // in that frame's pixels, is what makes the preview line up with the
+    // resample that replaces it.
+    var tx = (prev.cx - cam.cx) * cam.k * W, ty = (prev.cy - cam.cy) * cam.k * Hpx;
+    cv.style.transformOrigin = '50% 50%';
+    cv.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + sX + ')';
+  }
+  function settle() {
+    if (pend) clearTimeout(pend);
+    pend = setTimeout(function () { prev = null; paint(); }, 110);
+  }
+
+  cv.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
     var r = cv.getBoundingClientRect();
-    var mx = (ev.clientX - r.left) / r.width, my = (ev.clientY - r.top) / r.height;
-    var best = null, bd = 1e9;
-    for (var j = 0; j < nodes.length; j++) {
-      var q = pos[nodes[j].path];
-      var qd = (q.x - mx) * (q.x - mx) + (q.y - my) * (q.y - my) * (Hpx / W) * (Hpx / W);
-      if (qd < bd) { bd = qd; best = nodes[j]; }
-    }
-    if (best && bd < 0.0009) tipShow(ev, nodeCard(best)); else tipHide();
+    var v = win();
+    // Zoom about the cursor: the point under the pointer stays under it.
+    var ux = v.x0 + (ev.clientX - r.left) / r.width * v.w;
+    var uy = v.y0 + (ev.clientY - r.top) / r.height * v.w;
+    var k = Math.min(14, Math.max(1, cam.k * Math.exp(-ev.deltaY * 0.0014)));
+    var f = cam.k / k;
+    mark();
+    cam.cx = ux + (cam.cx - ux) * f;
+    cam.cy = uy + (cam.cy - uy) * f;
+    cam.k = k;
+    previewing();
+    settle();
+  }, { passive: false });
+
+  var drag = null;
+  cv.addEventListener('pointerdown', function (ev) {
+    if (ev.button !== 0) return;
+    // Same reason as the svg camera: capturing here would retarget the click
+    // and make the terrain unclickable. Taken once the drag is real.
+    drag = { x: ev.clientX, y: ev.clientY, moved: false, id: ev.pointerId };
   });
+  cv.addEventListener('pointermove', function (ev) {
+    if (!drag) {
+      hover(ev, false);
+      return;
+    }
+    var r = cv.getBoundingClientRect();
+    var v = win();
+    var dx = (ev.clientX - drag.x) / r.width * v.w, dy = (ev.clientY - drag.y) / r.height * v.w;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 0.004) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      try { cv.setPointerCapture(drag.id); } catch (_) { /* pointer already gone */ }
+    }
+    tipHide();
+    mark();
+    cam.cx -= dx; cam.cy -= dy;
+    drag.x = ev.clientX; drag.y = ev.clientY;
+    previewing();
+    settle();
+  });
+  function endDrag(ev) {
+    if (!drag) return;
+    var moved = drag.moved;
+    if (ev && ev.pointerId !== undefined && cv.hasPointerCapture(ev.pointerId)) {
+      cv.releasePointerCapture(ev.pointerId);
+    }
+    drag = null;
+    if (moved) { cv.__swallow = true; setTimeout(function () { cv.__swallow = false; }, 0); }
+  }
+  cv.addEventListener('pointerup', endDrag);
+  cv.addEventListener('pointercancel', endDrag);
   cv.addEventListener('mouseleave', tipHide);
-  cv.addEventListener('click', function (ev) {
+
+  // Hover and click both resolve to the package nearest the cursor, in window
+  // coordinates so the hit radius stays a constant distance on screen however
+  // far the reader has zoomed in.
+  function nearest(ev) {
     var r = cv.getBoundingClientRect();
-    var mx = (ev.clientX - r.left) / r.width, my = (ev.clientY - r.top) / r.height;
+    var v = win();
+    var mx = v.x0 + (ev.clientX - r.left) / r.width * v.w;
+    var my = v.y0 + (ev.clientY - r.top) / r.height * v.w;
     var best = null, bd = 1e9;
+    // Weighted so the hit radius is a circle on screen rather than in layout
+    // space: y is compressed by Hpx/W when drawn, so an unweighted distance
+    // picks a package the reader can see is further away than another.
+    var ay = (Hpx / W) * (Hpx / W);
     for (var j = 0; j < nodes.length; j++) {
       var q = pos[nodes[j].path];
-      var qd = (q.x - mx) * (q.x - mx) + (q.y - my) * (q.y - my) * (Hpx / W) * (Hpx / W);
+      var qd = (q.x - mx) * (q.x - mx) + (q.y - my) * (q.y - my) * ay;
       if (qd < bd) { bd = qd; best = nodes[j]; }
     }
-    if (best && bd < 0.0009) { tipHide(); window.navigate(pathHref(best)); }
+    return (best && bd < 0.0009 / (cam.k * cam.k)) ? best : null;
+  }
+  function hover(ev) {
+    var n = nearest(ev);
+    if (n) tipShow(ev, nodeCard(n)); else tipHide();
+  }
+  cv.addEventListener('click', function (ev) {
+    if (cv.__swallow) return;
+    var n = nearest(ev);
+    if (n) { tipHide(); window.navigate(pathHref(n)); }
   });
-  cv.style.cursor = 'crosshair';
-  stage.appendChild(cv);
 
-  note(below, [
-    'The one drawing here that does not group by namespace, which matters because one namespace ' +
-    'holds ', [String(groupNamespaces(nodes)[0].n)], ' of the ', [String(nodes.length)],
-    ' packages on this chain and every other view is partly a picture of that. ',
-    'Position comes only from the import graph: packages start on a fixed spiral, are pulled ' +
-    'toward what they import and pushed off their near neighbours for a fixed number of rounds, ' +
-    'so code that shares dependencies ends up as one landmass and nothing collapses onto a hub. ' +
-    'Elevation is ', [met.label],
-    ' accumulated from every package nearby, so broad high ground is a dense and busy region and a ' +
-    'lone peak is one package carrying its neighbourhood alone. Absolute position and compass ' +
-    'direction carry nothing. ',
-    'Labels are the ', [String(labelled.length)], ' highest peaks that do not overlap; hover ' +
-    'anywhere for the package nearest the cursor.',
-  ]);
+  stage.appendChild(cv);
+  stage.appendChild(camChrome(function () {
+    cam.cx = 0.5; cam.cy = 0.5; cam.k = 1; prev = null; paint();
+  }, function (f) {
+    var r = cv.getBoundingClientRect();
+    cv.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: f, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: false }));
+  }));
+
+  var noteEl = null;
+  function updateNote() {
+    if (!noteEl) return;
+    noteEl.textContent = '';
+    var parts = [
+      'The one drawing here that does not group by namespace, which matters because one namespace ' +
+      'holds ', [String(groupNamespaces(nodes)[0].n)], ' of the ', [String(nodes.length)],
+      ' packages on this chain and every other view is partly a picture of that. ',
+      'Position comes only from the import graph: packages start on a fixed spiral, are pulled ' +
+      'toward what they import and pushed off their near neighbours for a fixed number of rounds, ' +
+      'so code that shares dependencies ends up as one landmass and nothing collapses onto a hub. ' +
+      'Elevation is ', [met.label], ' on a ', [S.scale], ' scale, accumulated from every package ' +
+      'nearby, so broad high ground is a dense and busy region and a lone peak is one package ' +
+      'carrying its neighbourhood alone. Absolute position and compass direction carry nothing; ' +
+      'the shading is a light from the ', [cardinal(S.sun)], ' and carries nothing either. ',
+      'Zoom re-samples the field over the smaller window rather than magnifying it, so two ' +
+      'packages that share a hill here separate into two when you zoom into them. Colour is ' +
+      'pinned to the whole map\u2019s peak at every zoom, so a band always means the same ' +
+      'elevation. ',
+      'Showing ', [cam.k === 1 ? 'the whole map' : (cam.k).toFixed(1) + '\u00d7 in'], ', ',
+      [String(labelled.length)], ' peaks named; hover anywhere for the package nearest the cursor.',
+    ];
+    parts.forEach(function (q) {
+      if (typeof q === 'string') noteEl.appendChild(document.createTextNode(q));
+      else noteEl.appendChild(window.el('b', {}, q[0]));
+    });
+  }
+
+  noteEl = note(below, []);
   legend(below, [
-    ['#0c1420', 'sea', '· nothing deployed nearby'],
-    ['#2f6338', 'plain', '· a populated region'],
-    ['#c98a3a', 'peak', '· the top of the chosen metric'],
-    ['#ffd93d', 'gold dot', '· that package was called in the window'],
+    ['#0c1420', 'sea', '\u00b7 nothing deployed nearby'],
+    ['#2f6338', 'plain', '\u00b7 a populated region'],
+    ['#c98a3a', 'peak', '\u00b7 the top of the chosen metric'],
+    ['#ffd93d', 'gold dot', '\u00b7 that package was called in the window'],
   ]);
+
+  paint();
+}
+
+// cardinal names a compass bearing, for the relief's light.
+function cardinal(deg) {
+  var names = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+  return names[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
 }
 
 // -----------------------------------------------------------------------------
