@@ -23,19 +23,22 @@ func (s *Store) TouchDiscovery(fullName, kind, evidence string, now time.Time) e
 // Overview is what /api/lab/github/overview answers: the size of the picture,
 // plus enough sync bookkeeping that a reader can tell fresh from stale.
 type Overview struct {
-	Repos        int               `json:"repos"`
-	Tracked      int               `json:"tracked"`
-	Discovered   int               `json:"discovered"`
-	Contributors int               `json:"contributors"`
-	PRs          int               `json:"prs"`
-	ByKind       []KindCount       `json:"by_kind"`
-	Window       WindowStats       `json:"window"`
-	Meta         map[string]string `json:"meta"`
+	Repos        int         `json:"repos"`
+	Tracked      int         `json:"tracked"`
+	Discovered   int         `json:"discovered"`
+	Contributors int         `json:"contributors"`
+	PRs          int         `json:"prs"`
+	ByKind       []KindCount `json:"by_kind"`
+	Window       WindowStats `json:"window"`
+	// Years holds at least one tracked pull request each, newest first: the
+	// windows a reader can pick besides all time.
+	Years []int             `json:"years"`
+	Meta  map[string]string `json:"meta"`
 }
 
-// WindowStats are the counts over the requested number of days.
+// WindowStats are the counts over the requested window.
 type WindowStats struct {
-	Days            int     `json:"days"`
+	Window
 	PRsOpened       int     `json:"prs_opened"`
 	PRsMerged       int     `json:"prs_merged"`
 	Authors         int     `json:"authors"`
@@ -50,7 +53,7 @@ type KindCount struct {
 	Count int    `json:"count"`
 }
 
-func (s *Store) Overview(days int) (Overview, error) {
+func (s *Store) Overview(win Window) (Overview, error) {
 	var o Overview
 	o.Meta = map[string]string{}
 	row := s.db.QueryRow(`SELECT COUNT(*),
@@ -84,11 +87,14 @@ func (s *Store) Overview(days int) (Overview, error) {
 	if err := kinds.Err(); err != nil {
 		return o, err
 	}
-	ws, err := s.windowStats(days)
+	ws, err := s.windowStats(win)
 	if err != nil {
 		return o, err
 	}
 	o.Window = ws
+	if o.Years, err = s.Years(); err != nil {
+		return o, err
+	}
 	meta, err := s.AllMeta()
 	if err != nil {
 		return o, err
@@ -114,50 +120,48 @@ const notBot = `author NOT LIKE '%[bot]' AND author NOT LIKE '%-bot' AND
 	                      'gnolang-bot','mergify','allcontributors','semantic-release',
 	                      'web-flow','copilot-swe-agent','gno2d2')`
 
-func cutoff(days int) string {
-	if days <= 0 {
-		days = 30
-	}
-	return time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339)
-}
-
-func (s *Store) windowStats(days int) (WindowStats, error) {
-	if days <= 0 {
-		days = 30
-	}
-	w := WindowStats{Days: days}
-	since := cutoff(days)
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_tracked_prs WHERE created_at >= ?`, since).Scan(&w.PRsOpened); err != nil {
+func (s *Store) windowStats(win Window) (WindowStats, error) {
+	w := WindowStats{Window: win}
+	created, cArgs := win.in("created_at")
+	merged, mArgs := win.in("merged_at")
+	seen, sArgs := win.in("first_seen")
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_tracked_prs WHERE `+created, cArgs...).Scan(&w.PRsOpened); err != nil {
 		return w, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_tracked_prs WHERE merged_at <> '' AND merged_at >= ?`, since).Scan(&w.PRsMerged); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_tracked_prs WHERE merged_at <> '' AND `+merged, mArgs...).Scan(&w.PRsMerged); err != nil {
 		return w, err
 	}
 	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT author) FROM gh_tracked_prs
-		WHERE author <> '' AND `+notBot+` AND created_at >= ?`, since).Scan(&w.Authors); err != nil {
+		WHERE author <> '' AND `+notBot+` AND `+created, cArgs...).Scan(&w.Authors); err != nil {
 		return w, err
 	}
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM gh_repos
-		WHERE source='discovered' AND first_seen >= ?`, since).Scan(&w.ReposDiscovered); err != nil {
+		WHERE source='discovered' AND `+seen, sArgs...).Scan(&w.ReposDiscovered); err != nil {
 		return w, err
 	}
-	news, err := s.NewContributors(days, 0)
+	news, err := s.NewContributors(win, 0)
 	if err != nil {
 		return w, err
 	}
 	w.NewContributors = len(news)
-	w.MedianMergeHrs, err = s.medianMergeHours(days)
+	w.MedianMergeHrs, err = s.medianMergeHours("", win)
 	return w, err
 }
 
-// medianMergeHours is the middle time-to-merge over the window.
+// medianMergeHours is the middle time-to-merge over the window, across every
+// tracked repository when repo is empty.
 //
 // Median rather than mean, and it is not a refinement: one pull request open
 // for two years and merged last Tuesday moves a mean over a hundred PRs by
 // several days, and that shape is normal on gnolang/gno rather than rare.
-func (s *Store) medianMergeHours(days int) (float64, error) {
-	rows, err := s.db.Query(`SELECT created_at, merged_at FROM gh_tracked_prs
-		WHERE merged_at <> '' AND merged_at >= ?`, cutoff(days))
+func (s *Store) medianMergeHours(repo string, win Window) (float64, error) {
+	merged, args := win.in("merged_at")
+	q := `SELECT created_at, merged_at FROM gh_tracked_prs WHERE merged_at <> '' AND ` + merged
+	if repo != "" {
+		q += ` AND full_name = ?`
+		args = append(args, repo)
+	}
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -215,7 +219,7 @@ type NewContributor struct {
 
 // NewContributors lists first-ever merges inside the window, newest first.
 // limit <= 0 returns all of them.
-func (s *Store) NewContributors(days, limit int) ([]NewContributor, error) {
+func (s *Store) NewContributors(win Window, limit int) ([]NewContributor, error) {
 	// The inner query is every author's earliest merge over the whole table,
 	// not over the window. Filtering first and taking a minimum second is the
 	// bug this shape avoids: it would call every author who merged something
@@ -234,12 +238,12 @@ SELECT f.author, p.full_name, p.number, p.title, f.first_merge, totals.n
 FROM firsts f
 JOIN gh_tracked_prs p ON p.author = f.author AND p.merged_at = f.first_merge
 JOIN totals ON totals.author = f.author
-WHERE f.first_merge >= ?
+WHERE f.first_merge >= ? AND f.first_merge < ?
 ORDER BY f.first_merge DESC`
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}
-	rows, err := s.db.Query(q, cutoff(days))
+	rows, err := s.db.Query(q, win.Since, win.Until)
 	if err != nil {
 		return nil, err
 	}
@@ -274,17 +278,17 @@ type RepoActivity struct {
 	PushedAt       string  `json:"pushed_at,omitempty"`
 }
 
-func (s *Store) RepoActivity(days int) ([]RepoActivity, error) {
-	since := cutoff(days)
+func (s *Store) RepoActivity(win Window) ([]RepoActivity, error) {
+	lo, hi := win.Since, win.Until
 	rows, err := s.db.Query(`
 SELECT r.full_name, r.stars, r.pushed_at,
-  (SELECT COUNT(*) FROM gh_prs p WHERE p.full_name=r.full_name AND p.created_at >= ?),
-  (SELECT COUNT(*) FROM gh_prs p WHERE p.full_name=r.full_name AND p.merged_at <> '' AND p.merged_at >= ?),
+  (SELECT COUNT(*) FROM gh_prs p WHERE p.full_name=r.full_name AND p.created_at >= ? AND p.created_at < ?),
+  (SELECT COUNT(*) FROM gh_prs p WHERE p.full_name=r.full_name AND p.merged_at <> '' AND p.merged_at >= ? AND p.merged_at < ?),
   (SELECT COUNT(*) FROM gh_prs p WHERE p.full_name=r.full_name AND p.state='open'),
-  (SELECT COUNT(DISTINCT p.author) FROM gh_prs p WHERE p.full_name=r.full_name AND p.created_at >= ? AND p.author NOT LIKE '%[bot]' AND p.author NOT LIKE '%-bot')
+  (SELECT COUNT(DISTINCT p.author) FROM gh_prs p WHERE p.full_name=r.full_name AND p.created_at >= ? AND p.created_at < ? AND p.author NOT LIKE '%[bot]' AND p.author NOT LIKE '%-bot')
 FROM gh_repos r
 WHERE r.tracked=1
-ORDER BY 4 DESC, r.stars DESC`, since, since, since)
+ORDER BY 4 DESC, r.stars DESC`, lo, hi, lo, hi, lo, hi)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +305,7 @@ ORDER BY 4 DESC, r.stars DESC`, since, since, since)
 		return nil, err
 	}
 	for i := range out {
-		h, err := s.repoMedianMergeHours(out[i].FullName, days)
+		h, err := s.medianMergeHours(out[i].FullName, win)
 		if err != nil {
 			return nil, err
 		}
@@ -310,58 +314,27 @@ ORDER BY 4 DESC, r.stars DESC`, since, since, since)
 	return out, nil
 }
 
-func (s *Store) repoMedianMergeHours(fullName string, days int) (float64, error) {
-	rows, err := s.db.Query(`SELECT created_at, merged_at FROM gh_tracked_prs
-		WHERE full_name=? AND merged_at <> '' AND merged_at >= ?`, fullName, cutoff(days))
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	var hrs []float64
-	for rows.Next() {
-		var c, m string
-		if err := rows.Scan(&c, &m); err != nil {
-			return 0, err
-		}
-		ct, e1 := time.Parse(time.RFC3339, c)
-		mt, e2 := time.Parse(time.RFC3339, m)
-		if e1 != nil || e2 != nil || !mt.After(ct) {
-			continue
-		}
-		hrs = append(hrs, mt.Sub(ct).Hours())
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	if len(hrs) == 0 {
-		return 0, nil
-	}
-	sort.Float64s(hrs)
-	mid := len(hrs) / 2
-	if len(hrs)%2 == 1 {
-		return round1(hrs[mid]), nil
-	}
-	return round1((hrs[mid-1] + hrs[mid]) / 2), nil
-}
-
 // RecentPRs lists merged or open pull requests across tracked repositories.
-// state is "merged", "open" or "" for both, newest activity first.
-func (s *Store) RecentPRs(days, limit int, state string) ([]PR, error) {
+// state is "merged", "open" or "" for both, newest activity first. "open" is
+// what is open now, whatever the window: a pull request opened in 2024 and
+// still waiting is not a 2024 fact.
+func (s *Store) RecentPRs(win Window, limit int, state string) ([]PR, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	since := cutoff(days)
+	created, cArgs := win.in("created_at")
+	merged, mArgs := win.in("merged_at")
 	var (
 		where string
 		args  []any
 	)
 	switch state {
 	case "merged":
-		where, args = `merged_at <> '' AND merged_at >= ?`, []any{since}
+		where, args = `merged_at <> '' AND `+merged, mArgs
 	case "open":
 		where, args = `state='open' AND draft=0`, nil
 	default:
-		where, args = `(created_at >= ? OR (merged_at <> '' AND merged_at >= ?))`, []any{since, since}
+		where, args = `((`+created+`) OR (merged_at <> '' AND `+merged+`))`, append(cArgs, mArgs...)
 	}
 	q := `SELECT full_name,number,title,author,state,draft,created_at,updated_at,merged_at,closed_at
 		FROM gh_tracked_prs WHERE ` + where + ` ORDER BY COALESCE(NULLIF(merged_at,''), updated_at) DESC LIMIT ?`

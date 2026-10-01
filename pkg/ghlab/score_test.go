@@ -75,7 +75,7 @@ func TestScoreRanksWorkNotMergeStrategy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	top, err := s.TopContributors(30, 10)
+	top, err := s.TopContributors(AllTime(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,12 +97,22 @@ func TestScoreRanksWorkNotMergeStrategy(t *testing.T) {
 	if core.ByTier[0] != 43.3 || core.ByTier[2] != 0.1 {
 		t.Errorf("core by tier = %v", core.ByTier)
 	}
-	if core.WindowScore != 0 {
-		// One review in the window: 0.1 x 0.25 = 0.025, which rounds to 0.
-		t.Errorf("core window score = %v, want 0", core.WindowScore)
-	}
 	if got := strings.Join(app.Repos, ","); got != "app/wallet,rando/thing" {
 		t.Errorf("app repos = %s, want biggest share first", got)
+	}
+
+	// Over the last 30 days the table is ranked by what was earned in them,
+	// and app, whose every merge is 400 days old, is not in it at all.
+	recent, err := s.TopContributors(LastDays(30), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 1 || recent[0].Login != "core" {
+		t.Fatalf("last 30 days = %+v, want only core", recent)
+	}
+	if recent[0].WindowScore != 0 || recent[0].WindowReviews != 1 {
+		// One review in the window: 0.1 x 0.25 = 0.025, which rounds to 0.
+		t.Errorf("core window score/reviews = %v/%d, want 0 and 1", recent[0].WindowScore, recent[0].WindowReviews)
 	}
 }
 
@@ -113,7 +123,7 @@ func TestTrackedViewKeepsWindowStatsCurated(t *testing.T) {
 	addRepo(t, s, "rando/thing", "discovered", false)
 	seedPR(t, s, "o/r", 1, "a", 3, 2)
 	seedPR(t, s, "rando/thing", 1, "b", 3, 2)
-	w, err := s.windowStats(30)
+	w, err := s.windowStats(LastDays(30))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +306,7 @@ func TestTierOtherIsCapped(t *testing.T) {
 	addRepo(t, s, "spam/os", "discovered", false)
 	mergedPRs(t, s, "spam/os", "spammer", 1, 2000)
 	mergedPRs(t, s, "gnolang/gno", "dev", 1, 30)
-	top, err := s.TopContributors(30, 10)
+	top, err := s.TopContributors(AllTime(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -136,7 +136,7 @@ func TestNewContributorsIsFirstEverNotFirstInWindow(t *testing.T) {
 	// Someone who only ever opened a PR, never merged one.
 	seedPR(t, s, "o/r", 5, "hopeful", 6, -1)
 
-	got, err := s.NewContributors(30, 0)
+	got, err := s.NewContributors(LastDays(30), 0)
 	if err != nil {
 		t.Fatalf("NewContributors: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestNewContributorsDedupesSameSecond(t *testing.T) {
 	if err := s.UpsertPRs(prs); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.NewContributors(30, 0)
+	got, err := s.NewContributors(LastDays(30), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestWindowStatsAndMedian(t *testing.T) {
 	if err := s.UpsertPRs([]PR{mk(1, 1), mk(2, 5), mk(3, 100)}); err != nil {
 		t.Fatal(err)
 	}
-	ov, err := s.Overview(30)
+	ov, err := s.Overview(LastDays(30))
 	if err != nil {
 		t.Fatalf("Overview: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestReplaceContributorsDropsVanishedLogins(t *testing.T) {
 	if err := s.ReplaceContributors("o/r", []Contributor{{Login: "a", Commits: 6}}); err != nil {
 		t.Fatal(err)
 	}
-	top, err := s.TopContributors(30, 10)
+	top, err := s.TopContributors(AllTime(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}

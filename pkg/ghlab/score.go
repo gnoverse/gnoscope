@@ -119,18 +119,20 @@ type TopContributor struct {
 	// the commit term, which carries no dates.
 	Score       float64 `json:"score"`
 	WindowScore float64 `json:"window_score"`
-	// ByTier is the score split by tier, [0] being TierCore.
+	// ByTier splits whichever of the two the ranking used, [0] being TierCore.
 	ByTier    [4]float64 `json:"by_tier"`
 	MergedPRs int        `json:"merged_prs"`
 	Reviews   int        `json:"reviews"`
 	Comments  int        `json:"comments"`
 	Commits   int        `json:"commits"`
-	// Repos is where the score comes from, biggest share first.
+	// Repos is where the ranked score comes from, biggest share first.
 	Repos     []string `json:"repos"`
 	AvatarURL string   `json:"avatar,omitempty"`
 	// RecentMerged is how many of their pull requests merged in the window,
 	// which is what separates "built this in 2022" from "is here now".
-	RecentMerged int `json:"recent_merged"`
+	RecentMerged   int `json:"recent_merged"`
+	WindowReviews  int `json:"window_reviews"`
+	WindowComments int `json:"window_comments"`
 }
 
 // repoStat is one person's activity in one repository.
@@ -142,11 +144,16 @@ type repoStat struct {
 }
 
 // TopContributors ranks people by score, highest first.
-func (s *Store) TopContributors(days, limit int) ([]TopContributor, error) {
+//
+// All time ranks by Score. A bounded window ranks by WindowScore and leaves
+// out whoever earned nothing in it: a year's table that opens on somebody
+// whose last pull request merged three years before it answers "who built
+// gno", which is the all-time table's question, not the year's.
+func (s *Store) TopContributors(win Window, limit int) ([]TopContributor, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	since := cutoff(days)
+	byWindow := !win.IsAll()
 
 	sources := map[string]string{}
 	if err := s.each(`SELECT full_name, source FROM gh_repos`, nil, func(r *sql.Rows) error {
@@ -175,8 +182,8 @@ func (s *Store) TopContributors(days, limit int) ([]TopContributor, error) {
 		return st
 	}
 
-	if err := s.each(`SELECT author, full_name, COUNT(*), SUM(CASE WHEN merged_at >= ? THEN 1 ELSE 0 END)
-		FROM gh_prs WHERE merged_at <> '' AND author <> '' GROUP BY author, full_name`, []any{since},
+	if err := s.each(`SELECT author, full_name, COUNT(*), SUM(CASE WHEN merged_at >= ? AND merged_at < ? THEN 1 ELSE 0 END)
+		FROM gh_prs WHERE merged_at <> '' AND author <> '' GROUP BY author, full_name`, []any{win.Since, win.Until},
 		func(r *sql.Rows) error {
 			var login, repo string
 			var n, win int
@@ -190,8 +197,8 @@ func (s *Store) TopContributors(days, limit int) ([]TopContributor, error) {
 		return nil, err
 	}
 
-	if err := s.each(`SELECT login, full_name, kind, COUNT(*), SUM(CASE WHEN at >= ? THEN 1 ELSE 0 END)
-		FROM gh_pr_events GROUP BY login, full_name, kind`, []any{since},
+	if err := s.each(`SELECT login, full_name, kind, COUNT(*), SUM(CASE WHEN at >= ? AND at < ? THEN 1 ELSE 0 END)
+		FROM gh_pr_events GROUP BY login, full_name, kind`, []any{win.Since, win.Until},
 		func(r *sql.Rows) error {
 			var login, repo, kind string
 			var n, win int
@@ -250,19 +257,25 @@ func (s *Store) TopContributors(days, limit int) ([]TopContributor, error) {
 				pts = math.Min(pts, TierOtherCap)
 				winPts = math.Min(winPts, TierOtherCap)
 			}
+			ranked := pts
+			if byWindow {
+				ranked = winPts
+			}
 			t.Score += pts
-			t.ByTier[tier-1] += pts
+			t.ByTier[tier-1] += ranked
 			t.WindowScore += winPts
 			t.MergedPRs += st.merged
 			t.Reviews += st.reviews
 			t.Comments += st.comments
 			t.Commits += st.commits
 			t.RecentMerged += st.mergedWin
-			if pts > 0 {
-				share[repo] = pts
+			t.WindowReviews += st.reviewsWin
+			t.WindowComments += st.commentsWin
+			if ranked > 0 {
+				share[repo] = ranked
 			}
 		}
-		if t.Score <= 0 {
+		if t.Score <= 0 || (byWindow && t.WindowScore <= 0) {
 			continue
 		}
 		for repo := range share {
@@ -282,6 +295,9 @@ func (s *Store) TopContributors(days, limit int) ([]TopContributor, error) {
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		if byWindow && out[i].WindowScore != out[j].WindowScore {
+			return out[i].WindowScore > out[j].WindowScore
+		}
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score
 		}

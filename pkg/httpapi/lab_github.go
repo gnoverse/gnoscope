@@ -42,21 +42,37 @@ func (a *API) ghOffline(w http.ResponseWriter) bool {
 	return true
 }
 
-// ghWindow reads ?days=, defaulting to 30 and capped at 365.
+// ghWindow reads ?window=all|<year>, defaulting to all time. ?days= is the
+// older trailing window, still honoured when it is the only one given, capped
+// at 365.
 //
-// The pull-request walk is all time since 2026-10-01 (it reached 180 days back
-// before), so the cap is no longer about missing data; it stays because a
-// "window" longer than a year is the all-time figure the score already gives.
-func ghWindow(r *http.Request) int {
-	return intParam(r.URL.Query(), "days", 30, 365)
+// All time is the default because the pull-request walk is all time since
+// 2026-10-01, so the question the page opens on, who built gno, is one the
+// data answers whole. A year is the next question, and a calendar year is
+// what a reader means by it, not the last 365 days.
+func ghWindow(w http.ResponseWriter, r *http.Request) (ghlab.Window, bool) {
+	q := r.URL.Query()
+	if q.Get("window") == "" && q.Get("days") != "" {
+		return ghlab.LastDays(intParam(q, "days", 30, 365)), true
+	}
+	win, err := ghlab.ParseWindow(q.Get("window"))
+	if err != nil {
+		jsonError(w, err.Error(), 400)
+		return win, false
+	}
+	return win, true
 }
 
-// HandleLabGitHubOverview answers GET /api/lab/github/overview?days=
+// HandleLabGitHubOverview answers GET /api/lab/github/overview?window=
 func (a *API) HandleLabGitHubOverview(w http.ResponseWriter, r *http.Request) {
 	if a.ghOffline(w) {
 		return
 	}
-	ov, err := a.github.Overview(ghWindow(r))
+	win, ok := ghWindow(w, r)
+	if !ok {
+		return
+	}
+	ov, err := a.github.Overview(win)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
@@ -67,7 +83,7 @@ func (a *API) HandleLabGitHubOverview(w http.ResponseWriter, r *http.Request) {
 	}{true, ov})
 }
 
-// HandleLabGitHubContributors answers GET /api/lab/github/contributors?days=&limit=
+// HandleLabGitHubContributors answers GET /api/lab/github/contributors?window=&limit=
 //
 // Both cohorts in one response on purpose: they are read side by side and
 // splitting them would put a second round trip between two halves of one
@@ -76,33 +92,39 @@ func (a *API) HandleLabGitHubContributors(w http.ResponseWriter, r *http.Request
 	if a.ghOffline(w) {
 		return
 	}
-	days := ghWindow(r)
+	win, ok := ghWindow(w, r)
+	if !ok {
+		return
+	}
 	limit := intParam(r.URL.Query(), "limit", 50, 500)
-	fresh, err := a.github.NewContributors(days, limit)
+	fresh, err := a.github.NewContributors(win, limit)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
 	}
-	top, err := a.github.TopContributors(days, limit)
+	top, err := a.github.TopContributors(win, limit)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
 	}
 	JSONResponse(w, struct {
 		Enabled bool                   `json:"enabled"`
-		Days    int                    `json:"days"`
+		Window  ghlab.Window           `json:"window"`
 		New     []ghlab.NewContributor `json:"new"`
 		Top     []ghlab.TopContributor `json:"top"`
 		Scoring ghlab.Scoring          `json:"scoring"`
-	}{true, days, fresh, top, ghlab.ScoringRules()})
+	}{true, win, fresh, top, ghlab.ScoringRules()})
 }
 
-// HandleLabGitHubPRs answers GET /api/lab/github/prs?days=&limit=&state=
+// HandleLabGitHubPRs answers GET /api/lab/github/prs?window=&limit=&state=
 func (a *API) HandleLabGitHubPRs(w http.ResponseWriter, r *http.Request) {
 	if a.ghOffline(w) {
 		return
 	}
-	days := ghWindow(r)
+	win, ok := ghWindow(w, r)
+	if !ok {
+		return
+	}
 	limit := intParam(r.URL.Query(), "limit", 100, 500)
 	state := r.URL.Query().Get("state")
 	switch state {
@@ -111,23 +133,23 @@ func (a *API) HandleLabGitHubPRs(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "state must be merged, open or empty", 400)
 		return
 	}
-	activity, err := a.github.RepoActivity(days)
+	activity, err := a.github.RepoActivity(win)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
 	}
-	recent, err := a.github.RecentPRs(days, limit, state)
+	recent, err := a.github.RecentPRs(win, limit, state)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
 	}
 	JSONResponse(w, struct {
 		Enabled  bool                 `json:"enabled"`
-		Days     int                  `json:"days"`
+		Window   ghlab.Window         `json:"window"`
 		Repos    []ghlab.RepoActivity `json:"repos"`
 		Recent   []ghlab.PR           `json:"recent"`
 		Filtered string               `json:"state,omitempty"`
-	}{true, days, activity, recent, state})
+	}{true, win, activity, recent, state})
 }
 
 // HandleLabGitHubRepos answers GET /api/lab/github/repos?kind=&source=&limit=
