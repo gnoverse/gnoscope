@@ -1,4 +1,4 @@
-/* Cartography: thirteen drawings of one chain, as a place rather than a table.
+/* Cartography: fourteen drawings of one chain, as a place rather than a table.
  *
  * ---------------------------------------------------------------------------
  * Why a file of its own
@@ -10,7 +10,7 @@
  * container and a ten-line loader; everything below is the experiment.
  *
  * ---------------------------------------------------------------------------
- * Why thirteen and not one
+ * Why fourteen and not one
  *
  * The site already has the honest picture: /contracts is a force-directed
  * graph, and it is the right answer to "what is connected to what". It is a
@@ -43,6 +43,11 @@
  *   honeycomb   every package one cell, in rank order from the centre
  *   skyline     the elevation: height is the only thing compared
  *   archipelago ownership kept, grid dropped: islands sized by count
+ *   lights      the relief's layout at night: glow by metric, imports as roads
+ *
+ * Two controls cut across all of them: an as-of day (and a play button) that
+ * replays the chain's growth, and a find box that lights one family up in
+ * whichever drawing is on screen.
  *
  * ---------------------------------------------------------------------------
  * What it reads
@@ -109,22 +114,33 @@ var S = {
   // Variant choices, keyed "<view>.<key>". Absent means the first value in
   // OPTIONS, so a link that names nothing opens every view as it was designed.
   opts: {},
+  // Time-lapse: null is today, else a YYYY-MM-DD whose end is the cut-off for
+  // which packages exist. Calls and imports stay today's either way.
+  asof: null,
+  play: null,      // setInterval handle while the time-lapse plays
+  // Find: what the reader typed, applied to whatever view is on screen.
+  find: '',
 };
 
+// Three groups, shown as three rows of chips: the first five each answer one
+// question about the chain, the city-builders each have a centre, and the
+// experiments came out of trying many options on those.
+var GROUPS = [['questions', 'five questions'], ['builders', 'city-builders'], ['experiments', 'experiments']];
 var VIEWS = [
-  { id: 'city',       name: 'city',       blurb: 'districts by namespace, one building per package, storeys by activity' },
-  { id: 'settlement', name: 'settlement', blurb: 'villages and the people walking between them, from real caller counts' },
-  { id: 'orbits',     name: 'orbits',     blurb: 'one solar system per namespace, orbit radius by deploy date' },
-  { id: 'metro',      name: 'metro',      blurb: 'the import graph as transit lines, interchanges where code is shared' },
-  { id: 'relief',     name: 'relief',     blurb: 'a contour map of where the chain is dense, owner-blind' },
-  { id: 'metropolis', name: 'metropolis', blurb: 'a downtown by land value, owner-blind, zoned by what each package does' },
-  { id: 'boroughs',   name: 'boroughs',   blurb: 'one equal block per namespace, the busiest at the centre' },
-  { id: 'hexes',      name: 'hexes',      blurb: 'a board of equal hexes, neighbours by imports, terrain by yield' },
-  { id: 'frontier',   name: 'frontier',   blurb: 'deployers as players, settled outward from (0|0) in deploy order' },
-  { id: 'oldtown',    name: 'old town',   blurb: 'a walled town grown ring by ring, one wall per era of deploys' },
-  { id: 'honeycomb',  name: 'honeycomb',  blurb: 'one cell per package, spiralling out from the queen in rank order' },
-  { id: 'skyline',    name: 'skyline',    blurb: 'the chain side on at night, one tower per package, across the water' },
-  { id: 'archipelago', name: 'archipelago', blurb: 'namespaces as islands by size, packed by trade, imports as ferries' },
+  { id: 'city',       name: 'city',       blurb: 'districts by namespace, one building per package, storeys by activity', group: 'questions' },
+  { id: 'settlement', name: 'settlement', blurb: 'villages and the people walking between them, from real caller counts', group: 'questions' },
+  { id: 'orbits',     name: 'orbits',     blurb: 'one solar system per namespace, orbit radius by deploy date', group: 'questions' },
+  { id: 'metro',      name: 'metro',      blurb: 'the import graph as transit lines, interchanges where code is shared', group: 'questions' },
+  { id: 'relief',     name: 'relief',     blurb: 'a contour map of where the chain is dense, owner-blind', group: 'questions' },
+  { id: 'metropolis', name: 'metropolis', blurb: 'a downtown by land value, owner-blind, zoned by what each package does', group: 'builders' },
+  { id: 'boroughs',   name: 'boroughs',   blurb: 'one equal block per namespace, the busiest at the centre', group: 'builders' },
+  { id: 'hexes',      name: 'hexes',      blurb: 'a board of equal hexes, neighbours by imports, terrain by yield', group: 'builders' },
+  { id: 'frontier',   name: 'frontier',   blurb: 'deployers as players, settled outward from (0|0) in deploy order', group: 'builders' },
+  { id: 'oldtown',    name: 'old town',   blurb: 'a walled town grown ring by ring, one wall per era of deploys', group: 'builders' },
+  { id: 'honeycomb',  name: 'honeycomb',  blurb: 'one cell per package, spiralling out from the queen in rank order', group: 'experiments' },
+  { id: 'skyline',    name: 'skyline',    blurb: 'the chain side on at night, one tower per package, across the water', group: 'experiments' },
+  { id: 'archipelago', name: 'archipelago', blurb: 'namespaces as islands by size, packed by trade, imports as ferries', group: 'experiments' },
+  { id: 'lights',     name: 'night lights', blurb: 'the chain from orbit at night: owner-blind, glowing by the metric', group: 'experiments' },
 ];
 
 // pure says whether a pure package may take a size from this metric.
@@ -190,6 +206,9 @@ var OPTIONS = {
     { key: 'shape', label: 'arrange', values: [['peak in the middle', 'peak'], ['by namespace', 'ns'],
       ['in deploy order', 'deploy']] },
     { key: 'paint', label: 'colour', values: [['namespace', 'ns'], ['zone', 'zone']] },
+  ],
+  lights: [
+    { key: 'roads', label: 'roads', values: [['faint', 'on'], ['off', 'off']] },
   ],
   archipelago: [
     { key: 'centre', label: 'centre island', values: [['most imported', 'imp'], ['biggest', 'size'],
@@ -593,30 +612,40 @@ function groupNamespaces(nodes) {
 
 function render(root) {
   var el = window.el;
+  stopPlay();
   root.textContent = '';
 
   root.appendChild(el('div', { className: 'carto-intro' },
     el('h2', {}, 'cartography'),
-    el('p', {}, 'The same chain the rest of the site tabulates, drawn as a place. Thirteen metaphors, ' +
+    el('p', {}, 'The same chain the rest of the site tabulates, drawn as a place. Fourteen metaphors, ' +
       'one data load, no endpoint of their own: every number here comes from the API that serves ' +
       '/contracts, /accounts and /gas, so a figure that disagrees with one of those pages is a bug ' +
       'in the drawing and not a second opinion. Each view says in its caption which quantity it ' +
       'put in which channel, because a picture is easier to believe than a table and just as easy ' +
       'to read wrong.')));
 
+  // Chips, not cards. Five cards with a sentence each fit one row; fourteen
+  // took three, pushed the drawing below the fold of a laptop screen, and
+  // repeated thirteen descriptions nobody was reading. The one that matters,
+  // the current view's, is printed under the chips instead.
   var pick = el('div', { className: 'carto-pick' });
-  VIEWS.forEach(function (v) {
-    var b = el('button', { className: S.view === v.id ? 'on' : '' },
-      el('b', {}, v.name), document.createTextNode(v.blurb));
-    b.addEventListener('click', function () {
-      if (S.view === v.id) return;
-      S.view = v.id;
-      writeURL();
-      render(root);
+  GROUPS.forEach(function (gr) {
+    var row = el('div', { className: 'carto-pick-row' }, el('span', { className: 'carto-pick-label' }, gr[1]));
+    VIEWS.filter(function (v) { return v.group === gr[0]; }).forEach(function (v) {
+      var b = el('button', { className: S.view === v.id ? 'on' : '', title: v.blurb }, el('b', {}, v.name));
+      b.addEventListener('click', function () {
+        if (S.view === v.id) return;
+        S.view = v.id;
+        writeURL();
+        render(root);
+      });
+      row.appendChild(b);
     });
-    pick.appendChild(b);
+    pick.appendChild(row);
   });
   root.appendChild(pick);
+  var cur = VIEWS.filter(function (v) { return v.id === S.view; })[0];
+  root.appendChild(el('p', { className: 'carto-blurb' }, cur.blurb));
 
   root.appendChild(controls(root));
 
@@ -727,6 +756,18 @@ function controls(root) {
       function (v) { if (opt(o.key) !== v) { S.opts[S.view + '.' + o.key] = v; writeURL(); restate(root); } }));
   });
 
+  // Find: one box for every view, so a reader who knows the realm they care
+  // about can see where each drawing put it. Applied to the shapes already on
+  // screen rather than by redrawing, so typing is instant.
+  var fg = el('div', { className: 'carto-grp carto-find' }, el('span', {}, 'find'));
+  var fi = el('input', { type: 'search', id: 'carto-find', placeholder: 'namespace, name or path',
+    value: S.find, 'aria-label': 'find a namespace, package name or path' });
+  fi.value = S.find;
+  fi.addEventListener('input', function () { S.find = fi.value.trim(); writeURL(); applyFind(); });
+  fg.appendChild(fi);
+  fg.appendChild(el('span', { className: 'carto-find-n', id: 'carto-find-n' }, ''));
+  bar.appendChild(fg);
+
   // The orbits' viewing angle, which is the one genuinely three-dimensional
   // thing on that drawing: overhead reads the rings as circles and makes two
   // systems comparable, edge-on stacks them and makes a single system's
@@ -760,6 +801,8 @@ function writeURL() {
   q.set('sun', String(S.sun));
   var net = window.getNetwork ? window.getNetwork() : null;
   if (net && net !== 'all') q.set('network', net); else q.delete('network');
+  if (S.asof) q.set('asof', S.asof); else q.delete('asof');
+  if (S.find) q.set('find', S.find); else q.delete('find');
   Object.keys(OPTIONS).forEach(function (view) {
     OPTIONS[view].forEach(function (o) {
       var k = view + '.' + o.key, v = S.opts[k];
@@ -791,6 +834,9 @@ function readURL() {
   if (isFinite(sun)) S.sun = ((Math.round(sun) % 360) + 360) % 360;
   // Variants are matched against the list, never trusted: an unknown value is
   // dropped rather than reaching a layout that has no branch for it.
+  var asof = q.get('asof');
+  S.asof = asof && /^\d{4}-\d{2}-\d{2}$/.test(asof) ? asof : null;
+  S.find = (q.get('find') || '').slice(0, 80);
   S.opts = {};
   Object.keys(OPTIONS).forEach(function (view) {
     OPTIONS[view].forEach(function (o) {
@@ -802,6 +848,123 @@ function readURL() {
 
 function stopAnim() {
   if (S.anim) { cancelAnimationFrame(S.anim); S.anim = null; }
+}
+
+function stopPlay() {
+  if (S.play) { clearInterval(S.play); S.play = null; }
+  var b = document.getElementById('carto-play');
+  if (b) { b.textContent = '\u25b6 play'; b.classList.remove('on'); }
+}
+
+// deployDays is every distinct deploy day on the chain, oldest first: the
+// stops of the time-lapse. Days rather than heights because a day is what a
+// reader can name, and 19 stops play in a quarter of a minute.
+function deployDays(d) {
+  if (d._days) return d._days;
+  var seen = {};
+  d.nodes.forEach(function (n) { if (n.deployed_at) seen[n.deployed_at.slice(0, 10)] = true; });
+  d._days = Object.keys(seen).sort();
+  return d._days;
+}
+
+// asOf is the chain as it stood at the end of S.asof: the packages deployed
+// by then, and the edges between them. Cached per cut-off, because the play
+// loop revisits every day and the filter is the same each time.
+function asOf(d) {
+  if (!S.asof) return d;
+  d._asof = d._asof || {};
+  if (d._asof[S.asof]) return d._asof[S.asof];
+  var end = Date.parse(S.asof + 'T23:59:59.999Z'), undated = 0;
+  var nodes = d.nodes.filter(function (n) {
+    if (!n.deployed_at) { undated++; return false; }
+    return Date.parse(n.deployed_at) <= end;
+  });
+  var byPath = {};
+  nodes.forEach(function (n) { byPath[n.path] = n; });
+  var both = function (e) { return byPath[e.source] && byPath[e.target]; };
+  var out = {
+    network: d.network, nodes: nodes, byPath: byPath, undated: undated, asof: S.asof,
+    imports: d.imports.filter(both), overlap: d.overlap.filter(both),
+    people: d.people.filter(function (e) { return byPath[e.pkg_path]; }), peopleNodes: d.peopleNodes,
+  };
+  d._asof[S.asof] = out;
+  return out;
+}
+
+// timeControl puts the as-of slider and the play button in the bar once the
+// data says which days exist. It is built after the load, unlike the other
+// controls, because its stops are the chain's own deploy days.
+function timeControl(d) {
+  var bar = document.getElementById('carto-bar');
+  if (!bar || bar.querySelector('.carto-time')) return;
+  var el = window.el, days = deployDays(d);
+  if (days.length < 2) return;
+  var idx = S.asof ? Math.max(0, days.indexOf(S.asof)) : days.length;
+  var g = el('div', { className: 'carto-grp carto-time' }, el('span', {}, 'as of'));
+  var r = el('input', { type: 'range', id: 'carto-asof', min: '0', max: String(days.length), step: '1',
+    value: String(idx), 'aria-label': 'show the chain as of a deploy day', 'data-first': days[0],
+    'data-last': days[days.length - 1], 'data-stops': String(days.length) });
+  r.value = String(idx);
+  var lab = el('b', { className: 'carto-time-d', id: 'carto-asof-d' }, S.asof || 'today');
+  var dayAt = function (i) { return i >= days.length ? null : days[i]; };
+  r.addEventListener('input', function () { lab.textContent = dayAt(+r.value) || 'today'; });
+  r.addEventListener('change', function () {
+    stopPlay();
+    S.asof = dayAt(+r.value); writeURL(); draw();
+  });
+  var play = el('button', { id: 'carto-play', title: 'replay the chain\u2019s growth one deploy day at a time' }, '\u25b6 play');
+  play.addEventListener('click', function () {
+    if (S.play) { stopPlay(); return; }
+    var i = S.asof ? days.indexOf(S.asof) : -1;
+    if (i < 0 || i >= days.length - 1) i = -1;
+    play.textContent = '\u25a0 stop'; play.classList.add('on');
+    var step = function () {
+      i++;
+      S.asof = dayAt(i);
+      r.value = String(i >= days.length ? days.length : i);
+      lab.textContent = S.asof || 'today';
+      writeURL(); draw();
+      if (!S.asof) stopPlay();
+    };
+    step();
+    S.play = setInterval(step, 900);
+  });
+  g.appendChild(r); g.appendChild(lab); g.appendChild(play);
+  bar.appendChild(g);
+}
+
+// findHit decides whether a package matches what the reader typed: its
+// namespace exactly, its name containing the text, or, once the text has a
+// slash in it, its path containing it. Namespace by containment only from four
+// characters, so "nt" finds the nt namespace and not every path with an n-t in it.
+function findHitNs(ns, q) { ns = (ns || '').toLowerCase(); return ns === q || (q.length >= 4 && ns.indexOf(q) >= 0); }
+function findHit(n, q) {
+  return findHitNs(n.namespace, q) || (n.name || '').toLowerCase().indexOf(q) >= 0 ||
+    (q.indexOf('/') >= 0 && n.path.toLowerCase().indexOf(q) >= 0);
+}
+
+// applyFind marks every shape on screen as a hit or dims it, without a
+// redraw. Packages are matched through data-cp, namespace-level shapes (a
+// hex, a block, an island) through data-ns.
+function applyFind() {
+  var stage = document.getElementById('carto-stage'), out = document.getElementById('carto-find-n');
+  if (!stage) return;
+  var q = (S.find || '').toLowerCase(), hits = 0, total = 0, byPath = S.data ? S.data.byPath : {};
+  stage.querySelectorAll('[data-cp]').forEach(function (e) {
+    var n = byPath[e.getAttribute('data-cp')];
+    var hit = !!(q && n && findHit(n, q));
+    total++; if (hit) hits++;
+    e.classList.toggle('carto-hit', hit);
+    e.classList.toggle('carto-dim', !!q && !hit);
+  });
+  stage.querySelectorAll('[data-ns]').forEach(function (e) {
+    var hit = !!(q && findHitNs(e.getAttribute('data-ns'), q));
+    e.classList.toggle('carto-hit', hit);
+    e.classList.toggle('carto-dim', !!q && !hit);
+  });
+  if (!out) return;
+  out.textContent = !q ? '' : !total ? 'not on this view (a canvas)' :
+    hits ? hits + ' of ' + total + ' packages' : 'no match';
 }
 
 function draw() {
@@ -832,10 +995,29 @@ function draw() {
         'no packages indexed on this chain yet, nothing to draw'));
       return;
     }
+    timeControl(d);
+    var all = d;
+    d = asOf(d);
+    if (S.asof) {
+      below.appendChild(window.el('div', { className: 'carto-asof' },
+        window.el('b', {}, 'As of ' + S.asof + ': ' + d.nodes.length + ' of ' + all.nodes.length +
+          ' packages had been deployed.'),
+        document.createTextNode(' Only existence is historical. Calls are still the last ' + S.window +
+          ' and imports are today\u2019s source, so a building lit here is lit now. Every layout is ' +
+          'recomputed for what existed: views that rank reshuffle as the chain grows, and frontier, ' +
+          'old town and an oldest-first honeycomb only ever add.' +
+          (d.undated ? ' ' + d.undated + ' packages carry no deploy date and are left out.' : ''))));
+    }
+    if (!d.nodes.length) {
+      stage.appendChild(window.el('div', { className: 'carto-empty' },
+        'nothing had been deployed by ' + S.asof + '; move the date later'));
+      return;
+    }
     ({ city: drawCity, settlement: drawSettlement, orbits: drawOrbits,
        metro: drawMetro, relief: drawRelief, metropolis: drawMetropolis, boroughs: drawBoroughs,
        hexes: drawHexes, frontier: drawFrontier, oldtown: drawOldTown, honeycomb: drawHoneycomb,
-       skyline: drawSkyline, archipelago: drawArchipelago })[S.view](stage, below, d);
+       skyline: drawSkyline, archipelago: drawArchipelago, lights: drawLights })[S.view](stage, below, d);
+    applyFind();
   }, function (e) {
     if (gen !== S.gen) return;
     stage.textContent = '';
@@ -1768,7 +1950,6 @@ function drawMetro(stage, below, d) {
 
 function drawRelief(stage, below, d) {
   var met = METRICS[S.metric];
-  var nodes = d.nodes;
 
   // Layout: a deterministic spiral seed, then a small fixed number of rounds of
   // attraction along import edges *and* repulsion between near neighbours.
@@ -1790,10 +1971,15 @@ function drawRelief(stage, below, d) {
   // metric: switching "size by" only changes the elevation poured over this
   // terrain, and recomputing 90 rounds to redraw the same coastline made every
   // metric click a 95 ms stall for nothing.
-  if (S.reliefFor === S.dataKey && S.reliefPos) {
-    return drawReliefField(stage, below, d, S.reliefPos, met);
-  }
+  return drawReliefField(stage, below, d, reliefLayout(d), met);
+}
 
+// reliefLayout is the relief's owner-blind placement, shared with the night
+// lights: same chain, same coastline. Cached per chain, window and as-of day.
+function reliefLayout(d) {
+  var key = S.dataKey + '|' + (d.asof || '');
+  if (S.reliefFor === key && S.reliefPos) return S.reliefPos;
+  var nodes = d.nodes;
   var pos = {}, i;
   nodes.forEach(function (n, k) {
     var a = k * 2.399963, r = Math.sqrt((k + 0.5) / nodes.length);
@@ -1855,8 +2041,8 @@ function drawRelief(stage, below, d) {
     p.y = Math.max(0.01, Math.min(0.99, 0.045 + 0.91 * (p.y - y0) / Math.max(1e-6, y1 - y0)));
   });
 
-  S.reliefPos = pos; S.reliefFor = S.dataKey;
-  return drawReliefField(stage, below, d, pos, met);
+  S.reliefPos = pos; S.reliefFor = key;
+  return pos;
 }
 
 // The part of the relief that does depend on the metric: pour elevation over a
@@ -4100,6 +4286,107 @@ function drawArchipelago(stage, below, d) {
   ]);
 }
 
+// =============================================================================
+// 14. NIGHT LIGHTS  -- the chain from orbit, after dark
+// =============================================================================
+//
+// The relief's owner-blind layout seen the way a satellite sees a continent at
+// night: every package a point of light, its glow the reader's metric, the
+// imports between them faint roads. Overlapping glows add up, which is the
+// point: a cluster of busy realms that share dependencies reads as a city, a
+// lone bright point is one realm with nothing around it, and the dark is the
+// dormant majority. Same positions as the relief, so the two can be read
+// against each other.
+
+function drawLights(stage, below, d) {
+  var met = METRICS[S.metric], nodes = d.nodes, pos = reliefLayout(d);
+  var H = Math.round(W * 0.62);
+  var maxM = Math.max(1, nodes.reduce(function (m, n) { return Math.max(m, met.get(n) || 0); }, 0));
+  var denom = Math.max(1e-9, sc(maxM));
+  var svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'xMidYMid meet', style: 'max-height:80vh' });
+
+  // Three lights, by what a package is: sodium for a realm someone called,
+  // a cold blue for a library other code imports, a dim grey for the rest.
+  var defs = svgEl('defs');
+  [['carto-glow-warm', '#ffcf73'], ['carto-glow-cool', '#8fc8ff'], ['carto-glow-dim', '#7b8090']].forEach(function (g) {
+    var rg = svgEl('radialGradient', { id: g[0] });
+    rg.appendChild(svgEl('stop', { offset: '0', 'stop-color': g[1], 'stop-opacity': 0.95 }));
+    rg.appendChild(svgEl('stop', { offset: '0.35', 'stop-color': g[1], 'stop-opacity': 0.35 }));
+    rg.appendChild(svgEl('stop', { offset: '1', 'stop-color': g[1], 'stop-opacity': 0 }));
+    defs.appendChild(rg);
+  });
+  svg.appendChild(defs);
+  svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: '#020309' }));
+
+  // Inset, because the relief clamps its outliers to the border of the unit
+  // square, and a glow centred on the frame's edge is half a glow.
+  var P = function (n) { var q = pos[n.path]; return [(0.05 + q.x * 0.9) * W, (0.06 + q.y * 0.88) * H]; };
+  var roads = 0;
+  if (opt('roads') === 'on') {
+    var rg2 = svgEl('g', { 'pointer-events': 'none' });
+    d.imports.forEach(function (e) {
+      var a = d.byPath[e.source], b = d.byPath[e.target];
+      if (!a || !b || !pos[a.path] || !pos[b.path]) return;
+      var A = P(a), B = P(b);
+      roads++;
+      rg2.appendChild(svgEl('line', { x1: A[0], y1: A[1], x2: B[0], y2: B[1], stroke: '#e0a050', 'stroke-width': 0.5, opacity: 0.07 }));
+    });
+    svg.appendChild(rg2);
+  }
+
+  // Screen blending, so two glows that overlap are brighter than either: the
+  // whole reason this reads as cities and not as a scatter of discs.
+  var glow = svgEl('g', { style: 'mix-blend-mode:screen' });
+  var counts = { warm: 0, cool: 0, dim: 0 };
+  nodes.forEach(function (n) {
+    var c = P(n), v = met.get(n) || 0, rises = n.is_realm || met.pure;
+    var f = rises && v > 0 ? sc(v) / denom : 0;
+    var kind = n.is_realm && n.calls > 0 ? 'warm' : !n.is_realm && n.importers > 0 ? 'cool' : 'dim';
+    counts[kind]++;
+    var g = svgEl('g');
+    g.appendChild(svgEl('circle', { cx: c[0], cy: c[1], r: 3 + f * 30, fill: 'url(#carto-glow-' + kind + ')' }));
+    g.appendChild(svgEl('circle', { cx: c[0], cy: c[1], r: kind === 'dim' ? 0.7 : 1.1 + f * 1.4,
+      fill: kind === 'warm' ? '#fff3d6' : kind === 'cool' ? '#e6f3ff' : '#9a9fae', opacity: kind === 'dim' ? 0.5 : 0.95 }));
+    bindNode(g, n, [['light', { warm: 'a realm called in the window', cool: 'a library others import', dim: 'neither' }[kind]]]);
+    glow.appendChild(g);
+  });
+  svg.appendChild(glow);
+
+  // The brightest few named, as a map names its cities, skipping any name
+  // that would land on one already placed.
+  var names = svgEl('g', { 'pointer-events': 'none' }), placed = [];
+  nodes.filter(function (n) { return (met.get(n) || 0) > 0 && (n.is_realm || met.pure); })
+    .sort(function (a, b) { return (met.get(b) || 0) - (met.get(a) || 0); }).forEach(function (n) {
+      if (placed.length >= 12) return;
+      var c = P(n);
+      if (placed.some(function (q) { return Math.abs(q[0] - c[0]) < 70 && Math.abs(q[1] - c[1]) < 16; })) return;
+      placed.push(c);
+      var t = svgEl('text', { x: c[0], y: c[1] - 9, 'text-anchor': 'middle', fill: '#e9e4d6', 'font-size': 10.5,
+        'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: '#020309', 'stroke-width': 3 });
+      t.textContent = n.name;
+      names.appendChild(t);
+    });
+  svg.appendChild(names);
+  mountSVG(stage, svg);
+
+  note(below, [
+    'The chain from orbit after dark. Positions are the relief’s, owner-blind, from the import graph alone, so ' +
+    'code that shares dependencies sits together whoever deployed it. Every one of the ', [String(nodes.length)],
+    ' packages is a light: ', [String(counts.warm)], ' warm (a realm called in the last ', [S.window], '), ',
+    [String(counts.cool)], ' cold blue (a pure package other code imports), ', [String(counts.dim)],
+    ' dim (neither). Glow is ', [met.label], ' on a ', [S.scale], ' scale, the same pure-package rule as the city, ' +
+    'and glows add where they overlap, so a bright smear is several busy packages with shared dependencies and a ' +
+    'sharp point is one standing alone. ',
+    roads ? 'The faint orange roads are the ' + roads + ' import edges. ' : 'Roads are off. ',
+    'Compass direction and absolute position carry nothing.',
+  ]);
+  legend(below, [
+    ['#ffcf73', 'sodium', '· realm, called'],
+    ['#8fc8ff', 'blue', '· library, imported'],
+    ['#7b8090', 'dim', '· neither'],
+  ]);
+}
+
 // -----------------------------------------------------------------------------
 // Entry point
 // -----------------------------------------------------------------------------
@@ -4116,7 +4403,7 @@ window.loadCartography = function (root) {
 // Leaving the page has to stop the settlement walk: a cancelled frame loop is
 // the difference between an idle tab and one holding a core at 60 Hz for as
 // long as it stays open.
-window.unloadCartography = function () { stopAnim(); tipHide(); };
+window.unloadCartography = function () { stopAnim(); stopPlay(); tipHide(); };
 
 window.addEventListener('mousemove', function (ev) {
   if (TIP && TIP.style.display === 'block') tipMove(ev);

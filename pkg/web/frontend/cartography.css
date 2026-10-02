@@ -18,19 +18,20 @@
 .carto-intro h2 { font-size: 22px; margin-bottom: 6px; }
 .carto-intro p { color: var(--fg2); max-width: 78ch; margin-bottom: 16px; }
 
-/* The view picker. Deliberately not the site's .tab: these are five drawings
-   of one dataset, not five pages, and they read better as a row of cards that
-   each say what they are for than as a tab strip that says only a name. */
-.carto-pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
-  gap: 8px; margin-bottom: 14px; }
-.carto-pick button { text-align: left; background: var(--bg2); border: 1px solid var(--border);
-  border-radius: 6px; padding: 9px 11px; color: var(--fg2); font: inherit; font-size: 12px;
-  cursor: pointer; line-height: 1.45; }
+/* The view picker: three rows of chips, one per group, with the current
+   view's one-line description under them. Fourteen cards took three rows of
+   a laptop screen and pushed the drawing below the fold. */
+.carto-pick { display: grid; gap: 6px; margin-bottom: 6px; }
+.carto-pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.carto-pick-label { color: var(--fg2); font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  min-width: 112px; }
+.carto-pick button { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
+  padding: 2px 11px; color: var(--fg2); font: inherit; font-size: 12px; cursor: pointer; line-height: 1.5; }
 .carto-pick button:hover { border-color: var(--fg2); color: var(--fg); }
-.carto-pick button.on { border-color: var(--accent); color: var(--fg); background: var(--bg3); }
-.carto-pick b { display: block; font-size: 13.5px; color: var(--fg); margin-bottom: 1px; }
-.carto-pick.on b { color: var(--accent); }
+.carto-pick button.on { border-color: var(--accent); background: var(--bg3); }
+.carto-pick b { font-weight: normal; color: var(--fg); }
 .carto-pick button.on b { color: var(--accent); }
+.carto-blurb { color: var(--fg2); font-size: 12.5px; margin: 4px 0 2px; }
 
 /* Controls: window, metric, and whatever one view needs that the others do
    not. The per-view group is rebuilt on every switch; the shared one is not,
@@ -120,3 +121,18 @@
 /* The compass readout sits with the rotate buttons and is a button itself
    (click to face north again), so it must not look like a label. */
 .carto-bar .carto-grp button { white-space: nowrap; }
+
+/* Find: hits glow, everything else steps back. Applied as classes to shapes
+   already drawn, so typing never redraws. */
+.carto-find input { background: var(--bg2); border: 1px solid var(--border); color: var(--fg); font: inherit;
+  font-size: 11.5px; padding: 2px 8px; border-radius: 4px; width: 15em; }
+.carto-find input:focus { border-color: var(--accent); outline: none; }
+.carto-find-n { color: var(--fg2); font-size: 11px; }
+.carto-stage .carto-dim { opacity: .14; }
+.carto-stage .carto-hit { filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 5px var(--accent)); }
+
+/* The time-lapse: a slider over the chain's own deploy days, and play. */
+.carto-time input[type=range] { width: 12em; accent-color: var(--accent); }
+.carto-time-d { color: var(--fg); font-weight: normal; min-width: 6.5em; font-variant-numeric: tabular-nums; }
+.carto-asof { color: var(--fg2); font-size: 12px; padding: 10px 2px 0; max-width: 90ch; line-height: 1.6; }
+.carto-asof b { color: var(--amber); font-weight: normal; }
