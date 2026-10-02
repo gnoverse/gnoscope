@@ -1421,7 +1421,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
       <div class="nav-group">
         <a href="/lab" id="nav-lab" title="surfaces being tried out"><svg aria-hidden="true"><use href="#i-flask"/></svg><span class="rail-label">lab</span></a>
         <div class="nav-kids">
-          <a href="/cartography" id="nav-cartography" title="the chain drawn as a place: a city, a settlement, orbits, a transit map, terrain, a downtown, boroughs, a hex board, a frontier, an old town, a honeycomb, a skyline and an archipelago"><span class="rail-label">cartography</span></a>
+          <a href="/cartography" id="nav-cartography" title="the chain drawn as a place: a city, a settlement, orbits, a transit map, terrain, a downtown, boroughs, a hex board, a frontier, an old town, a honeycomb, a skyline, an archipelago and night lights, with a time-lapse and find across all of them"><span class="rail-label">cartography</span></a>
           <a href="/gnohub" id="nav-gnohub" title="a realm read as a repository: owners, files, deploys"><span class="rail-label">gnohub</span></a>
           <a href="/lab/github" id="nav-labgithub" title="the ecosystem on github: contributors, pull requests, and projects that depend on gno"><span class="rail-label">github</span></a>
         </div>
@@ -26790,8 +26790,10 @@ function loadLab() {
     'relief map of where the chain is dense. Then five borrowed from city-builders, each with a ' +
     'centre: a downtown by land value, one equal block per namespace, a board of equal hexes, ' +
     'deployers settling a frontier outward from (0|0), and a walled town grown one era at a time; ' +
-    'then a honeycomb, a night skyline and an archipelago, and variants on each city-builder view ' +
-    'that swap the rule behind it. Thirteen drawings, one data load, no endpoint of their own.'));
+    'then a honeycomb, a night skyline, an archipelago and the chain from orbit at night, with ' +
+    'variants that swap the rule behind each city-builder view, a time-lapse that replays the ' +
+    'chain\u2019s growth one deploy day at a time, and a find box that lights one family up in ' +
+    'any of them. Fourteen drawings, one data load, no endpoint of their own.'));
   carto.appendChild(el('div', { className: 'gh-lab-card-foot' },
     ghLink('open the map →', '/cartography' + netSuffix())));
   grid.appendChild(carto);

@@ -61,7 +61,7 @@ test('every view draws, and none of them throws', async ({ page }) => {
   const w = watch(page);
   await stubPeople(page);
   for (const view of ['city', 'settlement', 'orbits', 'metro', 'relief',
-    'metropolis', 'boroughs', 'hexes', 'frontier', 'oldtown', 'honeycomb', 'skyline', 'archipelago']) {
+    'metropolis', 'boroughs', 'hexes', 'frontier', 'oldtown', 'honeycomb', 'skyline', 'archipelago', 'lights']) {
     await open(page, view);
     // A view that cannot draw paints .carto-empty or .carto-err instead, and
     // both are legitimate on a chain with no data, but not on this fixture,
@@ -566,8 +566,9 @@ const VARIANTS = {
   honeycomb: { 'honeycomb.centre': ['lv', 'calls', 'imp', 'old', 'ns'], 'honeycomb.paint': ['ns', 'zone'] },
   skyline: { 'skyline.shape': ['peak', 'ns', 'deploy'], 'skyline.paint': ['ns', 'zone'] },
   archipelago: { 'archipelago.centre': ['imp', 'size', 'calls'], 'archipelago.routes': ['on', 'off'] },
+  lights: { 'lights.roads': ['on', 'off'] },
 };
-const PER_PACKAGE = ['metropolis', 'boroughs', 'frontier', 'oldtown', 'honeycomb', 'skyline', 'archipelago'];
+const PER_PACKAGE = ['metropolis', 'boroughs', 'frontier', 'oldtown', 'honeycomb', 'skyline', 'archipelago', 'lights'];
 
 test('every variant of every view draws, and none drops a package', async ({ page }) => {
   const w = watch(page);
@@ -659,4 +660,84 @@ test('the archipelago lays one island per namespace and no two overlap', async (
     const a = isles[i], b = isles[j];
     expect(Math.hypot(a.x - b.x, (a.y - b.y) / 0.82)).toBeGreaterThanOrEqual(a.r + b.r);
   }
+});
+
+// Round three: the controls that cut across every view.
+
+test('the picker is three rows of chips and every chip opens its view', async ({ page }) => {
+  await open(page, 'city');
+  const chips = page.locator('.carto-pick button');
+  expect(await page.locator('.carto-pick-row').count()).toBe(3);
+  const n = await chips.count();
+  expect(n).toBe(14);
+  // The current view's description is printed once, under the chips, and it
+  // changes with the view: the cards used to carry all fourteen at once.
+  const before = await page.locator('.carto-blurb').innerText();
+  await page.locator('.carto-pick button', { hasText: 'night lights' }).click();
+  await expect(page).toHaveURL(/v=lights/);
+  await expect(page.locator('.carto-blurb')).not.toHaveText(before);
+  await expect(page.locator('#carto-stage svg')).toBeVisible();
+});
+
+test('as of a day draws only what existed then, and play walks forward to today', async ({ page }) => {
+  const w = watch(page);
+  await open(page, 'metropolis');
+  const all = await page.locator('#carto-stage [data-cp]').count();
+  const first = await page.locator('#carto-asof').getAttribute('data-first');
+  expect(first).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+  await open(page, 'metropolis', `&asof=${first}`);
+  const banner = await page.locator('.carto-asof').innerText();
+  const m = banner.match(/As of (\S+): (\d+) of (\d+) packages/);
+  expect(m[1]).toBe(first);
+  expect(Number(m[3])).toBe(all);
+  // The drawing and the banner agree, and the first day is not the whole
+  // chain, or this test could not tell a filter from no filter.
+  expect(await page.locator('#carto-stage [data-cp]').count()).toBe(Number(m[2]));
+  expect(Number(m[2])).toBeLessThan(all);
+
+  // Play from the first day ends on today, which is no asof at all.
+  await page.locator('#carto-play').click();
+  await expect(page.locator('#carto-asof-d')).toHaveText('today', { timeout: 30_000 });
+  await expect(page).not.toHaveURL(/asof=/);
+  await expect(page.locator('.carto-asof')).toHaveCount(0);
+  expect(await page.locator('#carto-stage [data-cp]').count()).toBe(all);
+  expect(w.jsErrors).toEqual([]);
+});
+
+test('find lights one namespace up in whichever view is on screen', async ({ page }) => {
+  await open(page, 'honeycomb', '&find=hub');
+  const hits = await page.locator('#carto-stage .carto-hit[data-cp]').count();
+  const dims = await page.locator('#carto-stage .carto-dim[data-cp]').count();
+  const total = await page.locator('#carto-stage [data-cp]').count();
+  expect(hits).toBeGreaterThan(0);
+  expect(hits + dims).toBe(total);
+  await expect(page.locator('#carto-find-n')).toHaveText(`${hits} of ${total} packages`);
+  // Every hit really is in the namespace or named for it: the match rule is
+  // what the count promises.
+  const wrong = await page.evaluate(() => [...document.querySelectorAll('#carto-stage .carto-hit[data-cp]')]
+    .map(e => e.getAttribute('data-cp')).filter(p => !/\/hub\//.test(p) && !/hub[^/]*$/.test(p)));
+  expect(wrong).toEqual([]);
+
+  // It survives a view switch, and the namespace-level shapes take it too.
+  await page.locator('.carto-pick button', { hasText: 'hexes' }).click();
+  await expect(page.locator('#carto-stage .carto-hex.carto-hit')).toHaveCount(1);
+  await expect(page).toHaveURL(/find=hub/);
+
+  // Clearing it clears every mark.
+  await page.locator('#carto-find').fill('');
+  await expect(page.locator('#carto-stage .carto-dim')).toHaveCount(0);
+  await expect(page).not.toHaveURL(/find=/);
+});
+
+test('night lights draws one light per package at the relief\'s positions', async ({ page }) => {
+  await open(page, 'lights');
+  const stated = Number((await page.locator('.carto-note').innerText()).match(/Every one of the (\d+)\s+packages is a light/)[1]);
+  expect(await page.locator('#carto-stage [data-cp]').count()).toBe(stated);
+  const outside = await page.evaluate(() => {
+    const vb = document.querySelector('#carto-stage svg').viewBox.baseVal;
+    return [...document.querySelectorAll('#carto-stage [data-cp] circle')]
+      .filter(c => { const x = +c.getAttribute('cx'), y = +c.getAttribute('cy'); return x < 0 || y < 0 || x > vb.width || y > vb.height; }).length;
+  });
+  expect(outside).toBe(0);
 });
