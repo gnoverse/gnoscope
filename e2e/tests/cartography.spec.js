@@ -61,7 +61,7 @@ test('every view draws, and none of them throws', async ({ page }) => {
   const w = watch(page);
   await stubPeople(page);
   for (const view of ['city', 'settlement', 'orbits', 'metro', 'relief',
-    'metropolis', 'boroughs', 'hexes', 'frontier', 'oldtown']) {
+    'metropolis', 'boroughs', 'hexes', 'frontier', 'oldtown', 'honeycomb', 'skyline', 'archipelago']) {
     await open(page, view);
     // A view that cannot draw paints .carto-empty or .carto-err instead, and
     // both are legitimate on a chain with no data, but not on this fixture,
@@ -312,6 +312,10 @@ test('a drag pans and does not navigate, even when it ends on a building', async
     return { x: r.x + r.width / 2, y: r.y + r.height / 2, path: g.getAttribute('data-cp') };
   });
 
+  // The drawing in view first, as a reader has it: thirteen view cards wrap to
+  // three rows and push the city below a 1000px viewport, and then no building
+  // is inside the window this picks from.
+  await page.locator('#carto-stage').evaluate(e => e.scrollIntoView({ block: 'center' }));
   const target = await pick();
   expect(target).not.toBeNull();
 
@@ -547,4 +551,112 @@ test('the compass and the plan view reach the two new isometric drawings', async
   // and moves nothing reads as a broken page.
   await open(page, 'hexes');
   await expect(page.locator('#carto-bar', { hasText: 'size by' })).toHaveCount(0);
+});
+
+// Every variant of every city-builder view, run once each. A variant is a
+// different layout rule, and a rule that drops a package does it silently:
+// the drawing still looks like a city. So each one is held to the count the
+// metropolis states, on every view that draws one shape per package.
+const VARIANTS = {
+  metropolis: { 'metropolis.centre': ['lv', 'calls', 'imp', 'old', 'new'], 'metropolis.paint': ['zone', 'ns'] },
+  boroughs: { 'boroughs.order': ['metric', 'size', 'old', 'imp'] },
+  hexes: { 'hexes.place': ['imp', 'calls', 'size', 'old'] },
+  frontier: { 'frontier.who': ['creator', 'ns'], 'frontier.order': ['deploy', 'size'] },
+  oldtown: { 'oldtown.rings': ['deploy', 'lv', 'calls', 'imp'], 'oldtown.walls': ['era', 'week', 'day'] },
+  honeycomb: { 'honeycomb.centre': ['lv', 'calls', 'imp', 'old', 'ns'], 'honeycomb.paint': ['ns', 'zone'] },
+  skyline: { 'skyline.shape': ['peak', 'ns', 'deploy'], 'skyline.paint': ['ns', 'zone'] },
+  archipelago: { 'archipelago.centre': ['imp', 'size', 'calls'], 'archipelago.routes': ['on', 'off'] },
+};
+const PER_PACKAGE = ['metropolis', 'boroughs', 'frontier', 'oldtown', 'honeycomb', 'skyline', 'archipelago'];
+
+test('every variant of every view draws, and none drops a package', async ({ page }) => {
+  const w = watch(page);
+  await open(page, 'metropolis');
+  const all = Number((await page.locator('.carto-note').innerText()).match(/all (\d+) packages compete/)[1]);
+  for (const [view, opts] of Object.entries(VARIANTS)) {
+    for (const [key, values] of Object.entries(opts)) {
+      for (const v of values) {
+        await open(page, view, `&${key}=${v}`);
+        await expect(page.locator('#carto-stage .carto-err')).toHaveCount(0);
+        await expect(page.locator('#carto-stage .carto-empty')).toHaveCount(0);
+        await expect(page.locator('.carto-note')).toBeVisible();
+        if (PER_PACKAGE.includes(view)) {
+          expect(await page.locator('#carto-stage [data-cp]').count(), `${view} ${key}=${v}`).toBe(all);
+        }
+      }
+    }
+  }
+  expect(w.jsErrors).toEqual([]);
+});
+
+test('a variant is a control, it lands in the URL, and the caption names the rule', async ({ page }) => {
+  await open(page, 'metropolis');
+  await page.locator('#carto-bar button', { hasText: 'oldest' }).click();
+  await expect(page).toHaveURL(/metropolis\.centre=old/);
+  await expect(page.locator('.carto-note')).toContainText('oldest code');
+  await page.reload();
+  await settle(page);
+  await expect(page.locator('#carto-bar button.on', { hasText: 'oldest' })).toHaveCount(1);
+  // The default is never written, so a plain link stays plain.
+  await page.locator('#carto-bar button', { hasText: 'land value' }).click();
+  await expect(page).not.toHaveURL(/metropolis\.centre=/);
+  // An unknown value is dropped, not passed to a layout with no branch for it.
+  await open(page, 'metropolis', '&metropolis.centre=nonsense');
+  await expect(page.locator('#carto-bar button.on', { hasText: 'land value' })).toHaveCount(1);
+  // A control with no effect under the current choice of another is hidden:
+  // walls only mean something when the rings are dated.
+  await open(page, 'oldtown', '&oldtown.rings=lv');
+  await expect(page.locator('#carto-bar', { hasText: 'walls' })).toHaveCount(0);
+  await open(page, 'oldtown');
+  await expect(page.locator('#carto-bar button', { hasText: 'weeks' })).toHaveCount(1);
+});
+
+test('frontier with namespaces as players has one player per namespace', async ({ page }) => {
+  await open(page, 'boroughs');
+  const namespaces = Number((await page.locator('.carto-note').innerText()).match(/One block per namespace, (\d+) of them/)[1]);
+  await open(page, 'frontier', '&frontier.who=ns');
+  await expect(page.locator('.carto-note')).toContainText(`players are the ${namespaces} namespaces`);
+});
+
+test('the honeycomb gives every package its own cell, outward in rank order', async ({ page }) => {
+  await open(page, 'honeycomb');
+  const stated = Number((await page.locator('.carto-note').innerText()).match(/One cell per package, (\d+) of them/)[1]);
+  const slots = await page.evaluate(() => [...document.querySelectorAll('#carto-stage [data-slot]')]
+    .map(g => g.getAttribute('data-slot')));
+  expect(slots.length).toBe(stated);
+  expect(new Set(slots).size).toBe(stated);
+  // Hex distance from the centre never decreases in drawing order, which is
+  // rank order: that is the whole claim of the view.
+  const rings = slots.map(s => { const [q, r] = s.split(',').map(Number); return (Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2; });
+  for (let i = 1; i < rings.length; i++) expect(rings[i]).toBeGreaterThanOrEqual(rings[i - 1]);
+});
+
+test('the skyline peaks in the middle, and its reflection is the same towers', async ({ page }) => {
+  await open(page, 'skyline');
+  const r = await page.evaluate(() => {
+    const ts = [...document.querySelectorAll('#carto-skyline-towers > g')];
+    const xs = ts.map(t => Number(t.getAttribute('data-x')));
+    const hs = ts.map(t => Number(t.querySelector('rect').getAttribute('height')));
+    const top = hs.indexOf(Math.max(...hs));
+    return { n: ts.length, xTop: xs[top], xMin: Math.min(...xs), xMax: Math.max(...xs),
+      use: document.querySelector('#carto-stage use').getAttribute('href') };
+  });
+  const stated = Number((await page.locator('.carto-note').innerText()).match(/one tower per package, (\d+) of them/)[1]);
+  expect(r.n).toBe(stated);
+  const mid = (r.xMin + r.xMax) / 2;
+  expect(Math.abs(r.xTop - mid)).toBeLessThan((r.xMax - r.xMin) * 0.05);
+  expect(r.use).toBe('#carto-skyline-towers');
+});
+
+test('the archipelago lays one island per namespace and no two overlap', async ({ page }) => {
+  await open(page, 'archipelago');
+  const stated = Number((await page.locator('.carto-note').innerText()).match(/One island per namespace, (\d+) of them/)[1]);
+  const isles = await page.evaluate(() => [...document.querySelectorAll('#carto-stage .carto-island')]
+    .map(e => ({ x: +e.dataset.x, y: +e.dataset.y, r: +e.dataset.r })));
+  expect(isles.length).toBe(stated);
+  // Same ellipse metric the packing uses: y is drawn at 0.82.
+  for (let i = 0; i < isles.length; i++) for (let j = i + 1; j < isles.length; j++) {
+    const a = isles[i], b = isles[j];
+    expect(Math.hypot(a.x - b.x, (a.y - b.y) / 0.82)).toBeGreaterThanOrEqual(a.r + b.r);
+  }
 });

@@ -1,4 +1,4 @@
-/* Cartography: ten drawings of one chain, as a place rather than a table.
+/* Cartography: thirteen drawings of one chain, as a place rather than a table.
  *
  * ---------------------------------------------------------------------------
  * Why a file of its own
@@ -10,7 +10,7 @@
  * container and a ten-line loader; everything below is the experiment.
  *
  * ---------------------------------------------------------------------------
- * Why ten and not one
+ * Why thirteen and not one
  *
  * The site already has the honest picture: /contracts is a force-directed
  * graph, and it is the right answer to "what is connected to what". It is a
@@ -37,6 +37,13 @@
  *   frontier    who settled the chain, and in what order
  *   old town    how did the whole chain grow, era by era
  *
+ * and three that came out of trying many options on those (each of the city-
+ * builder views also takes variants, OPTIONS below):
+ *
+ *   honeycomb   every package one cell, in rank order from the centre
+ *   skyline     the elevation: height is the only thing compared
+ *   archipelago ownership kept, grid dropped: islands sized by count
+ *
  * ---------------------------------------------------------------------------
  * What it reads
  *
@@ -51,7 +58,7 @@
  * Honesty rules these drawings follow
  *
  * A picture is easier to believe than a table and just as easy to get wrong,
- * so three rules hold across all ten:
+ * so three rules hold across all of them:
  *
  *  1. Nothing is invented. Every position that carries meaning is derived from
  *     a field. Where a position is arbitrary (which slot in a district a
@@ -99,6 +106,9 @@ var S = {
   // throw away where the reader had navigated to. Keyed by view because the
   // five are different spaces and a pan in one means nothing in another.
   cam: {},
+  // Variant choices, keyed "<view>.<key>". Absent means the first value in
+  // OPTIONS, so a link that names nothing opens every view as it was designed.
+  opts: {},
 };
 
 var VIEWS = [
@@ -112,6 +122,9 @@ var VIEWS = [
   { id: 'hexes',      name: 'hexes',      blurb: 'a board of equal hexes, neighbours by imports, terrain by yield' },
   { id: 'frontier',   name: 'frontier',   blurb: 'deployers as players, settled outward from (0|0) in deploy order' },
   { id: 'oldtown',    name: 'old town',   blurb: 'a walled town grown ring by ring, one wall per era of deploys' },
+  { id: 'honeycomb',  name: 'honeycomb',  blurb: 'one cell per package, spiralling out from the queen in rank order' },
+  { id: 'skyline',    name: 'skyline',    blurb: 'the chain side on at night, one tower per package, across the water' },
+  { id: 'archipelago', name: 'archipelago', blurb: 'namespaces as islands by size, packed by trade, imports as ferries' },
 ];
 
 // pure says whether a pure package may take a size from this metric.
@@ -135,6 +148,68 @@ var METRICS = {
 };
 
 var WINDOWS = ['24h', '7d', '30d', '90d', 'all'];
+
+// Variants: the rules behind a view, offered as controls so a reader can run the
+// same metaphor under a different rule and see what the rule was doing. Every
+// one of them is a placement or a colouring decision the first version made
+// silently; exposing them is the honest version of having made them.
+//
+// `when` hides a control that has no effect under the current choice of
+// another, for the reason given at the metric picker: a control that is there
+// and moves nothing reads as a broken page.
+var OPTIONS = {
+  metropolis: [
+    { key: 'centre', label: 'downtown is', values: [['land value', 'lv'], ['most called', 'calls'],
+      ['most imported', 'imp'], ['oldest', 'old'], ['newest', 'new']] },
+    { key: 'paint', label: 'colour', values: [['zone', 'zone'], ['namespace', 'ns']] },
+  ],
+  boroughs: [
+    { key: 'order', label: 'centre is', values: [['busiest', 'metric'], ['biggest', 'size'],
+      ['oldest', 'old'], ['most imported', 'imp']] },
+  ],
+  hexes: [
+    { key: 'place', label: 'neighbours by', values: [['imports', 'imp'], ['busiest out', 'calls'],
+      ['biggest out', 'size'], ['oldest out', 'old']] },
+  ],
+  frontier: [
+    { key: 'who', label: 'players are', values: [['deployers', 'creator'], ['namespaces', 'ns']] },
+    { key: 'order', label: 'settle', values: [['in deploy order', 'deploy'], ['biggest first', 'size']] },
+  ],
+  oldtown: [
+    { key: 'rings', label: 'rings by', values: [['deploy order', 'deploy'], ['land value', 'lv'],
+      ['calls', 'calls'], ['imported', 'imp']] },
+    { key: 'walls', label: 'walls', values: [['eras', 'era'], ['weeks', 'week'], ['days', 'day']],
+      when: function () { return opt('rings') === 'deploy'; } },
+  ],
+  honeycomb: [
+    { key: 'centre', label: 'centre is', values: [['land value', 'lv'], ['most called', 'calls'],
+      ['most imported', 'imp'], ['oldest', 'old'], ['by namespace', 'ns']] },
+    { key: 'paint', label: 'colour', values: [['namespace', 'ns'], ['zone', 'zone']] },
+  ],
+  skyline: [
+    { key: 'shape', label: 'arrange', values: [['peak in the middle', 'peak'], ['by namespace', 'ns'],
+      ['in deploy order', 'deploy']] },
+    { key: 'paint', label: 'colour', values: [['namespace', 'ns'], ['zone', 'zone']] },
+  ],
+  archipelago: [
+    { key: 'centre', label: 'centre island', values: [['most imported', 'imp'], ['biggest', 'size'],
+      ['busiest', 'calls']] },
+    { key: 'routes', label: 'ferries', values: [['on', 'on'], ['off', 'off']] },
+  ],
+};
+
+// opt reads one variant of the current view, falling back to its default.
+function opt(key) {
+  var o = (OPTIONS[S.view] || []).filter(function (x) { return x.key === key; })[0];
+  if (!o) return null;
+  var v = S.opts[S.view + '.' + key];
+  return v !== undefined ? v : o.values[0][1];
+}
+function optLabel(key) {
+  var o = (OPTIONS[S.view] || []).filter(function (x) { return x.key === key; })[0];
+  var v = opt(key);
+  return o.values.filter(function (x) { return x[1] === v; })[0][0];
+}
 
 // -----------------------------------------------------------------------------
 // Small helpers
@@ -522,7 +597,7 @@ function render(root) {
 
   root.appendChild(el('div', { className: 'carto-intro' },
     el('h2', {}, 'cartography'),
-    el('p', {}, 'The same chain the rest of the site tabulates, drawn as a place. Ten metaphors, ' +
+    el('p', {}, 'The same chain the rest of the site tabulates, drawn as a place. Thirteen metaphors, ' +
       'one data load, no endpoint of their own: every number here comes from the API that serves ' +
       '/contracts, /accounts and /gas, so a figure that disagrees with one of those pages is a bug ' +
       'in the drawing and not a second opinion. Each view says in its caption which quantity it ' +
@@ -582,7 +657,7 @@ function controls(root) {
   var bar = el('div', { className: 'carto-bar', id: 'carto-bar' });
   // hexes is the one city-builder view without a size channel: a tile is the
   // same size whatever is in it, which is its point.
-  var sized = S.view !== 'settlement' && S.view !== 'metro' && S.view !== 'hexes';
+  var sized = ['settlement', 'metro', 'hexes', 'archipelago'].indexOf(S.view) < 0;
   // The three isometric drawings share one camera model, so they share its
   // controls: the compass and the plan view.
   var iso = S.view === 'city' || S.view === 'metropolis' || S.view === 'boroughs';
@@ -646,6 +721,12 @@ function controls(root) {
     bar.appendChild(rot);
   }
 
+  (OPTIONS[S.view] || []).forEach(function (o) {
+    if (o.when && !o.when()) return;
+    bar.appendChild(btnGroup(o.label, o.values, function (v) { return opt(o.key) === v; },
+      function (v) { if (opt(o.key) !== v) { S.opts[S.view + '.' + o.key] = v; writeURL(); restate(root); } }));
+  });
+
   // The orbits' viewing angle, which is the one genuinely three-dimensional
   // thing on that drawing: overhead reads the rings as circles and makes two
   // systems comparable, edge-on stacks them and makes a single system's
@@ -679,6 +760,12 @@ function writeURL() {
   q.set('sun', String(S.sun));
   var net = window.getNetwork ? window.getNetwork() : null;
   if (net && net !== 'all') q.set('network', net); else q.delete('network');
+  Object.keys(OPTIONS).forEach(function (view) {
+    OPTIONS[view].forEach(function (o) {
+      var k = view + '.' + o.key, v = S.opts[k];
+      if (v !== undefined && v !== o.values[0][1]) q.set(k, v); else q.delete(k);
+    });
+  });
   history.replaceState(null, '', '/cartography?' + q.toString());
 }
 
@@ -702,6 +789,15 @@ function readURL() {
   if (isFinite(tilt)) S.tilt = Math.min(1, Math.max(0.12, tilt));
   var sun = parseFloat(q.get('sun'));
   if (isFinite(sun)) S.sun = ((Math.round(sun) % 360) + 360) % 360;
+  // Variants are matched against the list, never trusted: an unknown value is
+  // dropped rather than reaching a layout that has no branch for it.
+  S.opts = {};
+  Object.keys(OPTIONS).forEach(function (view) {
+    OPTIONS[view].forEach(function (o) {
+      var v = q.get(view + '.' + o.key);
+      if (v && o.values.some(function (x) { return x[1] === v; })) S.opts[view + '.' + o.key] = v;
+    });
+  });
 }
 
 function stopAnim() {
@@ -738,7 +834,8 @@ function draw() {
     }
     ({ city: drawCity, settlement: drawSettlement, orbits: drawOrbits,
        metro: drawMetro, relief: drawRelief, metropolis: drawMetropolis, boroughs: drawBoroughs,
-       hexes: drawHexes, frontier: drawFrontier, oldtown: drawOldTown })[S.view](stage, below, d);
+       hexes: drawHexes, frontier: drawFrontier, oldtown: drawOldTown, honeycomb: drawHoneycomb,
+       skyline: drawSkyline, archipelago: drawArchipelago })[S.view](stage, below, d);
   }, function (e) {
     if (gen !== S.gen) return;
     stage.textContent = '';
@@ -2176,6 +2273,24 @@ function landValuer(nodes) {
   return function (n) { return lg(n.importers) / li + lg(n.calls) / lc + 0.5 * lg(n.unique_callers) / lu; };
 }
 
+// ranker answers "what goes in the middle" for every view that lets the reader
+// choose: a comparator, most central first.
+function ranker(kind, nodes) {
+  if (kind === 'old') return byDeploy;
+  if (kind === 'new') return function (a, b) { return byDeploy(b, a); };
+  var lv = landValuer(nodes);
+  var key = {
+    lv: lv,
+    calls: function (n) { return (n.calls || 0) * 1e6 + (n.unique_callers || 0); },
+    imp: function (n) { return (n.importers || 0) * 1e6 + (n.calls || 0); },
+  }[kind] || lv;
+  return function (a, b) { return key(b) - key(a) || b.calls - a.calls || a.path.localeCompare(b.path); };
+}
+var RANK_WORDS = {
+  lv: 'land value', calls: 'calls in the window', imp: 'how many packages import it',
+  old: 'deploy date, oldest first', new: 'deploy date, newest first',
+};
+
 // Zoning, SimCity's three colours plus two of its oddities. The zone is a
 // function of two facts every row already carries (realm or not, called or
 // not, imported or not), so a reader can check any plot against /contracts.
@@ -2300,10 +2415,11 @@ function isoRing(cx, cy, r) {
 function drawMetropolis(stage, below, d) {
   var met = METRICS[S.metric];
   var nodes = d.nodes;
-  var lv = landValuer(nodes);
-  var ranked = nodes.slice().sort(function (a, b) {
-    return lv(b) - lv(a) || b.calls - a.calls || a.path.localeCompare(b.path);
-  });
+  var kind = opt('centre'), paint = opt('paint');
+  var ranked = nodes.slice().sort(ranker(kind, nodes));
+  // Colour by zone, or by namespace: the second shows where the families of
+  // code actually ended up once ownership stopped deciding where they stand.
+  var col = function (c, l, sat) { return paint === 'ns' ? nsColor(c.n.namespace, l, sat) : zoneColor(c.z, l, sat); };
 
   // Plots: three-by-three blocks with a one-cell street between them, on an
   // odd number of blocks so one block sits exactly on the centre. Enough
@@ -2402,7 +2518,9 @@ function drawMetropolis(stage, below, d) {
       // A park is a lawn with trees on it, not a building: a package nothing
       // imports and nobody calls holds no weight in the city, and drawing a
       // shed for it would make the sprawl look busier than it is.
-      g = isoBox(x, y, _cityCam.flat ? 0 : 1.5, hw, hh, zoneColor('P', 26), zoneColor('P', 18), zoneColor('P', 14));
+      g = paint === 'ns'
+        ? isoBox(x, y, _cityCam.flat ? 0 : 1.5, hw, hh, nsColor(n.namespace, 24, 30), nsColor(n.namespace, 17, 30), nsColor(n.namespace, 13, 30))
+        : isoBox(x, y, _cityCam.flat ? 0 : 1.5, hw, hh, zoneColor('P', 26), zoneColor('P', 18), zoneColor('P', 14));
       var rng = rngFrom(n.path);
       for (var t = 0; t < 2; t++) {
         var tx = x + (rng() - 0.5) * hw, ty = y - 1.5 + (rng() - 0.5) * hh;
@@ -2412,7 +2530,7 @@ function drawMetropolis(stage, below, d) {
     } else {
       var base = c.z === 'C' ? 56 : c.z === 'I' ? 52 : c.z === 'build' ? 40 : 46;
       var liftL = _cityCam.flat ? (c.storeys / 18) * 22 : 0;
-      g = isoBox(x, y, c.h, hw, hh, zoneColor(c.z, base + 10 + liftL), zoneColor(c.z, base - 12), zoneColor(c.z, base - 24));
+      g = isoBox(x, y, c.h, hw, hh, col(c, base + 10 + liftL), col(c, base - 12), col(c, base - 24));
       // Industry gets a chimney, so the zone reads in the model's shape and
       // not only in a hue a colour-blind reader may not separate from green.
       if (c.z === 'I' && !_cityCam.flat) {
@@ -2421,7 +2539,7 @@ function drawMetropolis(stage, below, d) {
       if (c.z === 'build') isoParked(g, x, y, c.h, hw, hh);
       isoLamps(g, n, x, y, c.h, hw, hh, c.storeys);
     }
-    bindNode(g, n, [['zone', ZONES[c.z].name], ['land value rank', '#' + (c.rank + 1) + ' of ' + nodes.length],
+    bindNode(g, n, [['zone', ZONES[c.z].name], ['rank by ' + RANK_WORDS[kind], '#' + (c.rank + 1) + ' of ' + nodes.length],
       ['storeys', String(c.storeys) + ' (' + met.label + ')']]);
     town.appendChild(g);
   });
@@ -2444,15 +2562,28 @@ function drawMetropolis(stage, below, d) {
   mountSVG(stage, svg);
 
   var top = ranked.slice(0, 3).map(function (n) { return n.name; }).join(', ');
+  var why = {
+    lv: 'Land value is the one composite on this page, and it is built from three real numbers: how ' +
+      'many packages import it, how many calls it took in the last ' + S.window + ', and (at half ' +
+      'weight, so the same traffic is not counted twice) from how many addresses, each log-scaled ' +
+      'against the chain\u2019s maximum. Downtown is therefore what the chain leans on and uses most',
+    calls: 'Downtown is what was called most in the last ' + S.window + ', so this is the chain\u2019s ' +
+      'traffic and nothing else; a library everyone imports and nobody calls is out in the sprawl',
+    imp: 'Downtown is what the most packages import, so this is the chain\u2019s foundations: ' +
+      'libraries crowd the middle and the busy realms built on them stand further out',
+    old: 'Downtown is the oldest code, as in a city whose historic core is where it was founded, ' +
+      'so the genesis packages hold the middle and every later deploy builds outward',
+    new: 'Downtown is the newest code, a boomtown inverted: the middle is what landed last and ' +
+      'the genesis packages are the outskirts',
+  }[kind];
   note(below, [
     'Owner-blind: all ', [String(nodes.length)], ' packages compete for the same land, and the ' +
-    'most valuable takes the plot nearest the centre. Land value is the one composite on this ' +
-    'page, and it is built from three real numbers: how many packages import it, how many calls it ' +
-    'took in the last ', [S.window], ', and (at half weight, so the same traffic is not counted ' +
-    'twice) from how many addresses, each log-scaled against the chain’s maximum. Downtown is ' +
-    'therefore what the chain leans on and uses most, and on this chain it is led by ', [top], '. ',
-    'The rings mark the radius holding the top 5%, 25% and 60% by land value. Storeys are ',
-    [met.label], ' on a ', [S.scale], ' scale, the same rule as the city. Colour is the zone: ',
+    'highest ranked takes the plot nearest the centre. ', why, ', and on this chain it is led by ',
+    [top], '. The rings mark the radius holding the top 5%, 25% and 60% by ', [RANK_WORDS[kind]],
+    '. Storeys are ', [met.label], ' on a ', [S.scale], ' scale, the same rule as the city. ',
+    paint === 'ns' ? 'Colour is the namespace here, so a family of code that scatters across the ' +
+      'rings is one whose packages the ranking pulled apart. The zone counts still hold: ' :
+      'Colour is the zone: ',
     [String(zc.C)], ' commercial (a realm called in the window), ', [String(zc.R)],
     ' residential (a realm nobody called), ', [String(zc.I)], ' industrial (a pure package others ' +
     'import, with a chimney), ', [String(zc.P)], ' parks (a pure package nothing imports), ',
@@ -2465,7 +2596,7 @@ function drawMetropolis(stage, below, d) {
     [zoneColor('R', 46), 'residential', '· realm, not called'],
     [zoneColor('I', 52), 'industrial', '· pure package, imported'],
     [zoneColor('P', 30), 'park', '· pure package, not imported'],
-    ['var(--accent)', 'downtown', '· top 5% by land value'],
+    ['var(--accent)', 'downtown', '· top 5% by ' + RANK_WORDS[kind]],
   ]);
 }
 
@@ -2486,8 +2617,17 @@ function drawMetropolis(stage, below, d) {
 function drawBoroughs(stage, below, d) {
   var met = METRICS[S.metric];
   var groups = groupNamespaces(d.nodes);
-  groups.forEach(function (g) { g.score = g.nodes.reduce(function (a, n) { return a + (met.get(n) || 0); }, 0); });
-  groups.sort(function (a, b) { return b.score - a.score || b.n - a.n || a.ns.localeCompare(b.ns); });
+  var order = opt('order');
+  groups.forEach(function (g) {
+    g.score = g.nodes.reduce(function (a, n) { return a + (met.get(n) || 0); }, 0);
+    g.first = Math.min.apply(null, g.nodes.map(function (n) { return n.deployed_at ? Date.parse(n.deployed_at) : 0; }));
+    g.imp = g.nodes.reduce(function (a, n) { return a + (n.importers || 0); }, 0);
+  });
+  var gkey = { metric: function (g) { return g.score; }, size: function (g) { return g.n; },
+    old: function (g) { return -g.first; }, imp: function (g) { return g.imp; } }[order];
+  groups.sort(function (a, b) { return gkey(b) - gkey(a) || b.n - a.n || a.ns.localeCompare(b.ns); });
+  var orderWords = { metric: 'total ' + met.label, size: 'package count', old: 'first deploy, oldest first',
+    imp: 'how often its packages are imported' }[order];
 
   var B = 6, ST = 1.6, P = B + ST;
   var L = Math.ceil(Math.sqrt(groups.length));
@@ -2602,15 +2742,15 @@ function drawBoroughs(stage, below, d) {
     'Package count becomes density instead of area: ', [biggest.ns], '’s ', [String(biggest.n)],
     ' packages are a packed quarter of narrow towers, and a namespace of one is a single house on a ' +
     'lawn, so the biggest namespace no longer decides the shape of the whole map. Blocks spiral ' +
-    'outward from the centre by the namespace’s total ', [met.label], ', so the outlined block in ' +
-    'the middle, ', [g0.ns], ', is the busiest by that measure and the corners are the quietest. ' +
+    'outward from the centre by ', [orderWords], ', so the outlined block in the middle, ', [g0.ns],
+    ', comes first by that measure and the corners come last. ' +
     'Storeys are ', [met.label], ' on a ', [S.scale], ' scale, the same rule as the city; ' +
     'hue is the namespace; ', [String(lit)], ' buildings have lit windows (called in the last ',
     [S.window], '). Where a building stands inside its block is deployment-agnostic and ordered ' +
     'busiest first, the same order as the city.',
   ]);
   legend(below, [
-    ['var(--accent)', 'outlined block', '· the centre: busiest namespace by ' + met.label],
+    ['var(--accent)', 'outlined block', '· the centre: first by ' + orderWords],
     ['var(--amber)', 'lit window', '· called in the window'],
     [nsColor(biggest.ns, 58), 'dense block', '· many packages on equal ground'],
   ]);
@@ -2718,11 +2858,26 @@ function drawHexes(stage, below, d) {
   // then size. Greedy, deterministic, and every adjacency it produces is one
   // the import graph argued for.
   var slots = hexSpiral(groups.length);
+  var place = opt('place');
+  // The other placements are plain spirals by one quantity, no affinity: the
+  // board laid out as a ranking, which is what makes the import-driven one
+  // worth comparing against.
+  groups.forEach(function (g) {
+    g.first = Math.min.apply(null, g.nodes.map(function (n) { return n.deployed_at ? Date.parse(n.deployed_at) : 0; }));
+    g.callsSum = g.nodes.reduce(function (a, n) { return a + (n.calls || 0); }, 0);
+  });
+  var spiralKey = { imp: function (g) { return inbound[g.ns] || 0; }, calls: function (g) { return g.callsSum; },
+    size: function (g) { return g.n; }, old: function (g) { return -g.first; } }[place];
   var center = groups.slice().sort(function (a, b) {
-    return (inbound[b.ns] || 0) - (inbound[a.ns] || 0) || b.n - a.n || a.ns.localeCompare(b.ns);
+    return spiralKey(b) - spiralKey(a) || b.n - a.n || a.ns.localeCompare(b.ns);
   })[0];
   var at = {}, placed = [center], left = groups.filter(function (g) { return g !== center; });
   center.q = 0; center.r = 0; at['0,0'] = center;
+  if (place !== 'imp') {
+    left.sort(function (a, b) { return spiralKey(b) - spiralKey(a) || b.n - a.n || a.ns.localeCompare(b.ns); });
+    left.forEach(function (g, i) { g.q = slots[i + 1][0]; g.r = slots[i + 1][1]; at[g.q + ',' + g.r] = g; placed.push(g); });
+    left = [];
+  }
   for (var si = 1; si < slots.length && left.length; si++) {
     var sq = slots[si][0], sr = slots[si][1];
     var nb = HEX_DIRS.map(function (dd) { return at[(sq + dd[0]) + ',' + (sr + dd[1])]; }).filter(Boolean);
@@ -2901,10 +3056,15 @@ function drawHexes(stage, below, d) {
   note(below, [
     'One hex per namespace, ', [String(placed.length)], ' of them, all the same size: the board ' +
     'game’s conceit is that the land is equal and what it yields is not. ', [center.ns],
-    ' holds the centre because the rest of the chain imports it more than anything else (',
-    [window.fmtNum(inbound[center.ns] || 0)], ' import edges from other namespaces); every slot ' +
-    'after it, spiralling outward, went to the namespace with the most imports to and from its ' +
-    'already-placed neighbours, so who sits next to whom is the import graph’s argument, and the ',
+    place === 'imp'
+      ? ' holds the centre because the rest of the chain imports it more than anything else (' +
+        window.fmtNum(inbound[center.ns] || 0) + ' import edges from other namespaces); every slot ' +
+        'after it, spiralling outward, went to the namespace with the most imports to and from its ' +
+        'already-placed neighbours, so who sits next to whom is the import graph\u2019s argument, and the '
+      : ' holds the centre and the rest spiral outward by ' + { calls: 'calls in the window',
+        size: 'package count', old: 'first deploy, oldest first' }[place] + ', with no say from the ' +
+        'import graph at all: compare the roads with the imports layout to see how much of that ' +
+        'board\u2019s neighbourliness was the graph and how much was luck. The ',
     [String(roadN)], ' roads on shared edges carry ', [String(roadFlow)], ' of the ', [String(totalFlow)],
     ' cross-namespace import edges. The rest run between hexes that are not neighbours and are not ' +
     'drawn. Terrain is the quantity in which a namespace holds its largest share of the chain: ',
@@ -2988,7 +3148,21 @@ function terrainGlyphs(parent, g, c, R) {
 
 function drawFrontier(stage, below, d) {
   var met = METRICS[S.metric];
+  var mode = opt('who'), settle = opt('order');
+  var playerOf = function (n) { return mode === 'ns' ? (n.namespace || '?') : (n.creator || '?'); };
   var order = d.nodes.slice().sort(byDeploy);
+  if (settle === 'size') {
+    // Biggest player first, then each player's packages in deploy order: the
+    // map as an empire ranking rather than a history.
+    var cnt = {};
+    order.forEach(function (n) { cnt[playerOf(n)] = (cnt[playerOf(n)] || 0) + 1; });
+    var firstAt = {};
+    order.forEach(function (n, i) { if (firstAt[playerOf(n)] === undefined) firstAt[playerOf(n)] = i; });
+    order.sort(function (a, b) {
+      var pa = playerOf(a), pb = playerOf(b);
+      return cnt[pb] - cnt[pa] || firstAt[pa] - firstAt[pb] || byDeploy(a, b);
+    });
+  }
 
   // Offsets sorted by distance, shared by the spiral and the nearest-free
   // search. Ties by a seeded angle so a ring fills in an order that looks
@@ -3010,7 +3184,7 @@ function drawFrontier(stage, below, d) {
     return true;
   };
   order.forEach(function (n) {
-    var who = n.creator || '?';
+    var who = playerOf(n);
     var p = players[who];
     var spot = null, i;
     if (!p) {
@@ -3038,7 +3212,7 @@ function drawFrontier(stage, below, d) {
     var c = {};
     p.nodes.forEach(function (n) { if (!/^g1[0-9a-z]{30,}$/.test(n.namespace || '')) c[n.namespace] = (c[n.namespace] || 0) + 1; });
     var best = Object.keys(c).sort(function (a, b) { return c[b] - c[a] || a.localeCompare(b); })[0];
-    p.name = best || shortAddr(p.id);
+    p.name = mode === 'ns' ? (/^g1[0-9a-z]{30,}$/.test(p.id) ? shortAddr(p.id) : p.id) : (best || shortAddr(p.id));
     p.hue = nsHue(p.id);
   });
   // Two addresses deploying into one namespace would otherwise be two players
@@ -3200,14 +3374,19 @@ function drawFrontier(stage, below, d) {
   var first = plist[0];
   var big = plist.slice().sort(function (a, b) { return b.nodes.length - a.nodes.length; })[0];
   note(below, [
-    'A world map in which the players are the ', [String(plist.length)], ' addresses that deployed ' +
-    'code, not the namespaces it went into, and every one of the ', [String(order.length)],
-    ' packages is a tile they settled. Placement is deploy order and nothing else: the first ' +
-    'deployer, ', [first.name], ', holds (0|0), each new player founds a capital (the flag) at the ' +
+    'A world map in which the players are the ', [String(plist.length)],
+    mode === 'ns' ? ' namespaces, whoever deployed into them' : ' addresses that deployed code, not the namespaces it went into',
+    ', and every one of the ', [String(order.length)], ' packages is a tile they settled. ',
+    settle === 'size'
+      ? 'Players settle biggest first rather than in deploy order, so this is an empire ranking: the ' +
+        'largest player holds (0|0) and the smallest the rim. The first is '
+      : 'Placement is deploy order and nothing else: the first player, ',
+    [first.name], (settle === 'size' ? '. Each player founds a capital (the flag) at the ' : ', holds (0|0), each new player founds a capital (the flag) at the ') +
     'next free tile spiralling out from the origin with a tile of clearance from everyone else, and ' +
-    'each later deploy becomes a village on the free tile nearest that capital. So the middle is the ' +
-    'chain’s founders and the rim its newest arrivals, and a territory’s size is how much ' +
-    'that player deployed: ', [big.name], ' holds ', [String(big.nodes.length)], '. ',
+    'each later deploy becomes a village on the free tile nearest that capital. ' +
+    (settle === 'size' ? 'So distance from the middle is rank by size' :
+      'So the middle is the chain\u2019s founders and the rim its newest arrivals') +
+    ', and a territory\u2019s size is how much that player deployed: ', [big.name], ' holds ', [String(big.nodes.length)], '. ',
     [String(counts.village)], ' villages are realms, sized in four tiers by ', [met.label],
     ' (quartiles of the packages that have any), with warm roofs and a gold light if called in the last ',
     [S.window], '. ', [String(counts.oasis)], ' oases are pure packages, the pool sized by how many ' +
@@ -3239,23 +3418,46 @@ function drawFrontier(stage, below, d) {
 
 function drawOldTown(stage, below, d) {
   var met = METRICS[S.metric];
-  var order = d.nodes.slice().sort(byDeploy);
+  var rings = opt('rings'), wallsBy = opt('walls');
+  var order = d.nodes.slice().sort(rings === 'deploy' ? byDeploy : ranker(rings, d.nodes));
   var N = order.length;
 
-  // Eras: deploy days merged until each holds at least a tenth of the chain,
-  // so there are walls enough to show growth and not one per quiet Tuesday.
   var eras = [], cur = null;
-  order.forEach(function (n, i) {
-    var day = (n.deployed_at || '').slice(0, 10) || 'unknown';
-    if (!cur || (cur.n >= N / 10 && day !== cur.last)) {
-      cur = { from: day, last: day, start: i, n: 0 };
-      eras.push(cur);
-    }
-    cur.n++; cur.last = day; cur.end = i + 1;
-  });
+  if (rings !== 'deploy') {
+    // Ranked rather than dated, the walls are quantiles of the ranking: a
+    // citadel of the top twentieth, then the wards outside it.
+    var prevEnd = 0;
+    [[0.05, 'top 5%'], [0.15, 'top 15%'], [0.35, 'top 35%'], [0.65, 'top 65%'], [1, 'the rest']].forEach(function (q) {
+      var end = Math.min(N, Math.max(prevEnd + 1, Math.round(q[0] * N)));
+      if (end <= prevEnd) return;
+      eras.push({ from: q[1], last: q[1], start: prevEnd, end: end, n: end - prevEnd, ranked: true });
+      prevEnd = end;
+    });
+  } else {
+    // Eras: deploy days merged until each holds at least a tenth of the
+    // chain, so there are walls enough to show growth and not one per quiet
+    // Tuesday. Weeks and days are the same walk with a coarser or finer unit
+    // and no minimum, for a reader who wants the calendar rather than the
+    // shape.
+    var unitOf = function (n) {
+      var day = (n.deployed_at || '').slice(0, 10) || 'unknown';
+      if (wallsBy !== 'week' || day === 'unknown') return day;
+      var t = Date.parse(day + 'T00:00:00Z'), wd = (new Date(t).getUTCDay() + 6) % 7;
+      return new Date(t - wd * 864e5).toISOString().slice(0, 10);
+    };
+    var minN = wallsBy === 'era' ? N / 10 : 0;
+    order.forEach(function (n, i) {
+      var day = (n.deployed_at || '').slice(0, 10) || 'unknown', u = unitOf(n);
+      if (!cur || (cur.n >= minN && u !== cur.unit)) {
+        cur = { from: day, last: day, start: i, n: 0, unit: u };
+        eras.push(cur);
+      }
+      cur.n++; cur.last = day; cur.end = i + 1;
+    });
+  }
   // A trailing sliver is folded into the era before it, or the outermost wall
   // would enclose a handful of houses and read as a district.
-  if (eras.length > 1 && eras[eras.length - 1].n < N / 25) {
+  if (rings === 'deploy' && wallsBy === 'era' && eras.length > 1 && eras[eras.length - 1].n < N / 25) {
     var tail = eras.pop(), prevE = eras[eras.length - 1];
     prevE.last = tail.last; prevE.end = tail.end; prevE.n += tail.n;
   }
@@ -3338,10 +3540,22 @@ function drawOldTown(stage, below, d) {
     }
     // The wall's dates, at its top, on a dark plate so a house below cannot
     // swallow them.
-    var lab = svgEl('text', { x: 0, y: -rw + 3.5, 'text-anchor': 'middle', 'font-size': 10.5, fill: '#e9dfc9',
+    // Fanned out along the top when there are many walls, or a wall per day
+    // stacks nineteen labels into one unreadable column.
+    var la = -Math.PI / 2;
+    if (eras.length > 6) {
+      // Many walls: each label at its own bearing around the whole circle,
+      // stepping off any high street it would sit on.
+      la += ei / eras.length * Math.PI * 2;
+      ROADS.forEach(function (ra) {
+        if (Math.abs(Math.atan2(Math.sin(la - ra), Math.cos(la - ra))) < 0.16) la = ra + 0.2;
+      });
+    }
+    var lab = svgEl('text', { x: Math.cos(la) * rw, y: Math.sin(la) * rw + 3.5, 'text-anchor': 'middle',
+      'font-size': 10.5, fill: '#e9dfc9',
       'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: '#1b1814', 'stroke-width': 4 });
-    var span = e.from === e.last ? e.from.slice(5) : e.from.slice(5) + '–' + e.last.slice(5);
-    lab.textContent = (ei === 0 ? 'first wall ' : '') + span + ' · ' + e.n;
+    var span = e.ranked ? e.from : e.from === e.last ? e.from.slice(5) : e.from.slice(5) + '–' + e.last.slice(5);
+    lab.textContent = (ei === 0 && !e.ranked ? 'first wall ' : '') + span + ' · ' + e.n;
     e.label = span;
     walls.appendChild(lab);
   });
@@ -3373,12 +3587,17 @@ function drawOldTown(stage, below, d) {
 
   var fat = eras.slice().sort(function (a, b) { return b.n - a.n; })[0];
   note(below, [
-    'The chain as a town that grew outward. All ', [String(N)], ' packages are houses laid down in ' +
-    'deploy order on a sunflower spiral from the market square, at radii chosen so the town’s ' +
-    'density is constant: the area between two walls is exactly proportional to how much was ' +
-    'deployed in that era. There are ', [String(eras.length)], ' walls, one per era, an era being ' +
-    'consecutive deploy days merged until it holds a tenth of the chain; each wall is labelled with ' +
-    'its dates and how many houses it closed in. The busiest era was ', [fat.label], ', with ',
+    rings === 'deploy' ? 'The chain as a town that grew outward. ' :
+      'The chain as a citadel: the same town, ranked instead of dated. ',
+    'All ', [String(N)], ' packages are houses laid down in ',
+    [rings === 'deploy' ? 'deploy order' : 'order of ' + RANK_WORDS[rings]],
+    ' on a sunflower spiral from the market square, at radii chosen so the town\u2019s ' +
+    'density is constant: the area between two walls is exactly proportional to how many houses ' +
+    'it holds. There are ', [String(eras.length)], ' walls, ',
+    rings !== 'deploy' ? 'one per band of the ranking (top 5%, 15%, 35%, 65% and the rest)' :
+      wallsBy === 'era' ? 'one per era, an era being consecutive deploy days merged until it holds a tenth of the chain' :
+      wallsBy === 'week' ? 'one per calendar week that saw a deploy' : 'one per day that saw a deploy',
+    '; each wall is labelled with what it closed in and how many houses. The fullest ring was ', [fat.label], ', with ',
     [String(fat.n)], '. House size is ', [met.label], ' on a ', [S.scale], ' scale (pure packages stay ' +
     'small under a metric they do not have, the same rule as the city); a terracotta roof is a ' +
     'realm, slate is a pure package, a dashed outline is parked, and ', [String(lit)],
@@ -3391,6 +3610,493 @@ function drawOldTown(stage, below, d) {
     ['#8e4c34', 'dark roof', '· realm, not called'],
     ['#5d6672', 'slate', '· pure package'],
     ['#8c8270', 'wall', '· the edge of one era of deploys'],
+  ]);
+}
+
+// =============================================================================
+// 11. HONEYCOMB  -- every package one cell, spiralling out from the queen
+// =============================================================================
+//
+// The densest drawing on the page and the simplest: one hexagonal cell per
+// package, filled in rank order from the centre outward, so the hive's middle
+// is whatever the reader chose to rank by and its rim is what came last. No
+// streets, no districts, nothing invented between the cells.
+//
+// Coloured by namespace, a family shows as a patch where the ranking let it
+// stay together and as scattered cells where it did not, which is the honest
+// answer to "does ownership cluster" without having to group by it. The
+// "by namespace" ranking is the opposite experiment: families kept contiguous,
+// largest in the middle, so the hive becomes rings of ownership.
+
+function drawHoneycomb(stage, below, d) {
+  var met = METRICS[S.metric];
+  var nodes = d.nodes, kind = opt('centre'), paint = opt('paint');
+  var order;
+  if (kind === 'ns') {
+    order = [];
+    groupNamespaces(nodes).forEach(function (g) { g.nodes.forEach(function (n) { order.push(n); }); });
+  } else {
+    order = nodes.slice().sort(ranker(kind, nodes));
+  }
+  var slots = hexSpiral(order.length);
+  var R = 10, sq3 = Math.sqrt(3);
+  var hx = function (q, r) { return [R * sq3 * (q + r / 2), R * 1.5 * r]; };
+  var maxM = Math.max(1, nodes.reduce(function (m, n) { return Math.max(m, met.get(n) || 0); }, 0));
+  var denom = Math.max(1e-9, sc(maxM));
+
+  var xs = [], ys = [];
+  slots.forEach(function (s) { var c = hx(s[0], s[1]); xs.push(c[0]); ys.push(c[1]); });
+  var pad = R * 3;
+  var x0 = Math.min.apply(null, xs) - pad, x1 = Math.max.apply(null, xs) + pad;
+  var y0 = Math.min.apply(null, ys) - pad, y1 = Math.max.apply(null, ys) + pad;
+  var svg = svgEl('svg', { viewBox: x0 + ' ' + y0 + ' ' + (x1 - x0) + ' ' + (y1 - y0),
+    preserveAspectRatio: 'xMidYMid meet', style: 'max-height:82vh' });
+
+  var comb = svgEl('g'), lit = 0;
+  var cellPts = function (c, r) { var o = []; for (var i = 0; i < 6; i++) o.push(hexCorner(c[0], c[1], r, i)); return pts(o); };
+  order.forEach(function (n, i) {
+    var c = hx(slots[i][0], slots[i][1]);
+    var v = met.get(n) || 0;
+    var rises = n.is_realm || met.pure;
+    // Brightness is the metric, so the hive still has a shape to it when the
+    // colour is spent on ownership: honey where it is busy, wax where not.
+    var f = rises && v > 0 ? sc(v) / denom : 0;
+    var z = zoneOf(n);
+    var fill = paint === 'zone' ? zoneColor(z, 22 + f * 44) : nsColor(n.namespace, 20 + f * 46, n.is_realm ? 55 : 30);
+    var g = svgEl('g');
+    g.setAttribute('data-slot', slots[i][0] + ',' + slots[i][1]);
+    g.appendChild(svgEl('polygon', { points: cellPts(c, R - 0.9), fill: fill,
+      stroke: n.parked ? 'var(--amber)' : '#0b0b0f', 'stroke-width': n.parked ? 1 : 0.8,
+      'stroke-dasharray': n.parked ? '2 1.5' : null }));
+    if (n.calls > 0) {
+      lit++;
+      g.appendChild(svgEl('circle', { cx: c[0], cy: c[1], r: 1.6 + lg(n.calls) * 0.45, fill: '#ffd93d', opacity: 0.9 }));
+    }
+    bindNode(g, n, [['cell', '#' + (i + 1) + ' from the centre']]);
+    comb.appendChild(g);
+  });
+  svg.appendChild(comb);
+
+  // The queen: the first cell, crowned and named.
+  var q0 = hx(0, 0);
+  svg.appendChild(svgEl('polygon', { points: cellPts(q0, R + 1.5), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 1.6,
+    'pointer-events': 'none' }));
+  var qn = svgEl('text', { x: q0[0], y: q0[1] - R - 6, 'text-anchor': 'middle', fill: 'var(--accent)', 'font-size': 11,
+    'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: '#07070b', 'stroke-width': 3.5, 'pointer-events': 'none' });
+  qn.textContent = order[0].name;
+  svg.appendChild(qn);
+
+  // Patch names in the by-namespace hive, at each family's centroid, where the
+  // family is big enough for a name not to sit on its neighbours.
+  if (kind === 'ns') {
+    var labels = svgEl('g', { 'pointer-events': 'none' });
+    var at = 0;
+    groupNamespaces(nodes).forEach(function (g) {
+      var cx = 0, cy = 0, k, c;
+      for (k = at; k < at + g.n; k++) { c = hx(slots[k][0], slots[k][1]); cx += c[0]; cy += c[1]; }
+      cx /= g.n; cy /= g.n;
+      // On the family's own cell nearest its centroid: an outer family is an
+      // arc, and an arc's centroid sits inside somebody else's cells.
+      var bestC = null, bd = Infinity;
+      for (k = at; k < at + g.n; k++) {
+        c = hx(slots[k][0], slots[k][1]);
+        var dd = Math.hypot(c[0] - cx, c[1] - cy);
+        if (dd < bd) { bd = dd; bestC = c; }
+      }
+      at += g.n;
+      if (g.n < 12) return;
+      var t = svgEl('text', { x: bestC[0], y: bestC[1] + 3, 'text-anchor': 'middle', fill: '#fff', 'font-size': 11,
+        'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: 'rgba(0,0,0,.8)', 'stroke-width': 3.5 });
+      t.textContent = g.ns.length > 14 ? g.ns.slice(0, 6) + '…' + g.ns.slice(-4) : g.ns;
+      labels.appendChild(t);
+    });
+    svg.appendChild(labels);
+  }
+  mountSVG(stage, svg);
+
+  note(below, [
+    'One cell per package, ', [String(order.length)], ' of them, filled from the centre outward in order of ',
+    [kind === 'ns' ? 'namespace, largest family first and each family busiest first' : RANK_WORDS[kind]],
+    ', so the outlined queen cell, ', [order[0].name], ', comes first and the rim comes last. ',
+    paint === 'zone' ? 'Colour is the zone, the metropolis’ rule: a realm called or not, a pure package imported or not. '
+      : 'Colour is the namespace, so a family that stays a patch is one the ranking kept together, and a family ' +
+        'scattered as single cells is one it pulled apart. Realms are saturated, pure packages are muted. ',
+    'Brightness is ', [met.label], ' on a ', [S.scale], ' scale (pure packages stay dark under a metric they do ' +
+    'not have), and a gold dot means called in the last ', [S.window], ': ', [String(lit)], ' of them. ' +
+    'Which of the six cells in a ring a package takes is the spiral’s fixed order and carries nothing; ' +
+    'only the ring does.',
+  ]);
+  legend(below, [
+    ['var(--accent)', 'queen', '· first by the chosen ranking'],
+    ['#ffd93d', 'gold dot', '· called in the window'],
+    ['', 'bright cell', '· more ' + met.label],
+  ]);
+}
+
+// =============================================================================
+// 12. SKYLINE  -- the chain from across the water, at night
+// =============================================================================
+//
+// The elevation every other city view lacks: side on, so height is the only
+// thing a reader compares, and it is the reader's metric. Every package is a
+// tower; the busiest windows are lit; the city is reflected in the harbour in
+// front of it.
+//
+//   peak     tallest in the middle, alternating outward, the classic downtown
+//            silhouette. Position is rank and nothing else.
+//   by ns    each namespace a neighbourhood with its own peak, the biggest
+//            neighbourhood in the middle.
+//   deploy   left to right in deploy order, so the skyline is a timeline and
+//            the chain's growth reads as the city being built from one end.
+
+function drawSkyline(stage, below, d) {
+  var met = METRICS[S.metric];
+  var nodes = d.nodes, shape = opt('shape'), paint = opt('paint');
+  var maxM = Math.max(1, nodes.reduce(function (m, n) { return Math.max(m, met.get(n) || 0); }, 0));
+  var denom = Math.max(1e-9, sc(maxM));
+  var hOf = function (n) {
+    var v = met.get(n) || 0, rises = n.is_realm || met.pure;
+    return rises && v > 0 ? 14 + sc(v) / denom * 560 : 8;
+  };
+  var byHeight = function (a, b) { return hOf(b) - hOf(a) || b.calls - a.calls || a.path.localeCompare(b.path); };
+
+  // centrePeak lays a ranked list out tallest-in-the-middle: rank 0 at the
+  // centre, then one to the right, one to the left, and so on outward.
+  //
+  // Built as two arms rather than by index arithmetic: the first version
+  // computed a slot per rank and, for an even-length list, sent the last one
+  // to index -1, where it silently vanished.
+  var centrePeak = function (list) {
+    var left = [], right = [];
+    list.slice(1).forEach(function (n, i) { (i % 2 ? left : right).push(n); });
+    return list.length ? left.reverse().concat([list[0]], right) : [];
+  };
+  var row, hoods = null;
+  if (shape === 'deploy') {
+    row = nodes.slice().sort(byDeploy);
+  } else if (shape === 'ns') {
+    hoods = centrePeak(groupNamespaces(nodes).map(function (g) {
+      return { ns: g.ns, n: g.n, nodes: centrePeak(g.nodes.slice().sort(byHeight)) };
+    }).sort(function (a, b) { return b.n - a.n || a.ns.localeCompare(b.ns); }));
+    row = [];
+    hoods.forEach(function (h) { h.start = row.length; h.nodes.forEach(function (n) { row.push(n); }); h.end = row.length; });
+  } else {
+    row = centrePeak(nodes.slice().sort(byHeight));
+  }
+
+  // Narrow towers, so 598 of them make a skyline about three times as wide as
+  // it is tall: at seven units each the first version was eight to one, and a
+  // silhouette that thin cannot be read without zooming in.
+  var TW = 4, GAP = 0.6, HOOD = 12, ground = 640;
+  var xAt = [], x = 0;
+  row.forEach(function (n, i) {
+    if (hoods && i > 0 && hoods.some(function (h) { return h.start === i; })) x += HOOD;
+    xAt.push(x); x += TW + GAP;
+  });
+  var Wd = x, Hd = ground + 230;
+  var svg = svgEl('svg', { viewBox: (-20) + ' 0 ' + (Wd + 40) + ' ' + Hd, preserveAspectRatio: 'xMidYMid meet',
+    style: 'max-height:78vh' });
+
+  var defs = svgEl('defs');
+  var sky = svgEl('linearGradient', { id: 'carto-sky-grad', x1: 0, y1: 0, x2: 0, y2: 1 });
+  sky.appendChild(svgEl('stop', { offset: '0', 'stop-color': '#05060d' }));
+  sky.appendChild(svgEl('stop', { offset: '0.7', 'stop-color': '#141a33' }));
+  sky.appendChild(svgEl('stop', { offset: '1', 'stop-color': '#2a2340' }));
+  defs.appendChild(sky);
+  var sea = svgEl('linearGradient', { id: 'carto-sea-grad', x1: 0, y1: 0, x2: 0, y2: 1 });
+  sea.appendChild(svgEl('stop', { offset: '0', 'stop-color': '#0a1222', 'stop-opacity': 0.55 }));
+  sea.appendChild(svgEl('stop', { offset: '1', 'stop-color': '#04060c', 'stop-opacity': 0.97 }));
+  defs.appendChild(sea);
+  svg.appendChild(defs);
+
+  svg.appendChild(svgEl('rect', { x: -20, y: 0, width: Wd + 40, height: ground, fill: 'url(#carto-sky-grad)' }));
+  // Stars and a moon: decoration, seeded so the sky does not change between
+  // reloads and nobody mistakes a new star for a new package.
+  var rng = rngFrom('stars');
+  for (var st = 0; st < 140; st++) {
+    svg.appendChild(svgEl('circle', { cx: rng() * Wd, cy: rng() * ground * 0.55, r: rng() * 1.4 + 0.4, fill: '#fff',
+      opacity: 0.25 + rng() * 0.5 }));
+  }
+  svg.appendChild(svgEl('circle', { cx: Wd * 0.86, cy: 80, r: 30, fill: '#f4ecd2', opacity: 0.9 }));
+  svg.appendChild(svgEl('circle', { cx: Wd * 0.86 + 11, cy: 72, r: 27, fill: '#0b0d1a', opacity: 0.85 }));
+
+  var towers = svgEl('g', { id: 'carto-skyline-towers' });
+  var lit = 0, tallest = null, tallestX = 0;
+  row.forEach(function (n, i) {
+    var h = hOf(n), x0 = xAt[i], y0 = ground - h;
+    var z = zoneOf(n);
+    var body = paint === 'zone' ? zoneColor(z, 18, 30) : nsColor(n.namespace, 16, 34);
+    var g = svgEl('g');
+    g.appendChild(svgEl('rect', { x: x0, y: y0, width: TW, height: h, fill: body, stroke: '#05060b', 'stroke-width': 0.4 }));
+    // The roof line catches the light in the view's colour, which is what
+    // keeps 598 near-black slabs readable as distinct buildings.
+    g.appendChild(svgEl('rect', { x: x0, y: y0, width: TW, height: 1.6,
+      fill: paint === 'zone' ? zoneColor(z, 58) : nsColor(n.namespace, 60) }));
+    if (n.calls > 0 && h > 14) {
+      lit++;
+      // Two columns of windows, each one dashed line: the lit fraction of a
+      // column is how busy the tower is. Two elements per tower rather than a
+      // rect per window, which on a tall tower would be a hundred.
+      var on = 2, off = Math.max(0.8, 7 - lg(n.calls) * 1.6);
+      g.appendChild(svgEl('line', { x1: x0 + TW / 2, y1: y0 + 5, x2: x0 + TW / 2, y2: ground - 3, stroke: '#ffd98a',
+        'stroke-width': 1.6, 'stroke-dasharray': on + ' ' + off, opacity: 0.85 }));
+    }
+    if (!tallest || h > hOf(tallest)) { tallest = n; tallestX = x0 + TW / 2; }
+    g.setAttribute('data-x', String(x0 + TW / 2));
+    bindNode(g, n, [['height', met.label + ' · ' + (met.label === 'storage' ? fmtBytes(met.get(n) || 0) : window.fmtNum(met.get(n) || 0))]]);
+    towers.appendChild(g);
+  });
+  svg.appendChild(towers);
+  // An antenna on the tallest, because every skyline has one tower that owns it.
+  var tH = hOf(tallest);
+  svg.appendChild(svgEl('line', { x1: tallestX, y1: ground - tH, x2: tallestX, y2: ground - tH - 40, stroke: '#ccc', 'stroke-width': 1.2 }));
+  svg.appendChild(svgEl('circle', { cx: tallestX, cy: ground - tH - 40, r: 2.6, fill: '#ff6b6b' }));
+
+  // The harbour: the towers again, mirrored about the waterline, under a dark
+  // gradient. One <use>, so the reflection cannot drift from what it reflects.
+  var refl = svgEl('use', { href: '#carto-skyline-towers', transform: 'translate(0,' + (2 * ground) + ') scale(1,-1)', opacity: 0.35,
+    'pointer-events': 'none' });
+  svg.appendChild(refl);
+  svg.appendChild(svgEl('rect', { x: -20, y: ground, width: Wd + 40, height: Hd - ground, fill: 'url(#carto-sea-grad)',
+    'pointer-events': 'none' }));
+  for (var wv = 0; wv < 60; wv++) {
+    var wy = ground + 6 + rng() * (Hd - ground - 12), wx2 = rng() * Wd;
+    svg.appendChild(svgEl('line', { x1: wx2, y1: wy, x2: wx2 + 8 + rng() * 26, y2: wy, stroke: '#8fa6c9', 'stroke-width': 0.5,
+      opacity: 0.25, 'pointer-events': 'none' }));
+  }
+  svg.appendChild(svgEl('line', { x1: -20, y1: ground, x2: Wd + 20, y2: ground, stroke: '#3a4566', 'stroke-width': 1 }));
+
+  // Names: the tallest towers, above their roofs, skipping any that would
+  // overlap one already placed. Neighbourhood names in the by-ns layout, on
+  // the waterline.
+  var names = svgEl('g', { 'pointer-events': 'none' });
+  var placedX = [];
+  row.map(function (n, i) { return [n, i]; }).sort(function (a, b) { return hOf(b[0]) - hOf(a[0]); }).slice(0, 40)
+    .forEach(function (p) {
+      var cx = xAt[p[1]] + TW / 2, w = p[0].name.length * 10;
+      if (placedX.some(function (q) { return Math.abs(q[0] - cx) < (q[1] + w) / 2 + 6 && Math.abs(q[2] - hOf(p[0])) < 24; })) return;
+      if (placedX.length >= 12) return;
+      placedX.push([cx, w, hOf(p[0])]);
+      var t = svgEl('text', { x: cx, y: ground - hOf(p[0]) - 8, 'text-anchor': 'middle', fill: '#e8e8f0', 'font-size': 16,
+        'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: '#05060d', 'stroke-width': 3 });
+      t.textContent = p[0].name;
+      names.appendChild(t);
+    });
+  if (hoods) {
+    var hoodX = [];
+    hoods.slice().sort(function (a, b) { return b.n - a.n; }).forEach(function (h) {
+      if (h.n < 6) return;
+      var cx = (xAt[h.start] + xAt[h.end - 1] + TW) / 2;
+      var label = (h.ns.length > 14 ? h.ns.slice(0, 6) + '\u2026' + h.ns.slice(-4) : h.ns) + ' \u00b7 ' + h.n;
+      var hw2 = label.length * 4.8;
+      if (hoodX.some(function (q) { return Math.abs(q[0] - cx) < q[1] + hw2 + 8; })) return;
+      hoodX.push([cx, hw2]);
+      var t = svgEl('text', { x: cx, y: ground + 22, 'text-anchor': 'middle', fill: nsColor(h.ns, 66), 'font-size': 15,
+        'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: '#04060c', 'stroke-width': 3 });
+      t.textContent = label;
+      names.appendChild(t);
+    });
+  }
+  svg.appendChild(names);
+  mountSVG(stage, svg);
+
+  note(below, [
+    'The chain side on, from across the harbour: one tower per package, ', [String(row.length)], ' of them, ' +
+    'and height is ', [met.label], ' on a ', [S.scale], ' scale, the only thing a reader compares here. Pure ' +
+    'packages stay at street level under a metric they do not have. ',
+    shape === 'peak' ? 'Towers are arranged tallest in the middle, alternating outward, so position is rank and ' +
+      'the silhouette is the distribution of ' + met.label + ' drawn as a downtown. ' :
+    shape === 'ns' ? 'Each namespace is a neighbourhood with its own peak, the biggest neighbourhood in the middle, ' +
+      'so a family’s skyline is its own distribution and the gaps are the borders between them. ' :
+      'Towers stand left to right in deploy order, so the skyline is a timeline: the genesis packages on the left, ' +
+      'the newest on the right, and a cluster of towers is a burst of deploys that turned out busy. ',
+    [String(lit)], ' towers have lit windows (called in the last ', [S.window], '), more of each column lit for more ' +
+    'calls; ', [tallest.name], ' carries the antenna. Colour is ', [paint === 'zone' ? 'the zone' : 'the namespace'],
+    ', on the roof line. The stars, the moon and the ripples are decoration; the reflection is the same towers.',
+  ]);
+  legend(below, [
+    ['#ffd98a', 'lit windows', '· called in the window'],
+    ['#ff6b6b', 'antenna', '· the tallest tower'],
+    ['', 'roof line', '· ' + (paint === 'zone' ? 'zone' : 'namespace') + ' colour'],
+  ]);
+}
+
+// =============================================================================
+// 13. ARCHIPELAGO  -- namespaces as islands, imports as ferries
+// =============================================================================
+//
+// The relief threw ownership away to show density; this keeps it and throws
+// the grid away instead. Each namespace is an island whose area is its package
+// count, so the shape of the sea is the shape of who deployed what, and the
+// islands are packed around a centre island chosen by the reader, each next
+// one landing beside the island it trades with most.
+//
+// Ferries are the imports between two islands, drawn over the water. On each
+// island, its packages are buildings laid on a sunflower from the island's
+// own centre, busiest in the middle.
+
+function drawArchipelago(stage, below, d) {
+  var groups = groupNamespaces(d.nodes), centreBy = opt('centre'), routes = opt('routes') === 'on';
+  var flow = {}, inbound = {};
+  d.imports.forEach(function (e) {
+    var a = d.byPath[e.source], b = d.byPath[e.target];
+    if (!a || !b || a.namespace === b.namespace) return;
+    var k = a.namespace + '\u0000' + b.namespace;
+    flow[k] = (flow[k] || 0) + 1;
+    inbound[b.namespace] = (inbound[b.namespace] || 0) + 1;
+  });
+  var fl = function (a, b) { return (flow[a + '\u0000' + b] || 0) + (flow[b + '\u0000' + a] || 0); };
+  groups.forEach(function (g) {
+    g.r = 12 + 9 * Math.sqrt(g.n);
+    g.callsSum = g.nodes.reduce(function (a, n) { return a + (n.calls || 0); }, 0);
+  });
+  var ck = { imp: function (g) { return inbound[g.ns] || 0; }, size: function (g) { return g.n; },
+    calls: function (g) { return g.callsSum; } }[centreBy];
+  var centre = groups.slice().sort(function (a, b) { return ck(b) - ck(a) || b.n - a.n || a.ns.localeCompare(b.ns); })[0];
+
+  // Packing. Each next island is the unplaced one with the most trade with
+  // the islands already down (ties by size); it lands touching the placed
+  // island it trades with most, at whichever angle keeps it nearest the
+  // centre without overlapping anything. Deterministic and quadratic in
+  // namespaces, which is a few dozen.
+  var GAPI = 14;
+  centre.x = 0; centre.y = 0;
+  var placed = [centre], left = groups.filter(function (g) { return g !== centre; });
+  while (left.length) {
+    var best = null, bk = null;
+    left.forEach(function (g) {
+      var t = placed.reduce(function (a, h) { return a + fl(g.ns, h.ns); }, 0);
+      var key = [t, g.n];
+      if (!bk || key[0] > bk[0] || (key[0] === bk[0] && (key[1] > bk[1] || (key[1] === bk[1] && g.ns < best.ns)))) { best = g; bk = key; }
+    });
+    var anchor = placed.slice().sort(function (a, b) { return fl(best.ns, b.ns) - fl(best.ns, a.ns) || b.n - a.n; })[0];
+    var pos = null, ps = Infinity;
+    placed.forEach(function (h) {
+      for (var k = 0; k < 48; k++) {
+        var a = k / 48 * Math.PI * 2, dd = h.r + best.r + GAPI;
+        var x = h.x + Math.cos(a) * dd, y = h.y + Math.sin(a) * dd * 0.82;
+        if (placed.some(function (o) { return Math.hypot(o.x - x, (o.y - y) / 0.82) < o.r + best.r + GAPI - 0.5; })) continue;
+        var score = Math.hypot(x - anchor.x, y - anchor.y) + 0.35 * Math.hypot(x, y);
+        if (score < ps) { ps = score; pos = [x, y]; }
+      }
+    });
+    best.x = pos[0]; best.y = pos[1];
+    placed.push(best);
+    left.splice(left.indexOf(best), 1);
+  }
+
+  var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  placed.forEach(function (g) { x0 = Math.min(x0, g.x - g.r); x1 = Math.max(x1, g.x + g.r); y0 = Math.min(y0, g.y - g.r); y1 = Math.max(y1, g.y + g.r); });
+  x0 -= 50; x1 += 50; y0 -= 50; y1 += 60;
+  var svg = svgEl('svg', { viewBox: x0 + ' ' + y0 + ' ' + (x1 - x0) + ' ' + (y1 - y0), preserveAspectRatio: 'xMidYMid meet',
+    style: 'max-height:82vh' });
+  svg.appendChild(svgEl('rect', { x: x0, y: y0, width: x1 - x0, height: y1 - y0, fill: '#0c2236' }));
+  var rng = rngFrom('waves');
+  for (var w = 0; w < 160; w++) {
+    var wx = x0 + rng() * (x1 - x0), wy = y0 + rng() * (y1 - y0);
+    svg.appendChild(svgEl('path', { d: 'M' + wx + ',' + wy + ' q4,-3 8,0 t8,0', fill: 'none', stroke: '#24506f', 'stroke-width': 1, opacity: 0.6 }));
+  }
+
+  // Ferries under the islands, so a route ends at the shore rather than on top
+  // of the buildings it connects.
+  var ferryN = 0;
+  if (routes) {
+    var maxF = 1;
+    Object.keys(flow).forEach(function (k) { maxF = Math.max(maxF, flow[k]); });
+    var byNs = {};
+    placed.forEach(function (g) { byNs[g.ns] = g; });
+    var ferries = svgEl('g');
+    var seen = {};
+    Object.keys(flow).forEach(function (k) {
+      var pr = k.split('\u0000'), a = byNs[pr[0]], b = byNs[pr[1]];
+      if (!a || !b) return;
+      var key2 = a.ns < b.ns ? a.ns + '|' + b.ns : b.ns + '|' + a.ns;
+      if (seen[key2]) return;
+      seen[key2] = true;
+      var f = fl(a.ns, b.ns);
+      ferryN++;
+      var mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.12, my = (a.y + b.y) / 2 - (b.x - a.x) * 0.12;
+      var fr = svgEl('path', { d: 'M' + a.x + ',' + a.y + ' Q' + mx + ',' + my + ' ' + b.x + ',' + b.y, fill: 'none',
+        stroke: '#a9d8ff', 'stroke-width': 0.6 + lg(f) / lg(maxF) * 3.2, 'stroke-dasharray': '5 4',
+        opacity: 0.25 + 0.45 * lg(f) / lg(maxF), 'stroke-linecap': 'round' });
+      fr.addEventListener('mousemove', function (ev) {
+        tipShow(ev, [a.ns + '  ↔  ' + b.ns, [a.ns + ' imports ' + b.ns, window.fmtNum(flow[a.ns + '\u0000' + b.ns] || 0)],
+          [b.ns + ' imports ' + a.ns, window.fmtNum(flow[b.ns + '\u0000' + a.ns] || 0)]]);
+      });
+      fr.addEventListener('mouseleave', tipHide);
+      ferries.appendChild(fr);
+    });
+    svg.appendChild(ferries);
+  }
+
+  // Islands: a seeded blob, so a coastline is irregular without meaning
+  // anything, a beach under it, the land on top, then the town.
+  var blob = function (g, scale) {
+    var r2 = rngFrom('isle' + g.ns), ph = [r2() * 6.3, r2() * 6.3, r2() * 6.3], o = [];
+    for (var i = 0; i < 48; i++) {
+      var a = i / 48 * Math.PI * 2;
+      var k = 1 + 0.06 * Math.sin(3 * a + ph[0]) + 0.04 * Math.sin(5 * a + ph[1]) + 0.03 * Math.sin(7 * a + ph[2]);
+      o.push([g.x + Math.cos(a) * g.r * k * scale, g.y + Math.sin(a) * g.r * k * scale * 0.82]);
+    }
+    return pts(o);
+  };
+  var isles = svgEl('g'), lit = 0;
+  placed.forEach(function (g) {
+    var ig = svgEl('g');
+    ig.appendChild(svgEl('polygon', { points: blob(g, 1.12), fill: '#173b55', opacity: 0.9 }));
+    ig.appendChild(svgEl('polygon', { points: blob(g, 1.04), fill: '#cdb57c' }));
+    var land = svgEl('polygon', { points: blob(g, 0.96), fill: nsColor(g.ns, 24, 30), 'class': 'carto-island',
+      'data-ns': g.ns, 'data-x': g.x.toFixed(2), 'data-y': g.y.toFixed(2), 'data-r': g.r.toFixed(2) });
+    ig.appendChild(land);
+    land.addEventListener('mousemove', function (ev) {
+      tipShow(ev, ['island ' + g.ns, ['packages', String(g.n)], ['called in ' + S.window, String(g.live)],
+        ['imported from other islands', window.fmtNum(inbound[g.ns] || 0)]]);
+    });
+    land.addEventListener('mouseleave', tipHide);
+    // The town: busiest at the island's centre, on a sunflower that keeps the
+    // buildings evenly spaced however many there are.
+    var inner = g.r * 0.78;
+    g.nodes.forEach(function (n, i) {
+      var rr = inner * Math.sqrt((i + 0.5) / g.n), a = i * 2.399963;
+      var bx = g.x + Math.cos(a) * rr, by = g.y + Math.sin(a) * rr * 0.82;
+      var z = zoneOf(n), sz = n.is_realm ? 3.6 : 2.8;
+      var bg = svgEl('g');
+      bg.appendChild(svgEl('rect', { x: bx - sz / 2, y: by - sz / 2, width: sz, height: sz, fill: zoneColor(z, 58),
+        stroke: 'rgba(0,0,0,.4)', 'stroke-width': 0.4 }));
+      if (n.calls > 0) { lit++; bg.appendChild(svgEl('circle', { cx: bx, cy: by - sz, r: 1, fill: '#ffd93d' })); }
+      bindNode(bg, n, [['island', g.ns]]);
+      ig.appendChild(bg);
+    });
+    var t = svgEl('text', { x: g.x, y: g.y + g.r * 0.82 * 1.12 + 12, 'text-anchor': 'middle', fill: nsColor(g.ns, 76),
+      'font-size': 10, 'font-family': 'var(--mono)', 'paint-order': 'stroke', stroke: '#0c2236', 'stroke-width': 3,
+      'pointer-events': 'none' });
+    t.textContent = (g.ns.length > 14 ? g.ns.slice(0, 6) + '…' + g.ns.slice(-4) : g.ns) + ' · ' + g.n;
+    ig.appendChild(t);
+    isles.appendChild(ig);
+  });
+  svg.appendChild(isles);
+  mountSVG(stage, svg);
+
+  var totalFlow = Object.keys(flow).reduce(function (a, k) { return a + flow[k]; }, 0);
+  note(below, [
+    'One island per namespace, ', [String(placed.length)], ' of them, each with an area proportional to its ' +
+    'package count, so the sea is shaped by who deployed what and nothing is equalised. ', [centre.ns],
+    ' is the centre island, chosen as the ', [{ imp: 'most imported by other namespaces', size: 'biggest',
+      calls: 'busiest in the last ' + S.window }[centreBy]],
+    '; each island after it is the one with the most imports to and from the islands already down, ' +
+    'landing beside the one it trades with most, so a coast that touches another is a real trading ' +
+    'partner and a remote island is one nobody imports from. ',
+    routes ? 'The ' + ferryN + ' dashed ferries are every pair of islands with imports between them, ' + totalFlow +
+      ' import edges in all, width by how many. ' : 'Ferries are off. ',
+    'On each island the buildings are its packages, busiest in the middle, coloured by zone (the metropolis’ ' +
+    'rule), with a gold light on the ', [String(lit)], ' called in the last ', [S.window], '. Coastlines are seeded ' +
+    'and carry nothing.',
+  ]);
+  legend(below, [
+    ['#cdb57c', 'island', '· a namespace, area by package count'],
+    ['#a9d8ff', 'ferry', '· imports between two islands'],
+    [zoneColor('C', 58), 'building', '· a package, coloured by zone'],
+    ['#ffd93d', 'gold light', '· called in the window'],
   ]);
 }
 
