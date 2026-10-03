@@ -122,6 +122,27 @@ var endpointTTL = map[string]time.Duration{
 	"/api/allevents": 2 * time.Minute,
 }
 
+// pinnedSourceTTL is the server-side freshness of a pinned source read,
+// `/api/source/{path...}?at=<height>`.
+//
+// The only cached entry whose answer cannot go stale: a 200 there is the
+// source of the submission at that height, which no later write can change
+// (a redeploy moves the current stamp and the same URL answers 409 instead,
+// which is never stored). So the TTL is not about freshness but about memory,
+// and a day is long enough that a source file read by many people is computed
+// once a day, and short enough that an entry nobody asks for again leaves.
+const pinnedSourceTTL = 24 * time.Hour
+
+// ttlForRequest returns the freshness window for one request. Only the pinned
+// source read depends on more than the path, because what pins it is a query
+// parameter.
+func (c *responseCache) ttlForRequest(r *http.Request) time.Duration {
+	if strings.HasPrefix(r.URL.Path, SourcePrefix) && r.URL.Query().Get("at") != "" {
+		return pinnedSourceTTL
+	}
+	return c.cacheTTLFor(r.URL.Path)
+}
+
 // cacheTTLFor returns the freshness window for one path.
 func (c *responseCache) cacheTTLFor(path string) time.Duration {
 	if ttl, ok := endpointTTL[path]; ok {
@@ -586,7 +607,7 @@ func WithResponseCache(c *responseCache, next http.Handler) http.Handler {
 		w.Header().Set("X-Cache", "MISS")
 		cw := &cachingWriter{ResponseWriter: w}
 		next.ServeHTTP(cw, r)
-		c.store(key, r.URL.Path, cw)
+		c.store(key, r, cw)
 	})
 }
 
@@ -596,10 +617,10 @@ func (c *responseCache) refresh(key string, req *http.Request, next http.Handler
 	defer c.done(key)
 	cw := &cachingWriter{ResponseWriter: &discardWriter{header: http.Header{}}}
 	next.ServeHTTP(cw, req)
-	c.store(key, req.URL.Path, cw)
+	c.store(key, req, cw)
 }
 
-func (c *responseCache) store(key, path string, cw *cachingWriter) {
+func (c *responseCache) store(key string, r *http.Request, cw *cachingWriter) {
 	if cw.status != http.StatusOK || cw.tooBig || cw.buf.Len() == 0 {
 		return
 	}
@@ -610,6 +631,6 @@ func (c *responseCache) store(key, path string, cw *cachingWriter) {
 		cacheControl:    cw.Header().Get("Cache-Control"),
 		etag:            cw.Header().Get("ETag"),
 		storedAt:        time.Now(),
-		ttl:             c.cacheTTLFor(path),
+		ttl:             c.ttlForRequest(r),
 	})
 }

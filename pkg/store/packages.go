@@ -95,6 +95,66 @@ func (d *DB) UpsertPackageFile(network, pkgPath, fileName, body string) error {
 	return tx.Commit()
 }
 
+// ReplacePackage writes the current state of one package from a successful
+// submission: its packages row and its whole source, in one transaction.
+//
+// Whole source, not file by file. A deploy replaces a package's file set, so a
+// file the new submission does not carry is gone from chain; upserting only
+// the files that arrived left it in package_files and in code_index forever,
+// still served on the realm page and still matched by code search.
+//
+// One transaction, because the row's (block_height, tx_hash) is the version
+// stamp /api/source serves the bodies under, and a pinned response is cached
+// as immutable. A reader that could see the new row beside the old files, or
+// the reverse, would get the wrong bytes pinned under a stamp for a year.
+//
+// Only call this for a submission that succeeded: a failed one changed
+// nothing on chain. See analyzer.ProcessPackage.
+func (d *DB) ReplacePackage(network, path, name, creator, txHash string, blockHeight int, blockTime string, isRealm bool, files []indexer.MemFile) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.Exec(`
+		INSERT OR REPLACE INTO packages (network, path, name, creator, tx_hash, block_height, block_time, is_realm, num_files)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, network, path, name, creator, txHash, blockHeight, blockTime, isRealm, len(files)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM package_files WHERE network = ? AND package_path = ?`,
+		network, path); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM code_index WHERE network = ? AND package_path = ?`,
+		network, path); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if _, err := tx.Exec(`
+			INSERT OR REPLACE INTO package_files (network, package_path, file_name, body)
+			VALUES (?, ?, ?, ?)
+		`, network, path, f.Name, f.Body); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO code_index (network, package_path, file_name, body) VALUES (?, ?, ?, ?)`,
+			network, path, f.Name, f.Body); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Same as UpsertPackage, and outside the transaction for the same reason
+	// it is a second statement there: RefreshPackageAccounts repairs a miss.
+	return d.upsertPackageAccounts(network, path)
+}
+
 // StoredPackageRef identifies a package whose source is held locally.
 
 type StoredPackageRef struct {

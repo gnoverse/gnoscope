@@ -26,8 +26,8 @@ path exists on multiple chains and means different things on each.
 
 | table | grain | notes |
 |---|---|---|
-| `packages` | one deployed package per network | `is_realm` distinguishes realms from pure packages |
-| `package_files` | one `.gno` file | full source body, stored verbatim |
+| `packages` | one deployed package per network | `is_realm` distinguishes realms from pure packages. Written from the newest **successful** submission only; a failed `MsgAddPackage` lands in `package_submissions` and nowhere else |
+| `package_files` | one `.gno` file | full source body, stored verbatim. The newest successful submission's file set, replaced whole: a file a redeploy removed is removed here too |
 | `dependencies` | one import edge | `package_path` → `import_path` |
 | `calls` | one `MsgCall` message | caller, target path, function name |
 | `msg_runs` | one `MsgRun` message | full source of the run |
