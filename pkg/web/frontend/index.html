@@ -560,14 +560,28 @@ html.embed .pagenav { display: none; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; white-space: pre; }
-.syn-kw { color: #c678dd; }
-.syn-str { color: #98c379; }
-.syn-cmt { color: #5c6370; font-style: italic; }
-.syn-fn { color: #61afef; }
-.syn-type { color: #e5c07b; }
-.syn-num { color: #d19a66; }
-.syn-imp { color: #98c379; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; }
+/* Source colours. Variables rather than literals so a light theme, when the
+   site grows one, is a single block that redefines them. */
+:root {
+  --syn-kw: #c678dd; --syn-str: #98c379; --syn-cmt: #5c6370; --syn-fn: #61afef;
+  --syn-type: #e5c07b; --syn-num: #d19a66; --syn-op: #abb2bf; --syn-builtin: #56b6c2;
+  --syn-pkg: #e06c75; --syn-decl: #61afef;
+}
+.syn-kw { color: var(--syn-kw); }
+.syn-str { color: var(--syn-str); }
+.syn-cmt { color: var(--syn-cmt); font-style: italic; }
+.syn-fn { color: var(--syn-fn); }
+.syn-type { color: var(--syn-type); }
+.syn-num { color: var(--syn-num); }
+.syn-op { color: var(--syn-op); }
+.syn-builtin { color: var(--syn-builtin); }
+.syn-pkg { color: var(--syn-pkg); }
+.syn-decl { color: var(--syn-decl); font-weight: bold; }
+.syn-ref { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-decoration-color: var(--fg2); }
+.syn-ref:hover { color: var(--accent); }
+.syn-imp { color: var(--syn-str); cursor: pointer; text-decoration: underline; text-decoration-style: dotted; }
 .syn-imp:hover { color: var(--accent); }
+.syn-flash { background: rgba(78,205,196,0.15); }
 #dep-graph { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; min-height: 600px; position: relative; overflow: hidden; margin-bottom: 24px; }
 #contract-map { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; }
 #contract-map svg { display: block; }
@@ -2753,8 +2767,22 @@ function skeletonBlock(container) {
   for (let i = 0; i < 5; i++) container.appendChild(el('div', { className: 'skeleton skeleton-line' }));
 }
 // Raw JSON collapsible
-// Syntax-highlighted code block for .gno files
-function codeBlock(body, fileId) {
+// Syntax-highlighted code block for .gno files.
+//
+// Painted twice when `src` is given. First, synchronously, by highlightLine's
+// regexes, so the source is on screen with the page and an apiSWR render
+// stays synchronous. Then, once /api/source answers with tokens for that
+// stamp, every line span's children are swapped for the server's
+// classification: the Go scanner and parser, which see multi-line strings and
+// comments, calls, and which names this package declares. The line spans
+// themselves are kept, so their ids, a ?line= highlight and a #L anchor all
+// survive the swap. Any failure (a 409 after a redeploy, an old server, a
+// line that does not round-trip) leaves the regex paint where it is.
+//
+// src: {network, path, at, file, fileIdFor(name), jump(file, line)}. jump is
+// how a reference reaches a declaration, which may be in another file and,
+// on gnohub, on another page.
+function codeBlock(body, fileId, src) {
   const pre = document.createElement('pre');
   const lines = (body || '').split('\n');
   for (let i = 0; i < lines.length; i++) {
@@ -2764,7 +2792,92 @@ function codeBlock(body, fileId) {
     highlightLine(lineSpan, lines[i]);
     pre.appendChild(lineSpan);
   }
+  if (src && fileId && src.network && src.network !== 'all' && Number.isInteger(src.at)) {
+    upgradeCodeBlock(pre, lines, fileId, src);
+  }
   return pre;
+}
+
+// Token payloads by URL. The browser already keeps them (they are immutable),
+// this only spares re-parsing the JSON when an apiSWR render runs twice.
+const _srcTokens = new Map();
+function sourceTokens(src) {
+  const url = 'source/' + src.path.replace(/^gno\.land\//, '') + '?at=' + src.at +
+    '&file=' + encodeURIComponent(src.file) + '&tokens=1';
+  const key = src.network + ' ' + url;
+  if (!_srcTokens.has(key)) {
+    if (_srcTokens.size > 64) _srcTokens.delete(_srcTokens.keys().next().value);
+    const p = api(url, src.network);
+    // A failure is not remembered: the next render may find the stamp again.
+    p.catch(() => _srcTokens.delete(key));
+    _srcTokens.set(key, p);
+  }
+  return _srcTokens.get(key);
+}
+
+// One class per server token class. ident has none: it is the default colour.
+const SYN_CLASS = {
+  kw: 'syn-kw', str: 'syn-str', com: 'syn-cmt', num: 'syn-num', fn: 'syn-fn',
+  type: 'syn-type', op: 'syn-op', builtin: 'syn-builtin', pkg: 'syn-pkg',
+  imp: 'syn-imp', decl: 'syn-decl', ref: 'syn-ref',
+};
+
+async function upgradeCodeBlock(pre, lines, fileId, src) {
+  let data;
+  try {
+    data = await sourceTokens(src);
+  } catch (e) {
+    return; // the regex paint stays
+  }
+  const tl = data && data.lines;
+  if (!Array.isArray(tl) || tl.length !== lines.length) return;
+  const t0 = performance.now();
+  const decls = data.decls || {};
+  const spans = pre.children;
+  for (let i = 0; i < tl.length && i < spans.length; i++) {
+    const segs = tl[i];
+    if (!Array.isArray(segs)) continue;
+    // Bytes, not just colours, come from the server, so a line is only
+    // swapped when its segments spell exactly the line already drawn.
+    let text = '';
+    for (const s of segs) text += typeof s === 'string' ? s : (s && s[1]) || '';
+    if (text !== lines[i]) continue;
+    const parts = segs.map(s => tokenSpan(s, fileId, decls, src));
+    spans[i].replaceChildren(...parts);
+  }
+  pre.dataset.tokens = String(data.tokens || '');
+  pre.dataset.tokensMs = (performance.now() - t0).toFixed(1);
+}
+
+// tokenSpan draws one segment. Every byte goes in as a text node via el():
+// the server classifies, it never supplies markup.
+function tokenSpan(seg, fileId, decls, src) {
+  if (typeof seg === 'string') return document.createTextNode(seg);
+  const [cls, text, key] = seg;
+  const className = SYN_CLASS[cls] || '';
+  if (cls === 'imp') {
+    const path = text.replace(/^"|"$/g, '');
+    if (/^gno\.land\/[pr]\//.test(path)) {
+      return el('span', { className, onclick: () => navigate('/realm/' + path.replace('gno.land/', '')) }, text);
+    }
+    return el('span', { className: 'syn-str' }, text);
+  }
+  if (cls === 'decl') {
+    const span = el('span', { className }, text);
+    span.id = fileId + '-D-' + (key || text);
+    span.dataset.decl = key || text;
+    return span;
+  }
+  if (cls === 'ref') {
+    const at = decls[text];
+    const span = el('span', { className }, text);
+    if (Array.isArray(at) && src.jump) {
+      span.title = 'declared in ' + at[0] + ':' + at[1];
+      span.addEventListener('click', () => src.jump(at[0], at[1]));
+    }
+    return span;
+  }
+  return className ? el('span', { className }, text) : document.createTextNode(text);
 }
 function parseFuncSignature(source, funcName) {
   // Extract param names from "func FuncName(p1 t, p2, p3 t2) ..."
@@ -16588,11 +16701,24 @@ async function loadRealmDetail(path, initialTab) {
       }
       // Source
       const src = clear('tab-source'); if (activeTab === 'source') src.classList.add('active'); else src.classList.remove('active');
+      const srcFileId = (name) => 'src-' + name.replace(/[^a-z0-9]/gi, '-');
+      // Every file is on this one page, so a reference to a declaration in
+      // another file is a scroll, not a navigation.
+      const srcJump = (file, line) => {
+        const span = document.getElementById(srcFileId(file) + '-L' + line);
+        if (!span) return;
+        src.querySelectorAll('.syn-flash').forEach(n => n.classList.remove('syn-flash'));
+        span.classList.add('syn-flash');
+        span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      };
       for (const f of (detail.files || [])) {
-        const fileId = 'src-' + f.name.replace(/[^a-z0-9]/gi, '-');
+        const fileId = srcFileId(f.name);
         src.appendChild(el('div', { style: { marginBottom: '16px' } },
           el('div', { style: { color: 'var(--accent)', marginBottom: '4px', fontSize: '12px' } }, f.name),
-          codeBlock(f.body, fileId)));
+          codeBlock(f.body, fileId, {
+            network: detail.network, path: detail.path, at: detail.block_height,
+            file: f.name, jump: srcJump,
+          })));
       }
       // Scroll to an anchor in the source tab, two ways:
       //  - ?file=<name>&line=<N> — an exact line, from a docs-tab symbol's own
@@ -27510,7 +27636,17 @@ function ghBlob(body, d, fileName) {
     gutter.appendChild(a);
   }
   wrap.appendChild(gutter);
-  const code = codeBlock(f.body, fileId);
+  // A declaration in this file is a scroll; one in another file is that
+  // file's blob page, landing on the line through the same #L anchor.
+  const ghFileId = (name) => 'gh-' + name.replace(/[^A-Za-z0-9]/g, '-');
+  const code = codeBlock(f.body, fileId, {
+    network: d.network, path: d.path, at: d.block_height, file: f.name,
+    jump: (file, line) => {
+      const id = ghFileId(file) + '-L' + line;
+      if (file === f.name) ghFocusLine(id, true);
+      else navigate(gnohubURL(d.path, '/-/blob/' + encodeURIComponent(file)) + '#' + id);
+    },
+  });
   code.className = 'gh-code';
   wrap.appendChild(code);
   body.appendChild(wrap);

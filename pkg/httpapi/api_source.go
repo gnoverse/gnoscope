@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/srctok"
 	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
@@ -33,6 +34,10 @@ const SourcePrefix = "/api/source/"
 //   - with `at=<height>` equal to the current stamp, the bodies too, marked
 //     immutable. What a stamp names cannot change, so a browser keeps it
 //     forever and the server keeps it a day.
+//   - with `at`, `file` and `tokens=<version>`, that one file as classified
+//     segments per line instead of a body (see pkg/srctok), same caching:
+//     the segments are a pure function of the stamp's bytes and the
+//     tokenizer version, and the version is in the URL.
 //   - with `at` naming any other height, 409 with the current stamp. Only the
 //     current submission's source is stored, so the bytes of an older one do
 //     not exist here, and serving today's bytes under yesterday's stamp would
@@ -49,6 +54,20 @@ func (a *API) HandleSource(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimRight("gno.land/"+r.PathValue("path"), "/")
 	q := r.URL.Query()
 	atParam, file := q.Get("at"), q.Get("file")
+	tokens := q.Has("tokens")
+	if tokens {
+		// The version is checked rather than ignored because the answer is
+		// immutable: a client that asked for v1 must not be handed v2 under
+		// the URL it will keep for a year.
+		if v := q.Get("tokens"); v != srctok.Version {
+			jsonError(w, "tokens="+v+" is not served: this server speaks tokens="+srctok.Version, http.StatusBadRequest)
+			return
+		}
+		if atParam == "" || file == "" {
+			jsonError(w, "tokens= needs at=<height> and file=<name>: one file of one stamp", http.StatusBadRequest)
+			return
+		}
+	}
 
 	if atParam == "" {
 		if file != "" {
@@ -65,7 +84,7 @@ func (a *API) HandleSource(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "at must be a block height", http.StatusBadRequest)
 		return
 	}
-	a.servePinnedSource(w, r, network, path, at, file)
+	a.servePinnedSource(w, r, network, path, at, file, tokens)
 }
 
 // sourceKind is the package's kind in the vocabulary /api/packages filters by.
@@ -140,7 +159,24 @@ type pinnedSource struct {
 	Files   []store.SourceFile `json:"files"`
 }
 
-func (a *API) servePinnedSource(w http.ResponseWriter, r *http.Request, network, path string, at int, file string) {
+// pinnedTokens is one file of one stamp, classified. Lines has one entry per
+// "\n"-separated line of the body, each a list of segments whose texts
+// concatenate to that line exactly. Decls is package-wide: where each
+// top-level name is declared, so a reference in this file can link to a
+// declaration in another.
+type pinnedTokens struct {
+	Path    string                     `json:"path"`
+	Network string                     `json:"network"`
+	Name    string                     `json:"name"`
+	Kind    string                     `json:"kind"`
+	Stamp   store.SourceStamp          `json:"stamp"`
+	File    string                     `json:"file"`
+	Version string                     `json:"tokens"`
+	Lines   [][]srctok.Segment         `json:"lines"`
+	Decls   map[string]srctok.Location `json:"decls"`
+}
+
+func (a *API) servePinnedSource(w http.ResponseWriter, r *http.Request, network, path string, at int, file string, tokens bool) {
 	src, err := a.db.PackageSource(network, path, true)
 	if errors.Is(err, store.ErrNoSource) {
 		jsonError(w, "package not found: "+path, http.StatusNotFound)
@@ -184,10 +220,28 @@ func (a *API) servePinnedSource(w http.ResponseWriter, r *http.Request, network,
 		variant = "file:" + file
 	}
 
-	body, err := json.Marshal(pinnedSource{
-		Path: src.Path, Network: src.Network, Name: src.Name, Kind: sourceKind(src),
-		Stamp: src.Stamp, Files: files,
-	})
+	var body []byte
+	if tokens {
+		// The whole package is read either way (PackageSource has no
+		// one-file form), and the tokenizer needs it: whether a name is a
+		// package-level declaration depends on the other files.
+		in := make([]srctok.File, 0, len(src.Files))
+		for _, f := range src.Files {
+			in = append(in, srctok.File{Name: f.Name, Body: *f.Body})
+		}
+		ix := srctok.NewIndex(in)
+		lines, _ := ix.Tokenize(file)
+		variant = "tokens:" + srctok.Version + ":" + file
+		body, err = json.Marshal(pinnedTokens{
+			Path: src.Path, Network: src.Network, Name: src.Name, Kind: sourceKind(src),
+			Stamp: src.Stamp, File: file, Version: srctok.Version, Lines: lines, Decls: ix.Decls,
+		})
+	} else {
+		body, err = json.Marshal(pinnedSource{
+			Path: src.Path, Network: src.Network, Name: src.Name, Kind: sourceKind(src),
+			Stamp: src.Stamp, Files: files,
+		})
+	}
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
