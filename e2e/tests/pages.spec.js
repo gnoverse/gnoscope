@@ -15,6 +15,8 @@ const ROUTES = [
   ['realms', '/realms'],
   ['packages', '/packages'],
   ['contracts', '/contracts'],
+  ['code', '/code'],
+  ['code file', '/code/r/hub/core/-/core.gno#L1'],
   ['apps', '/apps'],
   ['transactions', '/txs'],
   ['blocks', '/blocks'],

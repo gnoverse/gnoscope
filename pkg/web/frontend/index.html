@@ -662,7 +662,10 @@ pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4p
 .cx-dot.fail { background: var(--red); opacity: 0.7; }
 .cx-dot.cur { opacity: 1; box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--accent); }
 .cx-dot:hover { opacity: 1; text-decoration: none; }
-.cx-files { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+/* One row that scrolls sideways: r/gnoland/boards2/v0 ships 252 files, and a
+   strip that wraps would push the code a screen down. The tree lists them all. */
+.cx-files { position: relative; display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+.cx-file-tab { flex: 0 0 auto; white-space: nowrap; }
 .cx-file-tab { display: inline-flex; gap: 6px; align-items: baseline; padding: 5px 10px; font-size: 12px; color: var(--fg2); border: 1px solid transparent; border-bottom: none; border-radius: 5px 5px 0 0; }
 .cx-file-tab:hover { color: var(--fg); text-decoration: none; background: var(--bg3); }
 .cx-file-tab.on { color: var(--fg); background: var(--bg); border-color: var(--border); font-weight: bold; margin-bottom: -1px; }
@@ -28190,7 +28193,13 @@ function cxIndex(data) {
   for (const g of ns) g.pkgs.sort((a, b) => a.rel.localeCompare(b.rel));
   const items = [];
   for (const p of pkgs) {
-    p.item = { t: p.rel, lt: p.rel.toLowerCase(), pkg: p, file: null, base: p.rel.lastIndexOf('/') + 1 };
+    // The name of a versioned package is the segment before its version:
+    // gnsmath in p/gnoswap/gnsmath/v1.
+    const segs = p.rel.split('/');
+    const nameAt = segs.length > 3 && /^v\d+$/.test(segs[segs.length - 1])
+      ? p.rel.length - segs[segs.length - 1].length - segs[segs.length - 2].length - 1
+      : p.rel.lastIndexOf('/') + 1;
+    p.item = { t: p.rel, lt: p.rel.toLowerCase(), pkg: p, file: null, base: nameAt };
     items.push(p.item);
     for (const f of p.f) {
       const t = p.rel + '/' + f[0];
@@ -28310,25 +28319,31 @@ function cxDeploys(net, pkg) {
   return _cx.deploys.get(key);
 }
 
-// cxMainFile picks what a package opens on: the file named after it, else the
-// first source file that is not a test, else whatever there is.
+// cxMainFile picks what a package opens on: the file named after it, else
+// its largest source file that is not a test (doc.gno sorts first and is
+// usually seven lines of comment), else whatever there is.
 function cxMainFile(pkg) {
-  const names = pkg.f.map(f => f[0]);
   const last = pkg.rel.split('/').filter(s => !/^v\d+$/.test(s)).pop() || '';
   const isSrc = (n) => /\.gno$/.test(n) && !/_(file)?test\.gno$/.test(n);
-  return names.find(n => n === last + '.gno') || names.find(isSrc) || names[0] || '';
+  const named = pkg.f.find(f => f[0] === last + '.gno');
+  if (named) return named[0];
+  const src = pkg.f.filter(f => isSrc(f[0])).sort((x, y) => y[1] - x[1])[0];
+  return src ? src[0] : (pkg.f[0] ? pkg.f[0][0] : '');
 }
 
 // cxPrefetch warms what a click on this row would need: the first file's body
 // and tokens, and the manifest. Bounded by the hover delay, not by a queue.
 let _cxHoverTimer = 0;
+// The chain is captured when the prefetch is asked for, not when it fires: a
+// hover timer that outlives a chain switch would otherwise ask the new chain
+// for the old chain's package.
 function cxPrefetchSoon(pkg, file) {
   clearTimeout(_cxHoverTimer);
-  _cxHoverTimer = setTimeout(() => cxPrefetch(pkg, file), 60);
-}
-function cxPrefetch(pkg, file) {
   const net = _cx.net;
-  if (!pkg || !net) return;
+  _cxHoverTimer = setTimeout(() => cxPrefetch(pkg, file, net), 60);
+}
+function cxPrefetch(pkg, file, net) {
+  if (!pkg || !net || net !== _cx.net) return;
   const f = file || cxMainFile(pkg);
   cxManifest(net, pkg).catch(() => {});
   if (!f) return;
@@ -28430,6 +28445,7 @@ function cxShow(r, rec, t0, gen, repaint) {
 }
 
 function cxBuildShell(root, net) {
+  clearTimeout(_cxHoverTimer);
   root.textContent = '';
   _cx.map = null;
   _cx.cur = null;
@@ -28768,6 +28784,12 @@ function cxPackage(main, pkg, file, t0, repaint) {
     const on = t.dataset.file === file;
     t.classList.toggle('on', on);
     t.setAttribute('aria-selected', on ? 'true' : 'false');
+    if (on) {
+      const strip = t.parentElement;
+      if (t.offsetLeft < strip.scrollLeft || t.offsetLeft + t.offsetWidth > strip.scrollLeft + strip.clientWidth) {
+        strip.scrollLeft = Math.max(0, t.offsetLeft - strip.clientWidth / 3);
+      }
+    }
   });
   cxShowFile(wrap.querySelector('.cx-viewer'), pkg, file, t0);
 }
@@ -28974,7 +28996,7 @@ function cxDrawFile(viewer, pkg, file, body, t0, warm) {
   // Warm the neighbours: the next file in the tab strip is the likeliest click.
   const i = pkg.f.findIndex(f => f[0] === file);
   const next = pkg.f[i + 1];
-  if (next) setTimeout(() => cxPrefetch(pkg, next[0]), 150);
+  if (next) setTimeout(() => cxPrefetch(pkg, next[0], net), 150);
 }
 
 function cxFocusLine(n, writeHash) {
@@ -28986,7 +29008,16 @@ function cxFocusLine(n, writeHash) {
   line.classList.add('cx-line-on');
   const ln = main.querySelector('.cx-gutter').children[n - 1];
   if (ln) ln.classList.add('cx-line-on');
-  line.scrollIntoView({ block: 'center' });
+  // Scroll the code pane, not the window: scrollIntoView moves every
+  // scrollable ancestor, and the page scrolling under the header hides the
+  // breadcrumb and the version rail the reader landed on. On a phone the page
+  // is the scroller, and there it is the right call.
+  if (main.scrollHeight > main.clientHeight + 1 && getComputedStyle(main).overflowY !== 'visible') {
+    const top = line.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+    main.scrollTop = Math.max(0, top - main.clientHeight / 2);
+  } else {
+    line.scrollIntoView({ block: 'center' });
+  }
   if (writeHash) history.replaceState(history.state, '', location.pathname + location.search + '#L' + n);
 }
 
@@ -29022,67 +29053,91 @@ function cxDir(main, idx, path) {
 
 // --- the palette --------------------------------------------------------------
 
-// cxScore is a subsequence match, scored for where the matches fall: runs of
-// consecutive characters, the start of a path segment, and a match inside the
-// file or package name all count for more than letters strewn along a path.
-// Returns null when q is not a subsequence of t. Both lower case.
-function cxScore(q, t, base) {
+// cxScore is a subsequence match, scored by the best alignment rather than
+// the first one found: a match at the start of a path segment or a run of
+// consecutive letters counts for more than letters strewn along a path, and a
+// match inside the file or package name for a little more again. Dynamic
+// programming over (query, text), fzf's v2 in miniature: about 40 x 7 cells a
+// path, which is nothing, and a subsequence pre-check skips most paths before
+// any of it runs. Returns null when q is not a subsequence of t; with
+// wantPos, also the matched positions, backtracked from the table. Both lower
+// case.
+const CX_SEG = 8, CX_RUN = 9, CX_GAP = 1, CX_NAME = 2;
+function cxScore(q, t, base, wantPos) {
   const n = q.length, m = t.length;
-  if (n > m) return null;
-  // Forward to the first full match, then back from its end: the tightest
-  // window that ends there (fzf's v1).
-  let qi = 0, end = -1;
-  for (let i = 0; i < m; i++) {
-    if (t.charCodeAt(i) === q.charCodeAt(qi) && ++qi === n) { end = i; break; }
+  if (!n || n > m) return null;
+  let qi = 0;
+  for (let i = 0; i < m && qi < n; i++) if (t.charCodeAt(i) === q.charCodeAt(qi)) qi++;
+  if (qi < n) return null;
+  const NEG = -1e9;
+  const bonus = (j) => {
+    let b = 1;
+    const c = j === 0 ? 47 : t.charCodeAt(j - 1);
+    if (c === 47 || c === 95 || c === 46 || c === 45) b += CX_SEG; // / _ . -
+    if (j >= base) b += CX_NAME;
+    return b;
+  };
+  let prev = new Float64Array(m).fill(NEG), cur = new Float64Array(m);
+  const table = wantPos ? [] : null;
+  const from = wantPos ? [] : null; // 1 = came from the diagonal (a run)
+  for (let i = 0; i < n; i++) {
+    const qc = q.charCodeAt(i);
+    let run = NEG; // best prev[k] - gap * (j - 1 - k) over k <= j - 1
+    const fr = wantPos ? new Uint8Array(m) : null;
+    for (let j = 0; j < m; j++) {
+      if (j > 0) run = Math.max(run - CX_GAP, prev[j - 1]);
+      if (t.charCodeAt(j) !== qc) { cur[j] = NEG; continue; }
+      let best;
+      if (i === 0) best = -0.02 * j;
+      else {
+        best = run;
+        const diag = j > 0 ? prev[j - 1] + CX_RUN : NEG;
+        if (diag >= best && diag > NEG / 2) { best = diag; if (fr) fr[j] = 1; }
+      }
+      cur[j] = best > NEG / 2 ? best + bonus(j) : NEG;
+    }
+    if (table) { table.push(Float64Array.from(cur)); from.push(fr); }
+    const tmp = prev; prev = cur; cur = tmp;
   }
-  if (end < 0) return null;
-  let start = end;
-  qi = n - 1;
-  for (let i = end; i >= 0; i--) {
-    if (t.charCodeAt(i) === q.charCodeAt(qi)) { start = i; if (--qi < 0) break; }
-  }
-  // Prefer the same match inside the name when there is one.
-  let from = start;
-  if (start < base) {
-    let k = 0;
-    for (let i = base; i < m && k < n; i++) if (t.charCodeAt(i) === q.charCodeAt(k)) k++;
-    if (k === n) from = base;
-  }
-  const pos = new Array(n);
-  qi = 0;
-  for (let i = from; i < m && qi < n; i++) {
-    if (t.charCodeAt(i) === q.charCodeAt(qi)) pos[qi++] = i;
-  }
-  let score = 0, prev = -2;
-  for (let k = 0; k < n; k++) {
-    const p = pos[k];
-    score += 1;
-    if (p === prev + 1) score += 5;
-    const c = p === 0 ? '/' : t[p - 1];
-    if (c === '/' || c === '_' || c === '.' || c === '-') score += 4;
-    if (p >= base) score += 1;
-    prev = p;
-  }
-  if (pos[0] === base) score += 4;
-  score -= (pos[n - 1] - pos[0] + 1 - n) * 0.2;
+  let score = NEG, end = -1;
+  for (let j = 0; j < m; j++) if (prev[j] > score) { score = prev[j]; end = j; }
+  if (end < 0 || score < NEG / 2) return null;
   score -= m * 0.02;
+  if (!wantPos) return { score, pos: null };
+  // Back from the end: a diagonal step is the previous letter; otherwise the
+  // best-scoring earlier match of the previous query letter, gap charged.
+  const pos = new Array(n);
+  let j = end;
+  for (let i = n - 1; i >= 0; i--) {
+    pos[i] = j;
+    if (i === 0) break;
+    if (from[i][j]) { j -= 1; continue; }
+    let bk = -1, bv = NEG;
+    for (let k = j - 1; k >= 0; k--) {
+      const v = table[i - 1][k] - CX_GAP * (j - 1 - k);
+      if (v > bv) { bv = v; bk = k; }
+    }
+    j = bk;
+  }
   return { score, pos };
 }
 
 function cxSearch(query, items, limit) {
   const q = query.toLowerCase().replace(/\s+/g, '');
   const out = [];
-  let matched = 0;
   for (const it of items) {
-    const r = cxScore(q, it.lt, it.base);
+    const r = cxScore(q, it.lt, it.base, false);
     if (!r) continue;
-    matched++;
     // Packages edge out their own files on a tie: the package is the broader
     // answer, and its main file is one keystroke from it anyway.
-    out.push({ it, score: r.score + (it.file ? 0 : 0.5), pos: r.pos });
+    // Tests sit just under the file they test.
+    const test = it.file && /_(file)?test\.gno$/.test(it.lt) ? 1.5 : 0;
+    out.push({ it, score: r.score + (it.file ? 0 : 0.5) - test, pos: null });
   }
   out.sort((a, b) => b.score - a.score || a.it.t.length - b.it.t.length);
-  return { results: out.slice(0, limit), matched };
+  const top = out.slice(0, limit);
+  for (const r of top) r.pos = cxScore(q, r.it.lt, r.it.base, true).pos;
+  return { results: top, matched: out.length };
 }
 
 function cxHighlight(text, pos) {
