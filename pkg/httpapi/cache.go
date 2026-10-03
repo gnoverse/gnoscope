@@ -120,6 +120,11 @@ var endpointTTL = map[string]time.Duration{
 	// 8.0s cold, and the only endpoint outside govdao that is not already
 	// comfortably inside the default TTL.
 	"/api/allevents": 2 * time.Minute,
+	// Not slow (tens of milliseconds cold on gnoland1), but its activity
+	// numbers count 30 days of calls, so a recompute every sync pass would
+	// move them by a handful of calls on a window of thousands: nothing a
+	// treemap can show. The code itself moves only with a deploy.
+	CodeTreePath: 5 * time.Minute,
 }
 
 // pinnedSourceTTL is the server-side freshness of a pinned source read,
