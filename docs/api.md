@@ -82,6 +82,10 @@ stored), so the TTL there bounds memory, not freshness. Where a handler sets
 `Cache-Control` and `ETag` the cache replays both on a hit and answers
 `If-None-Match` itself with a 304.
 
+`/api/code/tree` is kept for 5 minutes. It is cheap to compute, but most of what
+it carries moves only with a deploy, and the part that moves with every call is
+a 30-day count, which one sync pass changes by too little to see.
+
 ## Compression
 
 Responses are gzipped when the client sends `Accept-Encoding: gzip` and the body
@@ -413,6 +417,7 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
 | `GET /api/gnohub/forge/{path...}` | what r/moul/forge claims about a package path: `{path, network, realm, linked, repo_id, repo_url, latest_release, release_count, log_head, unavailable}`. **Requires `network`**: the forge is realm state and the same path exists on more than one chain. `linked: false` with no `unavailable` means nobody has registered the package, which is the normal case and not an error. Reads live over `vm/qeval`, cached 2 minutes; see below |
 | `GET /api/source/{path...}` | a package's source apart from everything volatile, addressed by the submission that put it there. **Requires `network`** (400 without it, or with `all`). Without `at`: a manifest `{path, network, name, kind, stamp, files[], siblings[], submissions, redeploys}`, `stamp` = `{height, tx_hash, time}` of the current submission, each file `{name, size, lines}` (size in bytes), `siblings` the other generations of the same app on that network (see `discover.Generation`), each `{path, stamp}`, oldest generation first. `max-age=30` and an `ETag` over the bytes. With `at=<stamp height>`: `{path, network, name, kind, stamp, files[]}` with each file's `body`, `immutable` for a year; add `file=<name>` for one file, and `tokens=1` with it for that file classified for highlighting instead of its body (`{..., file, tokens, lines, decls}`). Any other `at` is a `409`. See below |
+| `GET /api/code/tree` | every deployed package on one network in one payload, for a file-tree explorer and a treemap of all the code on a chain. **Requires `network`** (400 without it, or with `all`). `{network, height, count, files, lines, bytes, since, window_days, packages[]}`, each package in short keys: `p` path, `ns` namespace, `k` kind (`r` realm, `p` pure), `h` stamp height, `f` files as `[name, lines, bytes]`, `l` and `b` the package totals, `fam` and `g` its version family, `c` calls and `u` unique callers in the window, `d` dependents. `public, max-age=60`, an `ETag`, `304` on `If-None-Match`, 5-minute server TTL. See below |
 | `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
 | `GET /api/deps/{path...}` | dependency graph as `{path: [imports]}`. `dir=dependents` reverses direction, and defaults to one hop; `depth=N` caps the reverse walk, `depth=0` is unbounded |
@@ -483,6 +488,55 @@ A failed submission never moves the stamp: it changed nothing on chain, so
 since this endpoint shipped it changes nothing in `packages` or
 `package_files` either. Rows a failed submission overwrote before that fix
 stay as they are until the path is next deployed successfully.
+
+### The code tree
+
+`/api/code/tree?network=<id>` is the whole chain's code as one list, sorted by
+path, so a client can build the directory tree, fuzzy-match paths and size a
+treemap without asking per package. Measured on gnoland1 on 2026-10-03 against
+a fresh local sync: 598 packages, 3,173 files, 437,673 lines and 14.1 MB of
+source come out as 171 KB of JSON, 43 KB gzipped on the wire, computed in
+about 45 ms cold and served from memory after that.
+
+| key | meaning |
+|---|---|
+| `p` | path |
+| `ns` | namespace, the segment after `r/` or `p/` (an address where nobody claimed a name) |
+| `k` | `r` realm, `p` pure package |
+| `h` | stamp height: the submission whose source is stored, the same stamp `/api/source` serves bodies under |
+| `f` | files, each `[name, lines, bytes]`, sorted by name. Same counting as `/api/source`: bytes, not characters, and a last line without a newline still counts |
+| `l`, `b` | the package's lines and bytes, summed over `f` |
+| `fam` | the family key from `discover.Generation`, the path with its version numbers taken out. Omitted when it equals the path; group by `fam` or else `p` |
+| `g` | the generation vector, one number per segment under the namespace (`r/ns/app/v2` is `[0, 2]`). Omitted when every entry is zero |
+| `c`, `u` | calls, failed ones included as in `/api/packages`, and unique callers, in the window. Omitted when zero |
+| `d` | how many packages on this network import this one. Omitted when zero |
+
+The top level carries the network, `height` (the newest stamp in the list),
+`count`, the chain totals `files`, `lines` and `bytes`, and the window as
+`since` and `window_days`. The window is the last 30 days counted back from the
+start of the current hour, so every recompute inside one hour asks the same
+question and, if nobody called anything, answers with the same bytes.
+
+Field names are short because this is the one payload that is the whole chain:
+spelled out, the same list is 306 KB. gzip takes most of that difference back
+on the wire (40 KB against 37 KB at level 6), so the saving is in what a
+browser parses and holds. The file list is sent in full for the same reason it
+can be: at about 70 bytes gzipped per package, a 300 KB budget holds a chain
+several times the size of gnoland1.
+
+`ETag` is `"ct-<height>-<count>-<hash>"`. The prefix names the deployed code
+(any deploy moves the height or the count), and the hash over the body covers
+the activity numbers, which move without either.
+
+A path whose only submissions failed is not in the list. Since `/api/source`
+shipped a failed submission writes nothing to `packages`, but a database synced
+before then can still hold such a row, and the tree checks
+`package_submissions` rather than trusting it.
+
+Whether a package is live or parked is not here: that is read over RPC per
+path, with a cold cost measured in seconds, and a payload whose content
+depended on whether that cache happened to be warm could not keep a stable
+validator. Overlay `/api/inert/queue` instead.
 
 ### Highlighting tokens
 
