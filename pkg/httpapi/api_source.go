@@ -58,8 +58,10 @@ func (a *API) HandleSource(w http.ResponseWriter, r *http.Request) {
 		a.serveSourceManifest(w, r, network, path)
 		return
 	}
+	// Zero is a real stamp: every package in a chain's genesis was deployed
+	// at height 0, which on gnoland1 is most of them.
 	at, err := strconv.Atoi(atParam)
-	if err != nil || at <= 0 {
+	if err != nil || at < 0 {
 		jsonError(w, "at must be a block height", http.StatusBadRequest)
 		return
 	}

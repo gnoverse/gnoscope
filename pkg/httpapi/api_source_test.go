@@ -211,12 +211,32 @@ func TestHandleSourceRejects(t *testing.T) {
 		{"/api/source/r/ns/app/v2?network=beta", http.StatusNotFound},
 		{"/api/source/r/ns/app/v2?network=alpha&at=abc", http.StatusBadRequest},
 		{"/api/source/r/ns/app/v2?network=alpha&at=-1", http.StatusBadRequest},
+		// 0 is a height like any other, so it is a stale stamp here, not a
+		// malformed one.
+		{"/api/source/r/ns/app/v2?network=alpha&at=0", http.StatusConflict},
 		{"/api/source/r/ns/app/v2?network=alpha&file=app.gno", http.StatusBadRequest},
 		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=gone.gno", http.StatusNotFound},
 	} {
 		if rec := sourceGET(t, api, tc.url); rec.Code != tc.want {
 			t.Errorf("%s: status %d, want %d (%s)", tc.url, rec.Code, tc.want, rec.Body.String())
 		}
+	}
+}
+
+// Genesis packages carry height 0, and that has to be pinnable.
+func TestHandleSourcePinsAGenesisPackage(t *testing.T) {
+	api, db := newTestAPI(t)
+	deploySource(t, db, "alpha", "gno.land/p/ns/gen", "tx-genesis", 0, true,
+		indexer.MemFile{Name: "gen.gno", Body: "package gen\n"})
+
+	rec := sourceGET(t, api, "/api/source/p/ns/gen?network=alpha&at=0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("at=0 on a genesis package: status %d: %s", rec.Code, rec.Body.String())
+	}
+	var got pinnedSource
+	decodeInto(t, rec, &got)
+	if got.Kind != "pure" || len(got.Files) != 1 || got.Files[0].Body == nil {
+		t.Errorf("pinned genesis package = %+v", got)
 	}
 }
 
