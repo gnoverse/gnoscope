@@ -416,7 +416,7 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset` |
 | `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
 | `GET /api/gnohub/forge/{path...}` | what r/moul/forge claims about a package path: `{path, network, realm, linked, repo_id, repo_url, latest_release, release_count, log_head, unavailable}`. **Requires `network`**: the forge is realm state and the same path exists on more than one chain. `linked: false` with no `unavailable` means nobody has registered the package, which is the normal case and not an error. Reads live over `vm/qeval`, cached 2 minutes; see below |
-| `GET /api/source/{path...}` | a package's source apart from everything volatile, addressed by the submission that put it there. **Requires `network`** (400 without it, or with `all`). Without `at`: a manifest `{path, network, name, kind, stamp, files[], siblings[], submissions, redeploys}`, `stamp` = `{height, tx_hash, time}` of the current submission, each file `{name, size, lines}` (size in bytes), `siblings` the other generations of the same app on that network (see `discover.Generation`), each `{path, stamp}`, oldest generation first. `max-age=30` and an `ETag` over the bytes. With `at=<stamp height>`: `{path, network, name, kind, stamp, files[]}` with each file's `body`, `immutable` for a year; add `file=<name>` for one file. Any other `at` is a `409`. See below |
+| `GET /api/source/{path...}` | a package's source apart from everything volatile, addressed by the submission that put it there. **Requires `network`** (400 without it, or with `all`). Without `at`: a manifest `{path, network, name, kind, stamp, files[], siblings[], submissions, redeploys}`, `stamp` = `{height, tx_hash, time}` of the current submission, each file `{name, size, lines}` (size in bytes), `siblings` the other generations of the same app on that network (see `discover.Generation`), each `{path, stamp}`, oldest generation first. `max-age=30` and an `ETag` over the bytes. With `at=<stamp height>`: `{path, network, name, kind, stamp, files[]}` with each file's `body`, `immutable` for a year; add `file=<name>` for one file, and `tokens=1` with it for that file classified for highlighting instead of its body (`{..., file, tokens, lines, decls}`). Any other `at` is a `409`. See below |
 | `GET /api/code/tree` | every deployed package on one network in one payload, for a file-tree explorer and a treemap of all the code on a chain. **Requires `network`** (400 without it, or with `all`). `{network, height, count, files, lines, bytes, since, window_days, packages[]}`, each package in short keys: `p` path, `ns` namespace, `k` kind (`r` realm, `p` pure), `h` stamp height, `f` files as `[name, lines, bytes]`, `l` and `b` the package totals, `fam` and `g` its version family, `c` calls and `u` unique callers in the window, `d` dependents. `public, max-age=60`, an `ETag`, `304` on `If-None-Match`, 5-minute server TTL. See below |
 | `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
@@ -474,6 +474,7 @@ source is stored, which makes them cacheable forever.
 | `at` = the current stamp | the bodies. `Cache-Control: public, max-age=31536000, immutable`, `ETag` derived from network, path, stamp and the `file` asked for |
 | `at` = any other height | `409 {error, path, network, at, current}`, `Cache-Control: no-store`. Re-read at `current.height` |
 | `file=` without `at` | `400`: take the height from the manifest first |
+| `at` + `file` + `tokens=1` | that file as highlighting tokens, same caching and its own `ETag`. `tokens` without both, or with any value but the one the server speaks (`1`), is a `400` |
 
 **A stale stamp is a conflict, not a redirect and not today's bytes.** Only the
 current submission's files are stored (see the deploy history above), so the
@@ -536,6 +537,44 @@ Whether a package is live or parked is not here: that is read over RPC per
 path, with a cold cost measured in seconds, and a payload whose content
 depended on whether that cache happened to be warm could not keep a stable
 validator. Overlay `/api/inert/queue` instead.
+
+### Highlighting tokens
+
+`tokens=1` answers with the file's lines already classified, so the viewer
+does not have to guess with regexes:
+
+```json
+{"path": "...", "network": "...", "stamp": {...}, "file": "a.gno", "tokens": "1",
+ "lines": [[["kw","package"]," ",["ident","a"]], [], ...],
+ "decls": {"Tree": ["a.gno", 12], "Tree.Get": ["a.gno", 20]}}
+```
+
+`lines` has one entry per `\n`-separated line of the body, the same split the
+frontend draws. A segment is a bare string for plain text, else `[class,
+text]`, or `[class, text, key]` for a method's declaration, whose key is
+`Type.Method`. **A line's segment texts concatenate to that line exactly**: a
+segment classifies bytes, it never rewrites them, and the frontend checks this
+per line before using it. `decls` is package-wide, top-level names only
+(`init` and `_` excluded), so a reference can point into another file.
+
+| class | what |
+|---|---|
+| `kw` `str` `com` `num` `op` | keyword, string or rune literal, comment, number, operator or delimiter |
+| `ident` | any identifier nothing below claims |
+| `type` `builtin` | a predeclared type (`int`, `address`, `realm`, ...) or function/constant (`len`, `cross`, `nil`, ...), only where nothing shadows it |
+| `fn` | the name being called |
+| `pkg` | an imported package's name, qualifying a selector |
+| `imp` | an import path string under `gno.land/p/` or `gno.land/r/`; the link target is the path without its quotes |
+| `decl` | the name in a top-level declaration of this package |
+| `ref` | a free use of one of those names, resolved by go/parser, so a local that shadows one is not a `ref` |
+
+Lexed by `go/scanner` and resolved by `go/parser` (`pkg/srctok`). The value of
+`tokens` is a version, not a flag: the response is immutable, so the URL has
+to change when the meaning does. Size, measured 2026-10-03 on real files from
+the gno examples: `sanitize.gno` (78 KB, 1,761 lines) is 24.5 KB gzipped as a
+body and 28.5 KB as tokens, computed in 2.6 ms; `bptree/v0/tree_test.gno`
+(66 KB) 14.9 KB against 24.5 KB, 6.4 ms. Computed once per stamp: the server
+keeps it a day and a browser keeps it for good.
 
 ### The two accounts a package owns
 

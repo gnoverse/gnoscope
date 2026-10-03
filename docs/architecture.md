@@ -63,6 +63,13 @@ successful one replaces the package row and its whole file set, in one
 transaction, because that row's height and hash are the version stamp
 `/api/source` pins bodies under.
 
+**`pkg/srctok`**: splits one file of a package into classified segments per
+line for the source viewer (`/api/source?tokens=1`). Lexing is `go/scanner`
+and the declaration/reference pass is `go/parser`, both stdlib: gno is Go
+syntax, and the alternative measured (chroma) cost 5.7 MB of binary for a
+regex lexer that knows less. The one guarantee is that a line's segments
+concatenate to that line byte for byte.
+
 **`pkg/gnostate`** — decodes the Amino JSON that `vm/qpkg_json` and
 `vm/qobject_json` return into a named value tree: `posts["hello"].Title` rather
 than a PointerValue to a RefValue to a HeapItemValue. Recognizes `avl.Tree` and
