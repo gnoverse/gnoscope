@@ -47,9 +47,11 @@ func TestWiderBucketsCountAReturningAddressOnce(t *testing.T) {
 
 	// Three days inside one ISO week and one month. Anchored on a Wednesday so
 	// that "three consecutive days" cannot straddle a week boundary whatever
-	// day the test runs.
+	// day the test runs, and on one whose Friday is in the same month, or the
+	// monthly case fails for a few days around every month end (it did on
+	// 2026-10-03: Wednesday 30 September to Friday 2 October).
 	base := time.Now().UTC().Add(-72 * time.Hour)
-	for base.Weekday() != time.Wednesday {
+	for base.Weekday() != time.Wednesday || base.Month() != base.Add(48*time.Hour).Month() {
 		base = base.Add(-24 * time.Hour)
 	}
 	for i := 0; i < 3; i++ {
