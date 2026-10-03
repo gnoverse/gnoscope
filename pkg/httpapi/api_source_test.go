@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -216,6 +217,14 @@ func TestHandleSourceRejects(t *testing.T) {
 		{"/api/source/r/ns/app/v2?network=alpha&at=0", http.StatusConflict},
 		{"/api/source/r/ns/app/v2?network=alpha&file=app.gno", http.StatusBadRequest},
 		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=gone.gno", http.StatusNotFound},
+		// tokens= is one file of one stamp, in a version this server speaks.
+		{"/api/source/r/ns/app/v2?network=alpha&tokens=1", http.StatusBadRequest},
+		{"/api/source/r/ns/app/v2?network=alpha&at=25&tokens=1", http.StatusBadRequest},
+		{"/api/source/r/ns/app/v2?network=alpha&file=app.gno&tokens=1", http.StatusBadRequest},
+		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=app.gno&tokens=2", http.StatusBadRequest},
+		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=app.gno&tokens=", http.StatusBadRequest},
+		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=gone.gno&tokens=1", http.StatusNotFound},
+		{"/api/source/r/ns/app/v2?network=alpha&at=20&file=app.gno&tokens=1", http.StatusConflict},
 	} {
 		if rec := sourceGET(t, api, tc.url); rec.Code != tc.want {
 			t.Errorf("%s: status %d, want %d (%s)", tc.url, rec.Code, tc.want, rec.Body.String())
@@ -240,6 +249,61 @@ func TestHandleSourcePinsAGenesisPackage(t *testing.T) {
 	}
 }
 
+// tokens=1 classifies one file of a pinned stamp, with the same immutable
+// caching as its body and a validator of its own.
+func TestHandleSourceTokens(t *testing.T) {
+	api, db := newTestAPI(t)
+	f := func(name, body string) indexer.MemFile { return indexer.MemFile{Name: name, Body: body} }
+	deploySource(t, db, "alpha", "gno.land/r/ns/tok", "tx-t", 30, true,
+		f("a.gno", "package tok\n\nimport \"gno.land/p/nt/avl\"\n\nvar s = \"</script>\"\n\nfunc A() *avl.Tree { return B() }\n"),
+		f("b.gno", "package tok\n\nfunc B() *avl.Tree { return nil }\n"))
+
+	url := "/api/source/r/ns/tok?network=alpha&at=30&file=a.gno&tokens=1"
+	rec := sourceGET(t, api, url)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Errorf("Cache-Control = %q", cc)
+	}
+	if strings.Contains(rec.Body.String(), "</script>") {
+		t.Error("a script close tag reached the response unescaped")
+	}
+	var got struct {
+		File   string            `json:"file"`
+		Tokens string            `json:"tokens"`
+		Stamp  store.SourceStamp `json:"stamp"`
+		Lines  [][]any           `json:"lines"`
+		Decls  map[string][]any  `json:"decls"`
+	}
+	decodeInto(t, rec, &got)
+	if got.File != "a.gno" || got.Tokens != "1" || got.Stamp.Height != 30 {
+		t.Errorf("header fields = %q %q %d", got.File, got.Tokens, got.Stamp.Height)
+	}
+	if len(got.Lines) != 8 {
+		t.Fatalf("%d lines, want 8 (the trailing newline is an empty last line)", len(got.Lines))
+	}
+	// Line 3 is the import, line 7 calls a func declared in b.gno.
+	if s := fmt.Sprint(got.Lines[2]); !strings.Contains(s, "[imp \"gno.land/p/nt/avl\"]") {
+		t.Errorf("import line = %s", s)
+	}
+	if s := fmt.Sprint(got.Lines[6]); !strings.Contains(s, "[ref B]") || !strings.Contains(s, "[decl A]") {
+		t.Errorf("line 7 = %s", s)
+	}
+	if loc := fmt.Sprint(got.Decls["B"]); loc != "[b.gno 3]" {
+		t.Errorf("decls[B] = %s", loc)
+	}
+
+	etag := rec.Header().Get("ETag")
+	body := sourceGET(t, api, "/api/source/r/ns/tok?network=alpha&at=30&file=a.gno")
+	if etag == "" || etag == body.Header().Get("ETag") {
+		t.Errorf("tokens ETag %q must exist and differ from the body's", etag)
+	}
+	if rec := sourceGET(t, api, url, "If-None-Match", etag); rec.Code != http.StatusNotModified {
+		t.Errorf("If-None-Match: status %d, want 304", rec.Code)
+	}
+}
+
 // The pinned read is the one cached entry whose TTL depends on the query.
 func TestPinnedSourceGetsTheLongTTL(t *testing.T) {
 	c := NewResponseCache(CacheTTL)
@@ -248,6 +312,7 @@ func TestPinnedSourceGetsTheLongTTL(t *testing.T) {
 		want string
 	}{
 		{"/api/source/r/ns/app?network=alpha&at=25", pinnedSourceTTL.String()},
+		{"/api/source/r/ns/app?network=alpha&at=25&file=a.gno&tokens=1", pinnedSourceTTL.String()},
 		{"/api/source/r/ns/app?network=alpha", CacheTTL.String()},
 		{"/api/realm/r/ns/app?network=alpha&at=25", CacheTTL.String()},
 	} {
