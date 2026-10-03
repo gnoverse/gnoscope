@@ -587,6 +587,154 @@ pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4p
 #contract-map svg { display: block; }
 #dep-graph svg { display: block; }
 
+/* /code: the code explorer. Scoped under cx- so nothing here reaches another
+   page. Wider than the 1200px every other page uses: a tree and a file side
+   by side need the room, and the map is better for every pixel it gets. */
+.container:has(> #view-code.active) { max-width: 1760px; }
+#view-code main { padding: 12px 0 0; }
+.cx-top { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; margin-bottom: 10px; }
+.cx-title { display: inline-flex; align-items: center; gap: 7px; font-size: 19px; font-weight: bold; color: var(--fg); }
+.cx-title:hover { text-decoration: none; color: var(--accent); }
+.cx-title svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.cx-nets { display: flex; gap: 4px; flex-wrap: wrap; }
+.cx-net { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg2); color: var(--fg2); font: 12px var(--mono); cursor: pointer; }
+.cx-net i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.cx-net:hover { color: var(--fg); border-color: var(--fg2); }
+.cx-net[aria-pressed="true"] { color: var(--fg); border-color: var(--accent); background: var(--bg3); font-weight: bold; }
+.cx-stats { display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 12px; color: var(--fg2); }
+.cx-stats b { color: var(--fg); font-size: 14px; }
+.cx-jump { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; padding: 5px 8px 5px 12px; min-width: 200px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg2); font: 12px var(--mono); cursor: pointer; }
+.cx-jump span { flex: 1; text-align: left; }
+.cx-jump:hover { border-color: var(--accent); color: var(--fg); }
+.cx-jump kbd, .cx-pal-foot kbd { font: 11px var(--mono); padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg3); }
+.cx-drawer-btn { display: none; padding: 5px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font: 12px var(--mono); cursor: pointer; }
+
+.cx-body { display: grid; grid-template-columns: 300px minmax(0, 1fr); border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  height: calc(100vh - var(--cx-top, 150px) - 14px); min-height: 460px; background: var(--bg2); }
+.cx-side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--bg); }
+.cx-filter { margin: 8px; padding: 6px 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); font: 12px var(--mono); }
+.cx-filter:focus { outline: none; border-color: var(--accent); }
+.cx-tree { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; outline: none; }
+.cx-tree:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.cx-tree-inner { position: relative; min-width: 100%; }
+.cx-tree-foot { padding: 5px 10px; border-top: 1px solid var(--border); color: var(--fg2); font-size: 11px; }
+.cx-row { position: absolute; left: 0; right: 0; height: 24px; display: flex; align-items: center; gap: 6px; padding-right: 8px;
+  font-size: 12.5px; white-space: nowrap; color: var(--fg); cursor: pointer; user-select: none; }
+.cx-row:hover { background: var(--bg3); }
+.cx-row.sel { background: rgba(78, 205, 196, 0.15); }
+.cx-row.act { box-shadow: inset 2px 0 0 var(--accent); }
+.cx-tree:not(:focus) .cx-row.act:not(.sel) { box-shadow: none; }
+.cx-row.cx-ns { font-weight: bold; }
+.cx-tw { flex: 0 0 12px; width: 12px; color: var(--fg2); text-align: center; font-size: 11px; }
+.cx-lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cx-n { flex: 0 0 auto; color: var(--fg2); font-size: 11px; font-weight: normal; }
+.cx-test { color: var(--fg2); }
+.cx-k { flex: 0 0 auto; font-size: 9.5px; line-height: 14px; padding: 0 4px; border-radius: 3px; border: 1px solid; font-weight: normal; }
+.cx-k.r { color: #4ecdc4; border-color: rgba(78, 205, 196, 0.4); }
+.cx-k.p { color: #b48ead; border-color: rgba(180, 142, 173, 0.45); }
+.cx-k.f { color: var(--fg2); border-color: var(--border); }
+
+.cx-main { position: relative; min-width: 0; min-height: 0; overflow: auto; }
+.cx-empty { padding: 20px; color: var(--fg2); }
+.cx-dim { color: var(--fg2); }
+.cx-sep { color: var(--fg2); margin: 0 5px; }
+.cx-pkg { padding: 12px 16px 24px; }
+.cx-crumbs { font-size: 13px; margin-bottom: 8px; word-break: break-all; }
+.cx-here { font-weight: bold; }
+.cx-pkg-head { margin-bottom: 10px; }
+.cx-pkg-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cx-pkg-path { font-size: 17px; word-break: break-all; }
+.cx-out { margin-left: auto; display: flex; gap: 14px; font-size: 12px; }
+.cx-facts { display: flex; gap: 4px 16px; flex-wrap: wrap; color: var(--fg2); font-size: 12px; margin-top: 6px; }
+.cx-rail { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+.cx-rail-k { color: var(--fg2); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin-right: 6px; }
+.cx-gens, .cx-deploys { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.cx-gen { display: inline-flex; flex-direction: column; align-items: center; padding: 2px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--fg); line-height: 1.3; }
+.cx-gen:hover { border-color: var(--accent); text-decoration: none; }
+.cx-gen.on { border-color: var(--accent); background: rgba(78, 205, 196, 0.15); font-weight: bold; }
+.cx-gen-h { color: var(--fg2); font-size: 10px; font-weight: normal; }
+.cx-gen-line { width: 14px; height: 1px; background: var(--border); }
+.cx-dots { display: inline-flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+.cx-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.cx-dot.ok { background: var(--green); opacity: 0.55; }
+.cx-dot.fail { background: var(--red); opacity: 0.7; }
+.cx-dot.cur { opacity: 1; box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--accent); }
+.cx-dot:hover { opacity: 1; text-decoration: none; }
+/* One row that scrolls sideways: r/gnoland/boards2/v0 ships 252 files, and a
+   strip that wraps would push the code a screen down. The tree lists them all. */
+.cx-files { position: relative; display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+.cx-file-tab { flex: 0 0 auto; white-space: nowrap; }
+.cx-file-tab { display: inline-flex; gap: 6px; align-items: baseline; padding: 5px 10px; font-size: 12px; color: var(--fg2); border: 1px solid transparent; border-bottom: none; border-radius: 5px 5px 0 0; }
+.cx-file-tab:hover { color: var(--fg); text-decoration: none; background: var(--bg3); }
+.cx-file-tab.on { color: var(--fg); background: var(--bg); border-color: var(--border); font-weight: bold; margin-bottom: -1px; }
+.cx-viewer { background: var(--bg); border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
+.cx-blob-head { display: flex; align-items: center; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.cx-blob-name { font-weight: bold; }
+.cx-blob-skel { padding: 16px; }
+.cx-blob { display: flex; }
+.cx-gutter { display: flex; flex-direction: column; padding: 12px 0; background: var(--bg2); border-right: 1px solid var(--border); user-select: none; flex: 0 0 auto; }
+.cx-ln { padding: 0 10px; text-align: right; color: var(--fg2); font: 13px/1.5 var(--mono); opacity: 0.7; }
+.cx-ln:hover { color: var(--accent); text-decoration: none; opacity: 1; }
+.cx-ln.cx-line-on { color: var(--bg); background: var(--amber); font-weight: bold; opacity: 1; }
+.cx-code { margin: 0; padding: 12px 16px; border: none; border-radius: 0; background: var(--bg); flex: 1 1 auto; min-width: 0; outline: none; }
+.cx-code span.cx-line-on { display: inline-block; width: 100%; background: rgba(255, 217, 61, 0.14); }
+.cx-dir { display: flex; flex-direction: column; margin-top: 12px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.cx-dir-row { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); color: var(--fg); font-size: 13px; }
+.cx-dir-row:last-child { border-bottom: none; }
+.cx-dir-row:hover { background: var(--bg3); text-decoration: none; }
+
+.cx-map { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.cx-map-bar { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.cx-map-crumbs { flex: 1 1 auto; min-width: 0; }
+.cx-map-open { margin-left: 12px; }
+.cx-map-toggles { display: flex; gap: 12px; flex-wrap: wrap; }
+.cx-seg { display: inline-flex; align-items: center; gap: 2px; }
+.cx-seg-k { color: var(--fg2); font-size: 11px; margin-right: 4px; }
+.cx-seg-b { padding: 2px 8px; background: var(--bg); border: 1px solid var(--border); color: var(--fg2); font: 11px var(--mono); cursor: pointer; }
+.cx-seg-b:first-of-type { border-radius: 4px 0 0 4px; }
+.cx-seg-b:last-child { border-radius: 0 4px 4px 0; }
+.cx-seg-b[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: bold; }
+.cx-map-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.cx-map-canvas { display: block; }
+.cx-map-tip { position: absolute; z-index: 5; max-width: 420px; padding: 7px 10px; background: rgba(20, 20, 20, 0.96); border: 1px solid var(--border);
+  border-radius: 6px; font-size: 12px; pointer-events: none; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); word-break: break-all; }
+.cx-tip-path { font-weight: bold; }
+.cx-map-legend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 5px 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg2); }
+.cx-lg-item { display: inline-flex; align-items: center; gap: 6px; }
+.cx-lg-bar { display: inline-block; width: 120px; height: 8px; border-radius: 4px; }
+.cx-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+.cx-pal-overlay { position: fixed; inset: 0; z-index: 400; background: rgba(0, 0, 0, 0.55); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+.cx-pal { width: min(720px, 94vw); background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); overflow: hidden; }
+.cx-pal-input { width: 100%; padding: 12px 14px; background: var(--bg); border: none; border-bottom: 1px solid var(--border); color: var(--fg); font: 15px var(--mono); outline: none; }
+.cx-pal-list { max-height: min(56vh, 520px); overflow: auto; }
+.cx-pal-opt { display: flex; align-items: center; gap: 8px; padding: 5px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.cx-pal-opt.act { background: rgba(78, 205, 196, 0.15); box-shadow: inset 2px 0 0 var(--accent); }
+.cx-pal-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cx-pal-text mark { background: transparent; color: var(--amber); font-weight: bold; }
+.cx-pal-foot { padding: 6px 14px; border-top: 1px solid var(--border); color: var(--fg2); font-size: 11px; }
+.cx-scrim { display: none; }
+
+/* A phone: the tree becomes a drawer over the page, and the file takes the
+   width. The panes stop scrolling on their own; the page scrolls. */
+@media (max-width: 760px) {
+  .cx-drawer-btn { display: inline-block; }
+  .cx-jump { min-width: 0; margin-left: 0; }
+  .cx-stats { width: 100%; }
+  .cx-body { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; overflow: visible; border: none; background: none; }
+  .cx-main { overflow: visible; }
+  .cx-side { position: fixed; top: 0; bottom: 0; left: 0; width: min(86vw, 340px); z-index: 300; transform: translateX(-102%);
+    transition: transform 0.18s ease-out; border-right: 1px solid var(--border); box-shadow: 8px 0 30px rgba(0, 0, 0, 0.5); }
+  .cx-side.open { transform: none; }
+  .cx-drawer-open .cx-scrim { display: block; position: fixed; inset: 0; z-index: 299; background: rgba(0, 0, 0, 0.5); }
+  .cx-map { position: relative; height: 70vh; }
+  .cx-pkg { padding: 8px 0 16px; }
+  .cx-out { margin-left: 0; width: 100%; }
+  .cx-code { padding: 10px; }
+}
+
 /* gnohub (experimental, /lab). Scoped under gh- so nothing here can reach a
    page outside it, which is the point of an experiment: reverting it is one
    block, not a hunt through the shared rules above. */
@@ -1339,6 +1487,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.3v4"/><path d="M8 4.7h.01"/></symbol>
 <symbol id="i-doc" viewBox="0 0 16 16"><path d="M9.2 1.8H4.2a1 1 0 0 0-1 1v10.4a1 1 0 0 0 1 1h7.6a1 1 0 0 0 1-1V5.4z"/><path d="M9.2 1.8v3.6h3.6"/><path d="M5.8 8.6h4.4"/><path d="M5.8 11h4.4"/></symbol>
 <symbol id="i-code" viewBox="0 0 16 16"><path d="m5.4 5.4-3 2.6 3 2.6"/><path d="m10.6 5.4 3 2.6-3 2.6"/><path d="M9.4 3.2 6.6 12.8"/></symbol>
+<symbol id="i-files" viewBox="0 0 16 16"><path d="M2.2 3.4h3.6l1.4 1.6h6.6v7.6a.8.8 0 0 1-.8.8H3a.8.8 0 0 1-.8-.8z"/><path d="M5.2 8.2h5.6"/><path d="M5.2 10.6h3.4"/></symbol>
 <symbol id="i-call" viewBox="0 0 16 16"><path d="M6.4 2.4H3.4a1 1 0 0 0-1 1v9.2a1 1 0 0 0 1 1h3"/><path d="M10.4 5.4 13 8l-2.6 2.6"/><path d="M13 8H6.2"/></symbol>
 <symbol id="i-events" viewBox="0 0 16 16"><circle cx="8" cy="8" r="1.6"/><path d="M4.9 4.9a4.4 4.4 0 0 0 0 6.2"/><path d="M11.1 11.1a4.4 4.4 0 0 0 0-6.2"/><path d="M2.7 2.7a7.5 7.5 0 0 0 0 10.6"/><path d="M13.3 13.3a7.5 7.5 0 0 0 0-10.6"/></symbol>
 <symbol id="i-storage" viewBox="0 0 16 16"><ellipse cx="8" cy="3.8" rx="5.2" ry="2"/><path d="M2.8 3.8v8.4c0 1.1 2.3 2 5.2 2s5.2-.9 5.2-2V3.8"/><path d="M13.2 8c0 1.1-2.3 2-5.2 2s-5.2-.9-5.2-2"/></symbol>
@@ -1379,6 +1528,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a href="/apps" id="nav-apps" title="apps"><span class="rail-label">apps</span></a>
         </div>
       </div>
+      <a href="/code" id="nav-code" title="every package on the chain: a map of all the code, a file tree, and a jump-to-anything palette (ctrl-k)"><svg aria-hidden="true"><use href="#i-files"/></svg><span class="rail-label">code</span></a>
       <div class="nav-group">
         <a href="/developer" id="nav-developer" title="code search, chain and tooling versions, the API"><svg aria-hidden="true"><use href="#i-code"/></svg><span class="rail-label">developer</span></a>
         <div class="nav-kids">
@@ -1684,6 +1834,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   </main></div>
   <div class="view" id="view-lab"><main><div id="lab-content"></div></main></div>
   <div class="view" id="view-cartography"><main><div id="carto-content" class="carto"></div></main></div>
+  <div class="view" id="view-code"><main><div id="code-content"></div></main></div>
   <div class="view" id="view-gnohub"><main><div id="gnohub-content"></div><div id="gnohub-body"></div></main></div>
   <div class="view" id="view-labgithub"><main><div id="labgithub-content"></div></main></div>
   <div class="view" id="view-tx-detail"><main><div id="tx-detail-content"></div></main></div>
@@ -2779,9 +2930,10 @@ function skeletonBlock(container) {
 // survive the swap. Any failure (a 409 after a redeploy, an old server, a
 // line that does not round-trip) leaves the regex paint where it is.
 //
-// src: {network, path, at, file, fileIdFor(name), jump(file, line)}. jump is
-// how a reference reaches a declaration, which may be in another file and,
-// on gnohub, on another page.
+// src: {network, path, at, file, fileIdFor(name), jump(file, line),
+// openImport(path)}. jump is how a reference reaches a declaration, which may
+// be in another file and, on gnohub, on another page. openImport is optional:
+// without it an import opens the realm page, /code keeps it inside /code.
 function codeBlock(body, fileId, src) {
   const pre = document.createElement('pre');
   const lines = (body || '').split('\n');
@@ -2789,7 +2941,7 @@ function codeBlock(body, fileId, src) {
     if (i > 0) pre.appendChild(document.createTextNode('\n'));
     const lineSpan = el('span');
     if (fileId) lineSpan.id = fileId + '-L' + (i + 1);
-    highlightLine(lineSpan, lines[i]);
+    highlightLine(lineSpan, lines[i], src && src.openImport);
     pre.appendChild(lineSpan);
   }
   if (src && fileId && src.network && src.network !== 'all' && Number.isInteger(src.at)) {
@@ -2801,18 +2953,26 @@ function codeBlock(body, fileId, src) {
 // Token payloads by URL. The browser already keeps them (they are immutable),
 // this only spares re-parsing the JSON when an apiSWR render runs twice.
 const _srcTokens = new Map();
-function sourceTokens(src) {
+// fetcher defaults to api(); /code passes one that skips the refresh bar, for
+// a prefetch the reader did not ask for.
+function sourceTokens(src, fetcher) {
   const url = 'source/' + src.path.replace(/^gno\.land\//, '') + '?at=' + src.at +
     '&file=' + encodeURIComponent(src.file) + '&tokens=1';
   const key = src.network + ' ' + url;
   if (!_srcTokens.has(key)) {
     if (_srcTokens.size > 64) _srcTokens.delete(_srcTokens.keys().next().value);
-    const p = api(url, src.network);
+    const p = (fetcher || api)(url, src.network);
     // A failure is not remembered: the next render may find the stamp again.
     p.catch(() => _srcTokens.delete(key));
     _srcTokens.set(key, p);
   }
   return _srcTokens.get(key);
+}
+
+// sourceTokensPrime starts the fetch a later codeBlock will await, so a warm
+// file is highlighted in the same task it is drawn in.
+function sourceTokensPrime(src, fetcher) {
+  sourceTokens(src, fetcher).catch(() => {});
 }
 
 // One class per server token class. ident has none: it is the default colour.
@@ -2858,7 +3018,8 @@ function tokenSpan(seg, fileId, decls, src) {
   if (cls === 'imp') {
     const path = text.replace(/^"|"$/g, '');
     if (/^gno\.land\/[pr]\//.test(path)) {
-      return el('span', { className, onclick: () => navigate('/realm/' + path.replace('gno.land/', '')) }, text);
+      const open = src.openImport ? () => src.openImport(path) : () => navigate('/realm/' + path.replace('gno.land/', ''));
+      return el('span', { className, onclick: open }, text);
     }
     return el('span', { className: 'syn-str' }, text);
   }
@@ -2887,7 +3048,7 @@ function parseFuncSignature(source, funcName) {
   let params = m[1].split(',').map(p => p.trim().split(/\s+/)[0]).filter(Boolean);
   return params; // e.g. ['_', 'slug', 'title', 'body']
 }
-function highlightLine(parent, line) {
+function highlightLine(parent, line, openImport) {
   // Comment
   const cmtIdx = line.indexOf('//');
   if (cmtIdx === 0) { parent.appendChild(el('span', { className: 'syn-cmt' }, line)); return; }
@@ -2897,7 +3058,7 @@ function highlightLine(parent, line) {
     parent.appendChild(document.createTextNode(impMatch[1]));
     const path = impMatch[2];
     if (path.startsWith('gno.land/p/') || path.startsWith('gno.land/r/')) {
-      const a = el('span', { className: 'syn-imp', onclick: () => navigate('/realm/' + path.replace('gno.land/', '')) }, '"' + path + '"');
+      const a = el('span', { className: 'syn-imp', onclick: openImport ? () => openImport(path) : () => navigate('/realm/' + path.replace('gno.land/', '')) }, '"' + path + '"');
       parent.appendChild(a);
     } else {
       parent.appendChild(el('span', { className: 'syn-str' }, '"' + path + '"'));
@@ -4232,6 +4393,7 @@ const NAV = [
     { id: 'packages', label: 'packages', path: '/packages' },
     { id: 'apps', label: 'apps', path: '/apps' },
   ] },
+  { id: 'code', label: 'code', path: '/code' },
   { id: 'developer', label: 'developer', path: '/developer', own: 'overview', children: [
     { id: 'devsearch', label: 'code search', path: '/developer/search' },
     { id: 'devapi', label: 'api', path: '/developer/api' },
@@ -4509,6 +4671,9 @@ function route() {
   // Before the /gnohub tests below only for reading order; both are exact
   // matches, so neither can shadow the other.
   else if (path === '/lab/github') { view = 'labgithub'; }
+  // Everything under /code is one view; the rest of the path is the package
+  // and file, parsed by cxParse.
+  else if (path === '/code' || path.startsWith('/code/')) { view = 'code'; data = path.slice(6); }
   // The whole gnohub tree is one view: the sub-page is data, not a second
   // `view-` container, which is what keeps the experiment to one block of
   // markup and one block of script.
@@ -4576,6 +4741,7 @@ function route() {
     case 'lab': loadLab(); break;
     case 'cartography': loadCarto(); break;
     case 'gnohub': loadGnohub(data); break;
+    case 'code': loadCode(data); break;
     case 'labgithub': loadLabGitHub(); break;
     case 'realms': loadRealms(); break;
     case 'packages': enterPackages(urlPv); break;
@@ -22449,6 +22615,7 @@ const KEY_ROUTES = {
   g: ['/gas', 'gas'],
   n: ['/analytics', 'analytics'],
   s: ['/sanity', 'sanity'],
+  c: ['/code', 'code'],
 };
 
 let _awaitingGoto = false;
@@ -22469,7 +22636,8 @@ function showShortcuts() {
 
   const rows = [
     ['/', 'focus search'],
-    ['g then h/r/p/t/b/a/e/g/n/s', 'go to a page'],
+    ['g then h/r/p/t/b/a/e/g/n/s/c', 'go to a page'],
+    ['ctrl-k or / on /code', 'jump to any package or file'],
     ['g then w', 'go to your watchlist'],
     ['w', 'watch or unwatch what you are viewing'],
     ['?', 'this list'],
@@ -27897,6 +28065,1674 @@ async function ghTree(prefix, gen) {
 }
 
 // --- Routing ---
+// --- /code: every package on one chain, as a code explorer -------------------
+//
+// The front door is a map of all the code on the chain, the rest is an editor
+// shaped read of it: a tree on the left, a file on the right, and a palette
+// that jumps anywhere in a keystroke. Everything is drawn from three
+// endpoints and nothing else:
+//
+//   /api/code/tree      the whole chain in one payload, fetched once per chain
+//   /api/source/<path>  a package's manifest, then its bodies and tokens under
+//                       the stamp height, which are immutable and kept forever
+//   /api/realm/deploys  the deploy history, only when there is more than one
+//
+// Route grammar, gnohub's `/-/` infix and for the same reason (a package path
+// is arbitrarily deep, so a trailing file name is ambiguous without it):
+//
+//   /code                          the map; ?zoom=<namespace|path> zooms it
+//   /code/r/moul/home              a package, its main file open
+//   /code/r/moul/home/-/home.gno   a file; #L42 marks a line
+//   /code/r/gnoswap                a prefix that is not a package: what is under it
+//
+// Every URL carries ?network=. The endpoints refuse "all" (a package path names
+// a different package on every chain), so in all-networks mode this page picks
+// one, says which, and puts a switcher where it cannot be missed.
+//
+// Speed is the feature. The tree is fetched once per chain and kept in memory
+// and in the session cache; a file body is fetched once per stamp and kept;
+// hovering a row starts both fetches before the click; and opening a file in
+// the package already on screen redraws the viewer and nothing else.
+//
+// On-chain content is hostile, every byte of it: paths, file names and bodies
+// all go in as text nodes through el(), or through canvas fillText, which
+// cannot be anything but text.
+
+const CX_ROW = 24;
+const CX_OVERSCAN = 12;
+const CX_PALETTE_MAX = 50;
+
+const _cx = {
+  net: '',
+  trees: new Map(),     // net -> { data, idx, at } | { pending }
+  bodies: new Map(),    // key -> Promise<string>
+  bodyText: new Map(),  // key -> string, once resolved: a warm open never awaits
+  manifests: new Map(), // net|path -> Promise<manifest>
+  deploys: new Map(),   // net|path -> Promise<deploys>
+  expanded: new Set(),
+  filter: '',
+  rows: [],
+  active: -1,
+  selKey: '',
+  gen: 0,
+  fileGen: 0,
+  shell: null,
+  map: null,
+  cur: null,            // { pkg, file } on screen
+  opens: [],            // timings, newest last: { file, ms, warm }
+};
+
+function cxIsAddrNs(ns) { return /^g1[0-9a-z]{30,}$/.test(ns); }
+function cxRel(path) { return String(path || '').replace(/^gno\.land\//, ''); }
+function cxNetQ(net) { return '?network=' + encodeURIComponent(net || _cx.net); }
+
+// cxURL is the only place a /code link is built.
+function cxURL(path, file, net) {
+  let u = '/code';
+  if (path) u += '/' + cxRel(path).split('/').map(encodeURIComponent).join('/');
+  if (file) u += '/-/' + encodeURIComponent(file);
+  return u + cxNetQ(net);
+}
+
+function cxMapURL(zoom, net) {
+  const q = new URLSearchParams();
+  q.set('network', net || _cx.net);
+  if (zoom) q.set('zoom', zoom);
+  const size = urlParam('size'), color = urlParam('color');
+  if (size) q.set('size', size);
+  if (color) q.set('color', color);
+  return '/code?' + q.toString();
+}
+
+function cxParse(rest) {
+  rest = String(rest || '').replace(/^\/+/, '');
+  if (!rest) return { kind: 'map' };
+  let left = rest, file = '';
+  const cut = rest.indexOf('/-/');
+  if (cut >= 0) { left = rest.slice(0, cut); file = rest.slice(cut + 3); }
+  const dec = (s) => { try { return decodeURIComponent(s); } catch (_) { return s; } };
+  left = left.replace(/\/+$/, '').split('/').map(dec).join('/');
+  file = dec(file.replace(/\/+$/, ''));
+  return { kind: file ? 'file' : 'pkg', path: 'gno.land/' + left, file };
+}
+
+// Compact counts for a row that has 60 pixels for them.
+function cxK(n) {
+  n = n || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M';
+  if (n >= 1e4) return Math.round(n / 1e3) + 'k';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+
+// --- data -------------------------------------------------------------------
+
+// cxIndex turns the tree payload into what every part of the page reads:
+// packages by path, namespaces in display order, version families, and the
+// flat list the palette scores. Built once per payload, about 2 ms on mainnet.
+function cxIndex(data) {
+  const pkgs = (data.packages || []).map(p => Object.assign({}, p, {
+    rel: cxRel(p.p), f: Array.isArray(p.f) ? p.f : [], l: p.l || 0, b: p.b || 0,
+  }));
+  const byPath = new Map();
+  const nsMap = new Map();
+  const fams = new Map();
+  for (const p of pkgs) {
+    byPath.set(p.p, p);
+    let g = nsMap.get(p.ns);
+    if (!g) { g = { ns: p.ns, pkgs: [], l: 0, b: 0, files: 0, c: 0 }; nsMap.set(p.ns, g); }
+    g.pkgs.push(p); g.l += p.l; g.b += p.b; g.files += p.f.length; g.c += p.c || 0;
+    const fk = p.fam || p.p;
+    if (!fams.has(fk)) fams.set(fk, []);
+    fams.get(fk).push(p);
+  }
+  // Named owners first, then the address-shaped namespaces: a screen of
+  // g1qp.. rows at the top buries every name there is.
+  const ns = Array.from(nsMap.values()).sort((a, b) =>
+    (cxIsAddrNs(a.ns) - cxIsAddrNs(b.ns)) || a.ns.localeCompare(b.ns));
+  for (const g of ns) g.pkgs.sort((a, b) => a.rel.localeCompare(b.rel));
+  const items = [];
+  for (const p of pkgs) {
+    // The name of a versioned package is the segment before its version:
+    // gnsmath in p/gnoswap/gnsmath/v1.
+    const segs = p.rel.split('/');
+    const nameAt = segs.length > 3 && /^v\d+$/.test(segs[segs.length - 1])
+      ? p.rel.length - segs[segs.length - 1].length - segs[segs.length - 2].length - 1
+      : p.rel.lastIndexOf('/') + 1;
+    p.item = { t: p.rel, lt: p.rel.toLowerCase(), pkg: p, file: null, base: nameAt };
+    items.push(p.item);
+    for (const f of p.f) {
+      const t = p.rel + '/' + f[0];
+      items.push({ t, lt: t.toLowerCase(), pkg: p, file: f, base: p.rel.length + 1 });
+    }
+  }
+  return { data, pkgs, byPath, ns, nsMap, fams, items };
+}
+
+function cxSessionKey(net) { return SWR_PREFIX + net + '|code/tree'; }
+
+// The tree for one chain. Memory first (60s, the payload's own max-age), then
+// the session cache for a reload, then the network; the browser's ETag
+// revalidation makes the refetch a 304 when nothing was deployed.
+function cxTree(net) {
+  const have = _cx.trees.get(net);
+  if (have && have.idx && Date.now() - have.at < 60_000) return Promise.resolve(have);
+  if (have && have.pending) return have.pending;
+  const pending = api('code/tree', net).then((data) => {
+    const rec = { data, idx: cxIndex(data), at: Date.now() };
+    _cx.trees.set(net, rec);
+    try {
+      const s = JSON.stringify({ t: Date.now(), d: data });
+      if (s.length <= 2 * SWR_MAX_STORED_BYTES) sessionStorage.setItem(cxSessionKey(net), s);
+    } catch (_) { /* quota: memory still has it */ }
+    return rec;
+  }, (err) => {
+    const prev = _cx.trees.get(net);
+    if (prev && prev.pending) _cx.trees.delete(net);
+    throw err;
+  });
+  // A stale record keeps serving while the fresh one is in flight.
+  _cx.trees.set(net, Object.assign({}, have || {}, { pending }));
+  return pending;
+}
+
+function cxTreeChanged(a, b) {
+  return !a || !b || a.height !== b.height || a.count !== b.count || a.lines !== b.lines;
+}
+
+// cxTreeNow answers synchronously when it can: from memory, else from the
+// session cache. The caller paints that and lets cxTree refresh behind it.
+function cxTreeNow(net) {
+  const have = _cx.trees.get(net);
+  if (have && have.idx) return have;
+  try {
+    const raw = sessionStorage.getItem(cxSessionKey(net));
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    if (!rec || !rec.d || Date.now() - rec.t > SWR_MAX_AGE_MS) return null;
+    const out = { data: rec.d, idx: cxIndex(rec.d), at: 0, stale: true };
+    _cx.trees.set(net, out);
+    return out;
+  } catch (_) { return null; }
+}
+
+function cxBodyKey(net, pkg, h, file) { return net + '|' + pkg + '|' + h + '|' + file; }
+
+// A body is addressed by its stamp, so once fetched it is right forever. A 409
+// means the tree we hold is older than the chain: re-read at the height the
+// server names, once.
+function cxBody(net, pkg, file) {
+  const key = cxBodyKey(net, pkg.p, pkg.h, file);
+  if (_cx.bodies.has(key)) return _cx.bodies.get(key);
+  const url = (h) => 'source/' + pkg.rel + '?at=' + h + '&file=' + encodeURIComponent(file);
+  const p = cxSilent(url(pkg.h), net).catch((err) => {
+    let cur = null;
+    try { cur = JSON.parse(err.message).current; } catch (_) { /* not a 409 */ }
+    if (!cur || !Number.isInteger(cur.height)) throw err;
+    pkg.h = cur.height;
+    return cxSilent(url(cur.height), net);
+  }).then((d) => {
+    const f = (d.files || [])[0];
+    const text = f && typeof f.body === 'string' ? f.body : '';
+    _cx.bodyText.set(cxBodyKey(net, pkg.p, pkg.h, file), text);
+    _cx.bodyText.set(key, text);
+    return text;
+  });
+  p.catch(() => _cx.bodies.delete(key));
+  _cx.bodies.set(key, p);
+  return p;
+}
+
+// cxSilent is api() without the refresh bar, for prefetches the reader did
+// not ask for and should not see blink.
+const _cxInflight = new Map();
+function cxSilent(path, net) {
+  const sep = path.includes('?') ? '&' : '?';
+  const url = '/api/' + path + sep + 'network=' + encodeURIComponent(net);
+  if (_cxInflight.has(url)) return _cxInflight.get(url);
+  const p = fetch(url).then(async (r) => {
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  });
+  _cxInflight.set(url, p);
+  p.finally(() => _cxInflight.delete(url)).catch(() => {});
+  return p;
+}
+
+function cxManifest(net, pkg) {
+  const key = net + '|' + pkg.p;
+  if (!_cx.manifests.has(key)) {
+    const p = cxSilent('source/' + pkg.rel, net);
+    p.catch(() => _cx.manifests.delete(key));
+    _cx.manifests.set(key, p);
+  }
+  return _cx.manifests.get(key);
+}
+
+function cxDeploys(net, pkg) {
+  const key = net + '|' + pkg.p;
+  if (!_cx.deploys.has(key)) {
+    const p = cxSilent('realm/deploys/' + pkg.rel + '?limit=60', net);
+    p.catch(() => _cx.deploys.delete(key));
+    _cx.deploys.set(key, p);
+  }
+  return _cx.deploys.get(key);
+}
+
+// cxMainFile picks what a package opens on: the file named after it, else
+// its largest source file that is not a test (doc.gno sorts first and is
+// usually seven lines of comment), else whatever there is.
+function cxMainFile(pkg) {
+  const last = pkg.rel.split('/').filter(s => !/^v\d+$/.test(s)).pop() || '';
+  const isSrc = (n) => /\.gno$/.test(n) && !/_(file)?test\.gno$/.test(n);
+  const named = pkg.f.find(f => f[0] === last + '.gno');
+  if (named) return named[0];
+  const src = pkg.f.filter(f => isSrc(f[0])).sort((x, y) => y[1] - x[1])[0];
+  return src ? src[0] : (pkg.f[0] ? pkg.f[0][0] : '');
+}
+
+// cxPrefetch warms what a click on this row would need: the first file's body
+// and tokens, and the manifest. Bounded by the hover delay, not by a queue.
+let _cxHoverTimer = 0;
+// The chain is captured when the prefetch is asked for, not when it fires: a
+// hover timer that outlives a chain switch would otherwise ask the new chain
+// for the old chain's package.
+function cxPrefetchSoon(pkg, file) {
+  clearTimeout(_cxHoverTimer);
+  const net = _cx.net;
+  _cxHoverTimer = setTimeout(() => cxPrefetch(pkg, file, net), 60);
+}
+function cxPrefetch(pkg, file, net) {
+  if (!pkg || !net || net !== _cx.net) return;
+  const f = file || cxMainFile(pkg);
+  cxManifest(net, pkg).catch(() => {});
+  if (!f) return;
+  cxBody(net, pkg, f).catch(() => {});
+  if (/\.gno$/.test(f)) sourceTokensPrime({ network: net, path: pkg.p, at: pkg.h, file: f }, cxSilent);
+}
+
+// --- the page ---------------------------------------------------------------
+
+async function cxResolveNet() {
+  let net = getNetwork();
+  if (net && net !== 'all') return net;
+  const nets = await networksList();
+  net = defaultNetworkName() || (nets[0] && nets[0].id) || '';
+  if (!net) return '';
+  setNetwork(net);
+  const sel = document.getElementById('network-select');
+  if (sel) sel.value = net;
+  renderNetworkSwatch();
+  urlSetParam('network', net);
+  return net;
+}
+
+async function loadCode(rest) {
+  const t0 = performance.now();
+  const gen = ++_cx.gen;
+  const r = cxParse(rest);
+  const net = await cxResolveNet();
+  if (gen !== _cx.gen) return;
+  const root = document.getElementById('code-content');
+  if (!net) {
+    root.textContent = '';
+    root.appendChild(el('div', { className: 'dash-msg' }, 'no chain is configured, so there is no code to show'));
+    return;
+  }
+  if (!_cx.shell || _cx.shell.net !== net || !root.contains(_cx.shell.top)) cxBuildShell(root, net);
+  _cx.net = net;
+
+  const now = cxTreeNow(net);
+  if (now) cxShow(r, now, t0, gen);
+  else cxSkeleton();
+  let fresh;
+  try {
+    fresh = await cxTree(net);
+  } catch (err) {
+    if (gen !== _cx.gen || now) return;
+    const main = _cx.shell.main;
+    main.textContent = '';
+    main.appendChild(errorPanel(err, () => loadCode(rest)));
+    return;
+  }
+  if (gen !== _cx.gen) return;
+  if (!now || cxTreeChanged(now.data, fresh.data)) cxShow(r, fresh, t0, gen, !!now);
+}
+
+function cxSkeleton() {
+  const s = _cx.shell;
+  s.main.textContent = '';
+  skeletonBlock(s.main);
+  s.treeInner.textContent = '';
+  s.treeInner.style.height = '0px';
+  skeletonBlock(s.treeInner);
+}
+
+// cxShow paints one route against one tree. Synchronous, and safe to run
+// twice (the session copy, then the fresh one): it rebuilds what it owns.
+function cxShow(r, rec, t0, gen, repaint) {
+  const s = _cx.shell;
+  const idx = rec.idx;
+  s.idx = idx;
+  cxStats(idx);
+  // The skeleton the tree was holding is not rows.
+  if (s.treeInner.querySelector('.skeleton')) s.treeInner.textContent = '';
+
+  if (r.kind === 'map') {
+    _cx.selKey = '';
+    _cx.cur = null;
+    cxRenderTree();
+    const zoom = urlParam('zoom') || '';
+    if (_cx.map && !repaint && s.main.contains(_cx.map.wrap)) cxMapSetZoom(zoom, true);
+    else cxMap(s.main, idx, zoom);
+    return;
+  }
+  _cx.map = null;
+  const pkg = idx.byPath.get(r.path);
+  if (!pkg) {
+    _cx.cur = null;
+    cxRenderTree();
+    cxDir(s.main, idx, r.path);
+    return;
+  }
+  const file = r.kind === 'file' ? r.file : cxMainFile(pkg);
+  _cx.expanded.add('ns:' + pkg.ns);
+  _cx.expanded.add(pkg.p);
+  _cx.selKey = r.kind === 'file' ? 'f:' + pkg.p + '\n' + file : 'p:' + pkg.p;
+  cxRenderTree(true);
+  cxPackage(s.main, pkg, file, t0, repaint);
+  if (s.side.classList.contains('open') && window.matchMedia('(max-width: 760px)').matches) cxDrawer(false);
+}
+
+function cxBuildShell(root, net) {
+  clearTimeout(_cxHoverTimer);
+  root.textContent = '';
+  _cx.map = null;
+  _cx.cur = null;
+  _cx.filter = '';
+  const top = el('div', { className: 'cx-top' });
+  const drawerBtn = el('button', { className: 'cx-drawer-btn', type: 'button', 'aria-label': 'show the file tree', 'aria-expanded': 'false', 'aria-controls': 'cx-side' }, '☰ files');
+  drawerBtn.addEventListener('click', () => cxDrawer(!side.classList.contains('open')));
+  top.appendChild(drawerBtn);
+  const title = el('a', { href: cxMapURL('', net), className: 'cx-title' });
+  title.appendChild(icon('files'));
+  title.appendChild(document.createTextNode('code'));
+  top.appendChild(title);
+
+  const nets = el('div', { className: 'cx-nets', role: 'group', 'aria-label': 'chain' });
+  top.appendChild(nets);
+  networksList().then((list) => {
+    nets.textContent = '';
+    for (const n of list) {
+      const on = n.id === net;
+      const b = el('button', { type: 'button', className: 'cx-net', 'aria-pressed': on ? 'true' : 'false', title: 'show the code on ' + n.id });
+      const dot = el('i');
+      dot.style.background = netColor(n.id);
+      b.appendChild(dot);
+      b.appendChild(document.createTextNode(n.id));
+      b.addEventListener('click', () => { if (n.id !== _cx.net) cxSwitchNet(n.id); });
+      nets.appendChild(b);
+    }
+  });
+
+  const stats = el('div', { className: 'cx-stats', 'aria-live': 'polite' });
+  top.appendChild(stats);
+  const jump = el('button', { type: 'button', className: 'cx-jump', title: 'jump to any package or file (ctrl-k or /)' },
+    el('span', {}, 'jump to…'), el('kbd', {}, isMacLike() ? '⌘K' : 'ctrl K'));
+  jump.addEventListener('click', () => cxOpenPalette());
+  top.appendChild(jump);
+  root.appendChild(top);
+
+  const body = el('div', { className: 'cx-body' });
+  const side = el('aside', { className: 'cx-side', id: 'cx-side' });
+  const filter = el('input', { type: 'search', className: 'cx-filter', placeholder: 'filter packages and files', 'aria-label': 'filter packages and files', spellcheck: 'false', autocomplete: 'off' });
+  filter.addEventListener('input', () => { _cx.filter = filter.value.trim().toLowerCase(); _cx.active = 0; cxRenderTree(); tree.scrollTop = 0; });
+  filter.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); _cx.active = Math.max(0, _cx.active); tree.focus(); cxRenderTree(); }
+  });
+  side.appendChild(filter);
+  const tree = el('div', { className: 'cx-tree', role: 'tree', tabindex: '0', 'aria-label': 'packages and files on ' + net });
+  const treeInner = el('div', { className: 'cx-tree-inner' });
+  tree.appendChild(treeInner);
+  tree.addEventListener('scroll', () => cxRenderRowsSoon());
+  tree.addEventListener('keydown', cxTreeKey);
+  side.appendChild(tree);
+  const count = el('div', { className: 'cx-tree-foot' });
+  side.appendChild(count);
+  body.appendChild(side);
+  const main = el('section', { className: 'cx-main', 'aria-label': 'code' });
+  body.appendChild(main);
+  root.appendChild(body);
+  const scrim = el('div', { className: 'cx-scrim' });
+  scrim.addEventListener('click', () => cxDrawer(false));
+  root.appendChild(scrim);
+
+  _cx.shell = { net, top, stats, body, side, filter, tree, treeInner, count, main, drawerBtn, idx: null };
+  cxFit();
+}
+
+function isMacLike() { return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || ''); }
+
+function cxSwitchNet(id) {
+  // The header's own select and its handler: it rewrites the URL, resets what
+  // does not survive a chain switch and re-routes, and the path is kept, so a
+  // package that exists on both chains stays open.
+  switchNetwork(id);
+}
+
+function cxDrawer(open) {
+  const s = _cx.shell;
+  if (!s) return;
+  s.side.classList.toggle('open', open);
+  s.body.parentElement.classList.toggle('cx-drawer-open', open);
+  s.drawerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) { cxRenderRows(); s.filter.focus(); }
+}
+
+// The two panes scroll on their own, so the body takes the rest of the window.
+function cxFit() {
+  const s = _cx.shell;
+  if (!s || !s.body.isConnected) return;
+  const top = s.body.getBoundingClientRect().top + window.scrollY;
+  s.body.style.setProperty('--cx-top', Math.round(top) + 'px');
+}
+window.addEventListener('resize', () => {
+  if (!document.getElementById('view-code')?.classList.contains('active')) return;
+  cxFit();
+  cxRenderRowsSoon();
+});
+
+function cxStats(idx) {
+  const s = _cx.shell;
+  const d = idx.data;
+  s.stats.textContent = '';
+  const add = (v, label, title) => {
+    const span = el('span', { title: title || '' }, el('b', {}, v), ' ' + label);
+    s.stats.appendChild(span);
+  };
+  add(fmtNum(d.count || idx.pkgs.length), 'packages');
+  add(fmtNum(d.files || 0), 'files');
+  add(fmtNum(d.lines || 0), 'lines');
+  add(shortBytes(d.bytes || 0), 'of source', fmtBytes(d.bytes || 0));
+  add(fmtNum(idx.ns.length), 'namespaces');
+}
+
+// --- the tree ---------------------------------------------------------------
+
+// cxFlatten is the tree as the rows on screen would be if the pane were
+// infinitely tall. Rebuilt on every expand and keystroke: 600 packages and
+// 3,000 files flatten in well under a millisecond, so there is nothing to
+// cache.
+function cxFlatten() {
+  const idx = _cx.shell && _cx.shell.idx;
+  const rows = [];
+  if (!idx) return rows;
+  const q = _cx.filter;
+  for (const g of idx.ns) {
+    let pkgs = g.pkgs, fileHits = null;
+    if (q) {
+      const nsHit = g.ns.toLowerCase().includes(q);
+      fileHits = new Map();
+      pkgs = g.pkgs.filter((p) => {
+        const hits = p.f.filter(f => f[0].toLowerCase().includes(q));
+        if (hits.length) fileHits.set(p.p, hits);
+        return nsHit || p.rel.toLowerCase().includes(q) || hits.length;
+      });
+      if (!pkgs.length) continue;
+    }
+    const nsOpen = q ? true : _cx.expanded.has('ns:' + g.ns);
+    rows.push({ t: 'ns', key: 'ns:' + g.ns, depth: 0, g, open: nsOpen });
+    if (!nsOpen) continue;
+    for (const p of pkgs) {
+      const hits = fileHits && fileHits.get(p.p);
+      const open = _cx.expanded.has(p.p) || !!(hits && hits.length);
+      rows.push({ t: 'pkg', key: 'p:' + p.p, depth: 1, pkg: p, open });
+      if (!open) continue;
+      for (const f of (hits && hits.length && !_cx.expanded.has(p.p) ? hits : p.f)) {
+        rows.push({ t: 'file', key: 'f:' + p.p + '\n' + f[0], depth: 2, pkg: p, file: f });
+      }
+    }
+  }
+  return rows;
+}
+
+function cxRenderTree(reveal) {
+  const s = _cx.shell;
+  if (!s || !s.idx) return;
+  _cx.rows = cxFlatten();
+  s.treeInner.style.height = (_cx.rows.length * CX_ROW) + 'px';
+  const shownPkgs = new Set(_cx.rows.filter(r => r.t === 'pkg').map(r => r.pkg.p)).size;
+  s.count.textContent = _cx.filter
+    ? fmtNum(shownPkgs) + ' of ' + fmtNum(s.idx.pkgs.length) + ' packages match'
+    : fmtNum(s.idx.pkgs.length) + ' packages · ' + fmtNum(s.idx.ns.length) + ' namespaces';
+  if (reveal && _cx.selKey) {
+    const i = _cx.rows.findIndex(r => r.key === _cx.selKey);
+    if (i >= 0) {
+      _cx.active = i;
+      const top = i * CX_ROW, h = s.tree.clientHeight || 400;
+      if (top < s.tree.scrollTop || top + CX_ROW > s.tree.scrollTop + h) s.tree.scrollTop = Math.max(0, top - h / 3);
+    }
+  }
+  if (_cx.active >= _cx.rows.length) _cx.active = _cx.rows.length - 1;
+  cxRenderRows();
+}
+
+let _cxRowsRaf = 0;
+function cxRenderRowsSoon() {
+  if (_cxRowsRaf) return;
+  _cxRowsRaf = requestAnimationFrame(() => { _cxRowsRaf = 0; cxRenderRows(); });
+}
+
+// Only the rows in view, plus a margin, are in the document. The rest is the
+// height of the inner box.
+function cxRenderRows() {
+  const s = _cx.shell;
+  if (!s) return;
+  const h = s.tree.clientHeight || 600;
+  const first = Math.max(0, Math.floor(s.tree.scrollTop / CX_ROW) - CX_OVERSCAN);
+  const last = Math.min(_cx.rows.length, Math.ceil((s.tree.scrollTop + h) / CX_ROW) + CX_OVERSCAN);
+  const frag = document.createDocumentFragment();
+  for (let i = first; i < last; i++) frag.appendChild(cxRowEl(_cx.rows[i], i));
+  s.treeInner.replaceChildren(frag);
+  if (_cx.active >= first && _cx.active < last) s.tree.setAttribute('aria-activedescendant', 'cxt-' + _cx.active);
+  else s.tree.removeAttribute('aria-activedescendant');
+}
+
+function cxRowEl(r, i) {
+  const row = el('div', { className: 'cx-row cx-' + r.t, role: 'treeitem', id: 'cxt-' + i, 'aria-level': String(r.depth + 1) });
+  row.style.top = (i * CX_ROW) + 'px';
+  row.style.paddingLeft = (6 + r.depth * 14) + 'px';
+  row.dataset.key = r.key;
+  if (r.key === _cx.selKey) { row.classList.add('sel'); row.setAttribute('aria-selected', 'true'); }
+  if (i === _cx.active) row.classList.add('act');
+  if (r.t !== 'file') row.setAttribute('aria-expanded', r.open ? 'true' : 'false');
+  const tw = el('span', { className: 'cx-tw', 'aria-hidden': 'true' }, r.t === 'file' ? '' : (r.open ? '▾' : '▸'));
+  row.appendChild(tw);
+  if (r.t === 'ns') {
+    row.appendChild(el('span', { className: 'cx-lbl', title: r.g.ns }, r.g.ns));
+    row.appendChild(el('span', { className: 'cx-n', title: fmtNum(r.g.pkgs.length) + ' packages, ' + fmtNum(r.g.l) + ' lines' },
+      r.g.pkgs.length + ' · ' + cxK(r.g.l)));
+  } else if (r.t === 'pkg') {
+    const p = r.pkg;
+    row.appendChild(el('span', { className: 'cx-k ' + p.k, 'aria-label': p.k === 'r' ? 'realm' : 'package' }, p.k));
+    const rest = p.rel.split('/').slice(2).join('/') || p.rel;
+    row.appendChild(el('span', { className: 'cx-lbl', title: p.rel }, rest));
+    row.appendChild(el('span', { className: 'cx-n', title: fmtNum(p.f.length) + ' files, ' + fmtNum(p.l) + ' lines' },
+      p.f.length + ' · ' + cxK(p.l)));
+    row.addEventListener('mouseenter', () => cxPrefetchSoon(p));
+  } else {
+    const [name, lines] = r.file;
+    row.appendChild(el('span', { className: 'cx-lbl' + (/_(file)?test\.gno$/.test(name) ? ' cx-test' : ''), title: name }, name));
+    row.appendChild(el('span', { className: 'cx-n', title: fmtNum(lines) + ' lines, ' + fmtNum(r.file[2]) + ' bytes' }, cxK(lines)));
+    row.addEventListener('mouseenter', () => cxPrefetchSoon(r.pkg, name));
+  }
+  row.addEventListener('click', (e) => {
+    _cx.active = i;
+    const onTwisty = e.target === tw;
+    cxActivate(r, onTwisty);
+  });
+  return row;
+}
+
+// cxActivate is a click or an Enter on a row.
+function cxActivate(r, toggleOnly) {
+  if (r.t === 'ns') {
+    cxToggle(r.key);
+    return;
+  }
+  if (r.t === 'pkg' && (toggleOnly || _cx.selKey === r.key)) {
+    cxToggle(r.pkg.p);
+    return;
+  }
+  if (r.t === 'pkg') { _cx.expanded.add(r.pkg.p); navigate(cxURL(r.pkg.p)); return; }
+  navigate(cxURL(r.pkg.p, r.file[0]));
+}
+
+function cxToggle(key) {
+  if (_cx.expanded.has(key)) _cx.expanded.delete(key); else _cx.expanded.add(key);
+  cxRenderTree();
+}
+
+function cxTreeKey(e) {
+  const n = _cx.rows.length;
+  if (!n) return;
+  let i = _cx.active < 0 ? 0 : _cx.active;
+  const r = _cx.rows[i];
+  const move = (to) => {
+    _cx.active = Math.max(0, Math.min(n - 1, to));
+    const s = _cx.shell, top = _cx.active * CX_ROW, h = s.tree.clientHeight;
+    if (top < s.tree.scrollTop) s.tree.scrollTop = top;
+    else if (top + CX_ROW > s.tree.scrollTop + h) s.tree.scrollTop = top + CX_ROW - h;
+    cxRenderRows();
+    const a = _cx.rows[_cx.active];
+    if (a && a.t !== 'ns') cxPrefetchSoon(a.pkg, a.file && a.file[0]);
+  };
+  switch (e.key) {
+    case 'ArrowDown': case 'j': e.preventDefault(); move(i + 1); break;
+    case 'ArrowUp': case 'k': e.preventDefault(); move(i - 1); break;
+    case 'Home': e.preventDefault(); move(0); break;
+    case 'End': e.preventDefault(); move(n - 1); break;
+    case 'PageDown': e.preventDefault(); move(i + Math.floor(_cx.shell.tree.clientHeight / CX_ROW)); break;
+    case 'PageUp': e.preventDefault(); move(i - Math.floor(_cx.shell.tree.clientHeight / CX_ROW)); break;
+    case 'ArrowRight': case 'l':
+      e.preventDefault();
+      if (r.t !== 'file' && !r.open) cxToggle(r.t === 'ns' ? r.key : r.pkg.p);
+      else move(i + 1);
+      break;
+    case 'ArrowLeft': case 'h':
+      e.preventDefault();
+      if (r.t !== 'file' && r.open && !_cx.filter) { cxToggle(r.t === 'ns' ? r.key : r.pkg.p); break; }
+      for (let j = i - 1; j >= 0; j--) if (_cx.rows[j].depth < r.depth) { move(j); break; }
+      break;
+    case 'Enter':
+      e.preventDefault();
+      cxActivate(r, false);
+      break;
+    case ' ':
+      e.preventDefault();
+      if (r.t !== 'file') cxToggle(r.t === 'ns' ? r.key : r.pkg.p);
+      break;
+  }
+}
+
+// --- a package and its files -------------------------------------------------
+
+function cxCrumbs(path, file) {
+  const bar = el('nav', { className: 'cx-crumbs', 'aria-label': 'breadcrumb' });
+  const sep = () => el('span', { className: 'cx-sep', 'aria-hidden': 'true' }, '/');
+  bar.appendChild(el('a', { href: cxMapURL('') }, 'code'));
+  const segs = cxRel(path).split('/');
+  // r/moul/home: the namespace is the second segment, and a click on it is the
+  // map zoomed into that owner.
+  segs.forEach((seg, i) => {
+    bar.appendChild(sep());
+    const last = i === segs.length - 1 && !file;
+    if (i === 0) { bar.appendChild(el('span', { className: 'cx-dim' }, seg)); return; }
+    if (last) { bar.appendChild(el('span', { className: 'cx-here', 'aria-current': 'page' }, seg)); return; }
+    const href = i === 1 ? cxMapURL(seg) : cxURL('gno.land/' + segs.slice(0, i + 1).join('/'));
+    bar.appendChild(el('a', { href }, seg));
+  });
+  if (file) {
+    bar.appendChild(sep());
+    bar.appendChild(el('span', { className: 'cx-here', 'aria-current': 'page' }, file));
+  }
+  return bar;
+}
+
+function cxPackage(main, pkg, file, t0, repaint) {
+  const same = _cx.cur && _cx.cur.pkg === pkg.p && _cx.cur.net === _cx.net && main.querySelector('.cx-pkg') && !repaint;
+  if (!same) {
+    main.textContent = '';
+    main.scrollTop = 0;
+    const wrap = el('div', { className: 'cx-pkg' });
+    wrap.appendChild(el('div', { className: 'cx-crumbs-slot' }));
+    wrap.appendChild(cxPkgHead(pkg));
+    const rail = el('div', { className: 'cx-rail' });
+    wrap.appendChild(rail);
+    const tabs = el('div', { className: 'cx-files', role: 'tablist', 'aria-label': 'files' });
+    wrap.appendChild(tabs);
+    const viewer = el('div', { className: 'cx-viewer', role: 'tabpanel' });
+    wrap.appendChild(viewer);
+    main.appendChild(wrap);
+    cxFileTabs(tabs, pkg);
+    cxVersionRail(rail, pkg);
+  }
+  _cx.cur = { pkg: pkg.p, net: _cx.net, file };
+  const wrap = main.querySelector('.cx-pkg');
+  wrap.querySelector('.cx-crumbs-slot').replaceChildren(cxCrumbs(pkg.p, file === cxMainFile(pkg) && !location.pathname.includes('/-/') ? '' : file));
+  wrap.querySelectorAll('.cx-file-tab').forEach(t => {
+    const on = t.dataset.file === file;
+    t.classList.toggle('on', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    if (on) {
+      const strip = t.parentElement;
+      if (t.offsetLeft < strip.scrollLeft || t.offsetLeft + t.offsetWidth > strip.scrollLeft + strip.clientWidth) {
+        strip.scrollLeft = Math.max(0, t.offsetLeft - strip.clientWidth / 3);
+      }
+    }
+  });
+  cxShowFile(wrap.querySelector('.cx-viewer'), pkg, file, t0);
+}
+
+function cxPkgHead(pkg) {
+  const head = el('div', { className: 'cx-pkg-head' });
+  const title = el('div', { className: 'cx-pkg-title' });
+  title.appendChild(el('h2', { className: 'cx-pkg-path' }, pkg.p));
+  title.appendChild(copyButton(pkg.p, 'copy the import path'));
+  const kind = badge(pkg.k === 'r' ? 'ok' : 'info', pkg.k === 'r' ? 'realm' : 'package');
+  title.appendChild(kind);
+  const out = el('span', { className: 'cx-out' });
+  out.appendChild(el('a', { href: '/realm/' + pkg.rel + cxNetQ(), title: 'state, calls, events, storage and balances' }, 'realm page →'));
+  out.appendChild(el('a', { href: '/gnohub/' + pkg.rel + cxNetQ(), title: 'the same package read as a repository' }, 'gnohub →'));
+  title.appendChild(out);
+  head.appendChild(title);
+
+  const facts = el('div', { className: 'cx-facts' });
+  const stamp = el('span', { className: 'cx-stamp' }, 'stamp ', blockWithAge(pkg.h, null, null));
+  facts.appendChild(stamp);
+  facts.appendChild(el('span', {}, fmtNum(pkg.f.length) + (pkg.f.length === 1 ? ' file' : ' files')));
+  facts.appendChild(el('span', {}, fmtNum(pkg.l) + ' lines'));
+  facts.appendChild(el('span', { title: fmtBytes(pkg.b) }, shortBytes(pkg.b)));
+  if (pkg.c) facts.appendChild(el('span', { title: 'in the last ' + ((_cx.shell.idx.data.window_days) || 30) + ' days, failed ones included' }, fmtNum(pkg.c) + ' calls'));
+  if (pkg.u) facts.appendChild(el('span', {}, fmtNum(pkg.u) + ' unique callers'));
+  if (pkg.d) facts.appendChild(el('span', {}, 'imported by ' + fmtNum(pkg.d)));
+  head.appendChild(facts);
+
+  // The stamp's time comes with the manifest. Patched in place rather than
+  // re-rendering the header, which would cost the reader their scroll.
+  const net = _cx.net;
+  cxManifest(net, pkg).then((m) => {
+    if (!stamp.isConnected || !m || !m.stamp) return;
+    stamp.replaceChildren(document.createTextNode('stamp '), blockWithAge(m.stamp.height, m.stamp.time, null));
+    if (m.stamp.tx_hash) {
+      stamp.appendChild(document.createTextNode(' '));
+      stamp.appendChild(el('a', { href: '/tx/' + encodeURIComponent(m.stamp.tx_hash) + cxNetQ(net), className: 'cx-dim', title: m.stamp.tx_hash }, 'tx'));
+    }
+  }, () => {});
+  return head;
+}
+
+function cxFileTabs(tabs, pkg) {
+  tabs.textContent = '';
+  for (const [name, lines] of pkg.f) {
+    const a = el('a', { href: cxURL(pkg.p, name), className: 'cx-file-tab' + (/_(file)?test\.gno$/.test(name) ? ' cx-test' : ''), role: 'tab', 'data-file': name, title: fmtNum(lines) + ' lines' },
+      name, el('span', { className: 'cx-n' }, cxK(lines)));
+    a.addEventListener('mouseenter', () => cxPrefetchSoon(pkg, name));
+    a.addEventListener('focus', () => cxPrefetchSoon(pkg, name));
+    tabs.appendChild(a);
+  }
+}
+
+// cxGenLabel names one member of a version family by what tells it apart:
+// the last segment, or the last two when the last is only a version number.
+function cxGenLabel(p) {
+  const segs = p.rel.split('/');
+  const last = segs[segs.length - 1];
+  return /^v\d+$/.test(last) && segs.length > 3 ? segs[segs.length - 2] + '/' + last : last;
+}
+
+// The version rail. The family comes from the tree (instant, no request);
+// the deploy history only when the manifest says there is one to draw.
+function cxVersionRail(rail, pkg) {
+  rail.textContent = '';
+  const idx = _cx.shell.idx;
+  const fam = (idx.fams.get(pkg.fam || pkg.p) || [pkg]).slice().sort((a, b) => (a.h - b.h) || a.p.localeCompare(b.p));
+  const gens = el('div', { className: 'cx-gens', role: 'list', 'aria-label': 'versions of this package' });
+  gens.appendChild(el('span', { className: 'cx-rail-k' }, fam.length > 1 ? fam.length + ' versions' : 'versions'));
+  fam.forEach((p, i) => {
+    if (i) gens.appendChild(el('span', { className: 'cx-gen-line', 'aria-hidden': 'true' }));
+    const cur = p.p === pkg.p;
+    const chip = el('a', { href: cxURL(p.p), className: 'cx-gen' + (cur ? ' on' : ''), role: 'listitem', title: p.p + ' · ' + fmtNum(p.l) + ' lines' },
+      el('span', { className: 'cx-gen-name' }, cxGenLabel(p)),
+      el('span', { className: 'cx-gen-h' }, p.h === 0 ? 'genesis' : '#' + fmtNum(p.h)));
+    if (cur) chip.setAttribute('aria-current', 'true');
+    chip.addEventListener('mouseenter', () => cxPrefetchSoon(p));
+    gens.appendChild(chip);
+  });
+  if (fam.length === 1) gens.appendChild(el('span', { className: 'cx-dim' }, 'no other generation on this chain'));
+  rail.appendChild(gens);
+
+  const hist = el('div', { className: 'cx-deploys' });
+  rail.appendChild(hist);
+  const net = _cx.net;
+  cxManifest(net, pkg).then((m) => {
+    if (!hist.isConnected) return;
+    const subs = m.submissions || 0;
+    if (subs <= 1) {
+      hist.appendChild(el('span', { className: 'cx-rail-k' }, 'deploys'));
+      hist.appendChild(el('span', { className: 'cx-dim' }, 'submitted once'));
+      return;
+    }
+    return cxDeploys(net, pkg).then((d) => {
+      if (!hist.isConnected) return;
+      const rows = (d.deploys || []).slice().reverse();
+      hist.appendChild(el('span', { className: 'cx-rail-k' }, fmtNum(d.total || subs) + ' submissions · ' + fmtNum(m.redeploys || 0) + ' redeploys'));
+      const dots = el('span', { className: 'cx-dots' });
+      for (const dp of rows) {
+        const cur = m.stamp && dp.block_height === m.stamp.height && dp.success;
+        const a = el('a', {
+          href: '/tx/' + encodeURIComponent(dp.tx_hash) + cxNetQ(net),
+          className: 'cx-dot ' + (dp.success ? 'ok' : 'fail') + (cur ? ' cur' : ''),
+          title: (dp.block_height === 0 ? 'genesis' : 'block ' + fmtNum(dp.block_height)) +
+            (dp.block_time ? ' · ' + new Date(dp.block_time).toISOString().slice(0, 16).replace('T', ' ') : '') +
+            (dp.success ? '' : ' · failed') + (cur ? ' · the source shown here' : ''),
+          'aria-label': (dp.success ? 'deploy' : 'failed deploy') + ' at block ' + dp.block_height,
+        });
+        dots.appendChild(a);
+      }
+      hist.appendChild(dots);
+      if (d.truncated) hist.appendChild(el('span', { className: 'cx-dim' }, 'newest ' + rows.length));
+      hist.appendChild(el('a', { href: '/gnohub/' + pkg.rel + '/-/commits' + cxNetQ(net), className: 'cx-dim' }, 'history →'));
+    });
+  }).catch(() => { /* the rail stays without a history; the code is the point */ });
+}
+
+// cxShowFile draws one file into the viewer. A warm body is drawn in the same
+// task as the click; a cold one shows a skeleton and is dropped if the reader
+// has moved on before it lands.
+function cxShowFile(viewer, pkg, file, t0) {
+  const gen = ++_cx.fileGen;
+  const net = _cx.net;
+  if (!pkg.f.some(f => f[0] === file)) {
+    viewer.replaceChildren(el('div', { className: 'cx-empty' }, 'this package has no file named ', el('code', {}, file)));
+    return;
+  }
+  const warm = _cx.bodyText.get(cxBodyKey(net, pkg.p, pkg.h, file));
+  if (warm !== undefined) { cxDrawFile(viewer, pkg, file, warm, t0, true); return; }
+  viewer.textContent = '';
+  const sk = el('div', { className: 'cx-blob-skel' });
+  skeletonBlock(sk);
+  viewer.appendChild(sk);
+  if (/\.gno$/.test(file)) sourceTokensPrime({ network: net, path: pkg.p, at: pkg.h, file }, cxSilent);
+  cxBody(net, pkg, file).then((text) => {
+    if (gen !== _cx.fileGen || !viewer.isConnected) return;
+    cxDrawFile(viewer, pkg, file, text, t0, false);
+  }, (err) => {
+    if (gen !== _cx.fileGen || !viewer.isConnected) return;
+    viewer.replaceChildren(errorPanel(err, () => cxShowFile(viewer, pkg, file, performance.now())));
+  });
+}
+
+function cxDrawFile(viewer, pkg, file, body, t0, warm) {
+  const net = _cx.net;
+  const lines = body.split('\n');
+  const head = el('div', { className: 'cx-blob-head' });
+  head.appendChild(el('span', { className: 'cx-blob-name' }, file));
+  head.appendChild(el('span', { className: 'cx-dim' }, fmtNum(lines.length) + ' lines · ' + shortBytes(new Blob([body]).size)));
+  head.appendChild(copyButton(body, 'copy the whole file'));
+  const blob = el('div', { className: 'cx-blob' });
+  const gutter = el('div', { className: 'cx-gutter', 'aria-hidden': 'true' });
+  const frag = document.createDocumentFragment();
+  for (let i = 1; i <= lines.length; i++) frag.appendChild(el('a', { href: '#L' + i, className: 'cx-ln' }, String(i)));
+  gutter.appendChild(frag);
+  // One listener for the column rather than one per line: a 1,700-line file is
+  // 1,700 anchors already.
+  gutter.addEventListener('click', (e) => {
+    const a = e.target.closest('.cx-ln');
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    cxFocusLine(Number(a.textContent), true);
+  });
+  blob.appendChild(gutter);
+  const src = {
+    network: net, path: pkg.p, at: pkg.h, file,
+    jump: (f, line) => {
+      if (f === file) cxFocusLine(line, true);
+      else navigate(cxURL(pkg.p, f) + '#L' + line);
+    },
+    openImport: (path) => {
+      const target = _cx.shell.idx.byPath.get(path);
+      navigate(target ? cxURL(path) : '/realm/' + cxRel(path) + cxNetQ(net));
+    },
+  };
+  let code;
+  if (/\.gno$/.test(file)) code = codeBlock(body, 'cx', src);
+  else {
+    // Not Go (gnomod.toml, a README): plain text, still one span per line so
+    // #L lands.
+    code = document.createElement('pre');
+    lines.forEach((l, i) => {
+      if (i) code.appendChild(document.createTextNode('\n'));
+      code.appendChild(el('span', { id: 'cx-L' + (i + 1) }, l));
+    });
+  }
+  code.className = 'cx-code';
+  code.setAttribute('aria-label', file);
+  code.tabIndex = 0;
+  blob.appendChild(code);
+  viewer.replaceChildren(head, blob);
+  const ms = performance.now() - t0;
+  viewer.dataset.openMs = ms.toFixed(1);
+  viewer.dataset.warm = warm ? '1' : '0';
+  _cx.opens.push({ file: cxRel(pkg.p) + '/' + file, ms: Math.round(ms * 10) / 10, warm });
+  if (_cx.opens.length > 200) _cx.opens.shift();
+
+  const m = /^#L(\d+)$/.exec(location.hash);
+  const main = _cx.shell.main;
+  if (m) cxFocusLine(Number(m[1]), false);
+  // Another file in the same package: keep the header in view if it was, and
+  // otherwise start the new file at its first line rather than mid-way down.
+  else if (main.scrollTop > viewer.offsetTop) main.scrollTop = viewer.offsetTop;
+  // Warm the neighbours: the next file in the tab strip is the likeliest click.
+  const i = pkg.f.findIndex(f => f[0] === file);
+  const next = pkg.f[i + 1];
+  if (next) setTimeout(() => cxPrefetch(pkg, next[0], net), 150);
+}
+
+function cxFocusLine(n, writeHash) {
+  const main = _cx.shell && _cx.shell.main;
+  if (!main) return;
+  main.querySelectorAll('.cx-line-on').forEach(x => x.classList.remove('cx-line-on'));
+  const line = document.getElementById('cx-L' + n);
+  if (!line) return;
+  line.classList.add('cx-line-on');
+  const ln = main.querySelector('.cx-gutter').children[n - 1];
+  if (ln) ln.classList.add('cx-line-on');
+  // Scroll the code pane, not the window: scrollIntoView moves every
+  // scrollable ancestor, and the page scrolling under the header hides the
+  // breadcrumb and the version rail the reader landed on. On a phone the page
+  // is the scroller, and there it is the right call.
+  if (main.scrollHeight > main.clientHeight + 1 && getComputedStyle(main).overflowY !== 'visible') {
+    const top = line.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+    main.scrollTop = Math.max(0, top - main.clientHeight / 2);
+  } else {
+    line.scrollIntoView({ block: 'center' });
+  }
+  if (writeHash) history.replaceState(history.state, '', location.pathname + location.search + '#L' + n);
+}
+
+// A path the tree has no package at. Usually a prefix (r/gnoswap/v1 has
+// packages under it and none of its own), sometimes nothing at all.
+function cxDir(main, idx, path) {
+  main.textContent = '';
+  const prefix = path.replace(/\/+$/, '') + '/';
+  const under = idx.pkgs.filter(p => p.p.startsWith(prefix));
+  const wrap = el('div', { className: 'cx-pkg' });
+  wrap.appendChild(cxCrumbs(path, ''));
+  if (!under.length) {
+    wrap.appendChild(el('div', { className: 'cx-empty' },
+      'nothing is deployed at ', el('code', {}, path), ' on ' + _cx.net + '. ',
+      el('a', { href: cxMapURL('') }, 'back to the map')));
+    main.appendChild(wrap);
+    return;
+  }
+  wrap.appendChild(el('h2', { className: 'cx-pkg-path' }, path));
+  const lines = under.reduce((s, p) => s + p.l, 0);
+  wrap.appendChild(el('div', { className: 'cx-facts' }, el('span', {}, fmtNum(under.length) + ' packages under it'), el('span', {}, fmtNum(lines) + ' lines')));
+  const list = el('div', { className: 'cx-dir' });
+  for (const p of under) {
+    const a = el('a', { href: cxURL(p.p), className: 'cx-dir-row' },
+      el('span', { className: 'cx-k ' + p.k }, p.k), el('span', { className: 'cx-lbl' }, p.p.slice(prefix.length)),
+      el('span', { className: 'cx-n' }, fmtNum(p.f.length) + ' files · ' + fmtNum(p.l) + ' lines'));
+    a.addEventListener('mouseenter', () => cxPrefetchSoon(p));
+    list.appendChild(a);
+  }
+  wrap.appendChild(list);
+  main.appendChild(wrap);
+}
+
+// --- the palette --------------------------------------------------------------
+
+// cxScore is a subsequence match, scored by the best alignment rather than
+// the first one found: a match at the start of a path segment or a run of
+// consecutive letters counts for more than letters strewn along a path, and a
+// match inside the file or package name for a little more again. Dynamic
+// programming over (query, text), fzf's v2 in miniature: about 40 x 7 cells a
+// path, which is nothing, and a subsequence pre-check skips most paths before
+// any of it runs. Returns null when q is not a subsequence of t; with
+// wantPos, also the matched positions, backtracked from the table. Both lower
+// case.
+const CX_SEG = 8, CX_RUN = 9, CX_GAP = 1, CX_NAME = 2;
+function cxScore(q, t, base, wantPos) {
+  const n = q.length, m = t.length;
+  if (!n || n > m) return null;
+  let qi = 0;
+  for (let i = 0; i < m && qi < n; i++) if (t.charCodeAt(i) === q.charCodeAt(qi)) qi++;
+  if (qi < n) return null;
+  const NEG = -1e9;
+  const bonus = (j) => {
+    let b = 1;
+    const c = j === 0 ? 47 : t.charCodeAt(j - 1);
+    if (c === 47 || c === 95 || c === 46 || c === 45) b += CX_SEG; // / _ . -
+    if (j >= base) b += CX_NAME;
+    return b;
+  };
+  let prev = new Float64Array(m).fill(NEG), cur = new Float64Array(m);
+  const table = wantPos ? [] : null;
+  const from = wantPos ? [] : null; // 1 = came from the diagonal (a run)
+  for (let i = 0; i < n; i++) {
+    const qc = q.charCodeAt(i);
+    let run = NEG; // best prev[k] - gap * (j - 1 - k) over k <= j - 1
+    const fr = wantPos ? new Uint8Array(m) : null;
+    for (let j = 0; j < m; j++) {
+      if (j > 0) run = Math.max(run - CX_GAP, prev[j - 1]);
+      if (t.charCodeAt(j) !== qc) { cur[j] = NEG; continue; }
+      let best;
+      if (i === 0) best = -0.02 * j;
+      else {
+        best = run;
+        const diag = j > 0 ? prev[j - 1] + CX_RUN : NEG;
+        if (diag >= best && diag > NEG / 2) { best = diag; if (fr) fr[j] = 1; }
+      }
+      cur[j] = best > NEG / 2 ? best + bonus(j) : NEG;
+    }
+    if (table) { table.push(Float64Array.from(cur)); from.push(fr); }
+    const tmp = prev; prev = cur; cur = tmp;
+  }
+  let score = NEG, end = -1;
+  for (let j = 0; j < m; j++) if (prev[j] > score) { score = prev[j]; end = j; }
+  if (end < 0 || score < NEG / 2) return null;
+  score -= m * 0.02;
+  if (!wantPos) return { score, pos: null };
+  // Back from the end: a diagonal step is the previous letter; otherwise the
+  // best-scoring earlier match of the previous query letter, gap charged.
+  const pos = new Array(n);
+  let j = end;
+  for (let i = n - 1; i >= 0; i--) {
+    pos[i] = j;
+    if (i === 0) break;
+    if (from[i][j]) { j -= 1; continue; }
+    let bk = -1, bv = NEG;
+    for (let k = j - 1; k >= 0; k--) {
+      const v = table[i - 1][k] - CX_GAP * (j - 1 - k);
+      if (v > bv) { bv = v; bk = k; }
+    }
+    j = bk;
+  }
+  return { score, pos };
+}
+
+function cxSearch(query, items, limit) {
+  const q = query.toLowerCase().replace(/\s+/g, '');
+  const out = [];
+  for (const it of items) {
+    const r = cxScore(q, it.lt, it.base, false);
+    if (!r) continue;
+    // Packages edge out their own files on a tie: the package is the broader
+    // answer, and its main file is one keystroke from it anyway.
+    // Tests sit just under the file they test.
+    const test = it.file && /_(file)?test\.gno$/.test(it.lt) ? 1.5 : 0;
+    out.push({ it, score: r.score + (it.file ? 0 : 0.5) - test, pos: null });
+  }
+  out.sort((a, b) => b.score - a.score || a.it.t.length - b.it.t.length);
+  const top = out.slice(0, limit);
+  for (const r of top) r.pos = cxScore(q, r.it.lt, r.it.base, true).pos;
+  return { results: top, matched: out.length };
+}
+
+function cxHighlight(text, pos) {
+  const span = el('span', { className: 'cx-pal-text' });
+  const set = new Set(pos || []);
+  let run = '', inMark = false;
+  const flush = () => {
+    if (!run) return;
+    span.appendChild(inMark ? el('mark', {}, run) : document.createTextNode(run));
+    run = '';
+  };
+  for (let i = 0; i < text.length; i++) {
+    const on = set.has(i);
+    if (on !== inMark) { flush(); inMark = on; }
+    run += text[i];
+  }
+  flush();
+  return span;
+}
+
+function cxOpenPalette() {
+  const s = _cx.shell;
+  if (!s || !s.idx) return;
+  const existing = document.getElementById('cx-palette');
+  if (existing) { existing.querySelector('input').focus(); return; }
+  const prevFocus = document.activeElement;
+  const overlay = el('div', { id: 'cx-palette', className: 'cx-pal-overlay' });
+  const dlg = el('div', { className: 'cx-pal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'jump to a package or file' });
+  const input = el('input', {
+    type: 'text', className: 'cx-pal-input', role: 'combobox', 'aria-expanded': 'true',
+    'aria-controls': 'cx-pal-list', 'aria-autocomplete': 'list', spellcheck: 'false', autocomplete: 'off',
+    placeholder: 'jump to a package or file on ' + _cx.net + '…',
+  });
+  const list = el('div', { id: 'cx-pal-list', className: 'cx-pal-list', role: 'listbox', 'aria-label': 'matches' });
+  const foot = el('div', { className: 'cx-pal-foot' });
+  dlg.appendChild(input);
+  dlg.appendChild(list);
+  dlg.appendChild(foot);
+  overlay.appendChild(dlg);
+  document.body.appendChild(overlay);
+
+  let results = [], act = 0;
+  const close = () => {
+    overlay.remove();
+    if (prevFocus && prevFocus.isConnected) prevFocus.focus();
+  };
+  const open = (r) => {
+    if (!r) return;
+    close();
+    navigate(r.it.file ? cxURL(r.it.pkg.p, r.it.file[0]) : cxURL(r.it.pkg.p));
+  };
+  const paint = () => {
+    list.textContent = '';
+    results.forEach((r, i) => {
+      const it = r.it;
+      const opt = el('div', { className: 'cx-pal-opt' + (i === act ? ' act' : ''), role: 'option', id: 'cx-pal-' + i, 'aria-selected': i === act ? 'true' : 'false' });
+      opt.appendChild(el('span', { className: 'cx-k ' + (it.file ? 'f' : it.pkg.k) }, it.file ? 'file' : it.pkg.k));
+      opt.appendChild(cxHighlight(it.t, r.pos));
+      opt.appendChild(el('span', { className: 'cx-n' }, it.file ? cxK(it.file[1]) + ' lines' : it.pkg.f.length + ' files · ' + cxK(it.pkg.l)));
+      opt.addEventListener('mousemove', () => { if (act !== i) { act = i; paint(); } });
+      opt.addEventListener('mousedown', (e) => { e.preventDefault(); open(r); });
+      list.appendChild(opt);
+    });
+    if (results.length) input.setAttribute('aria-activedescendant', 'cx-pal-' + act);
+    else input.removeAttribute('aria-activedescendant');
+    const a = list.children[act];
+    if (a) a.scrollIntoView({ block: 'nearest' });
+    if (results[act]) cxPrefetchSoon(results[act].it.pkg, results[act].it.file && results[act].it.file[0]);
+  };
+  const run = () => {
+    const q = input.value.trim();
+    const t0 = performance.now();
+    if (!q) {
+      // Nothing typed: the busiest packages, which is what most people came for.
+      results = s.idx.pkgs.slice().sort((a, b) => (b.c || 0) - (a.c || 0) || b.l - a.l)
+        .slice(0, CX_PALETTE_MAX).map(p => ({ it: p.item, pos: [] }));
+      foot.textContent = 'busiest packages in the last ' + (s.idx.data.window_days || 30) + ' days · type to search ' + fmtNum(s.idx.items.length) + ' paths and files';
+    } else {
+      const r = cxSearch(q, s.idx.items, CX_PALETTE_MAX);
+      results = r.results;
+      const ms = performance.now() - t0;
+      foot.textContent = (r.matched ? fmtNum(r.matched) + ' match' + (r.matched === 1 ? '' : 'es') : 'no match') +
+        ' in ' + fmtNum(s.idx.items.length) + ' · ' + ms.toFixed(1) + ' ms · ↑↓ enter esc';
+      dlg.dataset.searchMs = ms.toFixed(2);
+    }
+    act = 0;
+    paint();
+  };
+  input.addEventListener('input', run);
+  input.addEventListener('keydown', (e) => {
+    const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n');
+    const up = e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p');
+    if (down || up) {
+      e.preventDefault();
+      if (!results.length) return;
+      act = (act + (down ? 1 : -1) + results.length) % results.length;
+      paint();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      open(results[act]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+    }
+  });
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+  run();
+  input.focus();
+}
+
+// Ctrl-K, cmd-K and / open the palette while /code is on screen; j and k walk
+// the tree from anywhere on the page that is not a text field. In the capture
+// phase so the site-wide "/ focuses search" never sees the key here.
+document.addEventListener('keydown', (e) => {
+  const view = document.getElementById('view-code');
+  if (!view || !view.classList.contains('active')) return;
+  if (document.getElementById('cx-palette')) return;
+  const k = e.key;
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === 'k' || k === 'K')) {
+    e.preventDefault();
+    e.stopPropagation();
+    cxOpenPalette();
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+  if (k === '/') {
+    e.preventDefault();
+    e.stopPropagation();
+    cxOpenPalette();
+    return;
+  }
+  const s = _cx.shell;
+  if (!s || s.tree.contains(e.target)) return;
+  if ((k === 'j' || k === 'k') && (e.target === document.body || view.contains(e.target))) {
+    e.preventDefault();
+    e.stopPropagation();
+    s.tree.focus({ preventScroll: true });
+    cxTreeKey({ key: k, preventDefault() {} });
+  }
+}, true);
+
+// --- the map ------------------------------------------------------------------
+
+// A squarified treemap (Bruls, Huizing, van Wijk), vanilla, onto a canvas.
+// Rows are laid along the short side and grown while the worst aspect ratio
+// in the row keeps improving. Nodes must be sorted by value, largest first.
+function cxSquarify(nodes, x, y, w, h) {
+  let total = 0;
+  for (const n of nodes) total += n.v;
+  if (total <= 0 || w <= 0 || h <= 0) {
+    for (const n of nodes) { n.x = x; n.y = y; n.w = 0; n.h = 0; }
+    return;
+  }
+  const scale = (w * h) / total;
+  let i = 0;
+  while (i < nodes.length) {
+    const side = Math.min(w, h);
+    let sum = 0, min = Infinity, max = 0, worst = Infinity, j = i;
+    while (j < nodes.length) {
+      const a = nodes[j].v * scale;
+      const s = sum + a, lo = Math.min(min, a), hi = Math.max(max, a);
+      const s2 = s * s, side2 = side * side;
+      const wr = Math.max(side2 * hi / s2, s2 / (side2 * lo));
+      if (j > i && wr > worst) break;
+      sum = s; min = lo; max = hi; worst = wr; j++;
+    }
+    if (w >= h) {
+      const cw = sum / h;
+      let yy = y;
+      for (let k = i; k < j; k++) {
+        const nh = nodes[k].v * scale / cw;
+        Object.assign(nodes[k], { x, y: yy, w: cw, h: nh });
+        yy += nh;
+      }
+      x += cw; w -= cw;
+    } else {
+      const rh = sum / w;
+      let xx = x;
+      for (let k = i; k < j; k++) {
+        const nw = nodes[k].v * scale / rh;
+        Object.assign(nodes[k], { x: xx, y, w: nw, h: rh });
+        xx += nw;
+      }
+      y += rh; h -= rh;
+    }
+    i = j;
+  }
+}
+
+// cxMapNodes builds the hierarchy for a zoom level: the whole chain
+// (namespace > package > file), one namespace (package > file) or one
+// package (file). Value is lines or bytes, and nothing of size zero is drawn.
+function cxMapNodes(idx, zoom, size) {
+  const fv = size === 'bytes' ? (f) => f[2] : (f) => f[1];
+  const files = (p) => p.f.map(f => ({ t: 'file', pkg: p, file: f, v: fv(f) })).filter(n => n.v > 0).sort((a, b) => b.v - a.v);
+  const pkgNode = (p) => { const c = files(p); return { t: 'pkg', pkg: p, children: c, v: c.reduce((s, n) => s + n.v, 0) }; };
+  const nsNode = (g) => {
+    const c = g.pkgs.map(pkgNode).filter(n => n.v > 0).sort((a, b) => b.v - a.v);
+    return { t: 'ns', g, children: c, v: c.reduce((s, n) => s + n.v, 0) };
+  };
+  if (zoom && idx.byPath.has(zoom)) return { level: 'pkg', root: pkgNode(idx.byPath.get(zoom)) };
+  if (zoom && idx.nsMap.has(zoom)) return { level: 'ns', root: nsNode(idx.nsMap.get(zoom)) };
+  const c = idx.ns.map(nsNode).filter(n => n.v > 0).sort((a, b) => b.v - a.v);
+  return { level: 'chain', root: { t: 'chain', children: c, v: c.reduce((s, n) => s + n.v, 0) } };
+}
+
+// cxMapLayout positions every node under root inside the box. A group keeps
+// a band at its top for its name when it is big enough to be worth naming.
+function cxMapLayout(root, W, H) {
+  const leaves = [], groups = [];
+  const place = (node, x, y, w, h, depth) => {
+    node.x = x; node.y = y; node.w = w; node.h = h;
+    if (!node.children) { leaves.push(node); return; }
+    if (node.t !== 'chain') groups.push(node);
+    let pad = node.t === 'chain' ? 0 : 1, band = 0;
+    if (node.t !== 'chain' && w > 46 && h > 30) band = node.t === 'ns' ? 15 : 13;
+    if (node.t === 'pkg' && depth > 1) band = 0;
+    const ix = x + pad, iy = y + pad + band, iw = w - pad * 2, ih = h - pad * 2 - band;
+    if (iw <= 0 || ih <= 0) return;
+    cxSquarify(node.children, ix, iy, iw, ih);
+    for (const c of node.children) place(c, c.x, c.y, c.w, c.h, depth + 1);
+    node.band = band;
+  };
+  place(root, 0, 0, W, H, 0);
+  return { leaves, groups };
+}
+
+const CX_RAMP_ACTIVITY = ['#2c3944', '#1f6f78', '#4ecdc4', '#ffd93d', '#ff6b6b'];
+const CX_RAMP_AGE = ['#2b2f45', '#4a4f8c', '#8f7fd8', '#4ecdc4', '#d8f5a2'];
+const CX_KIND = { r: '#4ecdc4', p: '#b48ead' };
+
+function cxRamp(stops, t) {
+  t = Math.max(0, Math.min(1, t));
+  const f = t * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(f)), u = f - i;
+  const a = stops[i], b = stops[i + 1];
+  const ch = (s, k) => parseInt(s.slice(1 + k * 2, 3 + k * 2), 16);
+  const mix = (k) => Math.round(ch(a, k) + (ch(b, k) - ch(a, k)) * u);
+  return 'rgb(' + mix(0) + ',' + mix(1) + ',' + mix(2) + ')';
+}
+
+// One colour per package, by the mode. Age is by rank, not by height: a third
+// of mainnet is genesis at height 0, and a linear scale would spend the whole
+// ramp on the gap between genesis and the first real deploy.
+function cxColorFn(idx, mode) {
+  const cache = new Map();
+  if (mode === 'kind') return (p) => CX_KIND[p.k] || '#888';
+  if (mode === 'age') {
+    const hs = Array.from(new Set(idx.pkgs.map(p => p.h))).sort((a, b) => a - b);
+    const rank = new Map(hs.map((h, i) => [h, hs.length > 1 ? i / (hs.length - 1) : 1]));
+    return (p) => { if (!cache.has(p)) cache.set(p, cxRamp(CX_RAMP_AGE, rank.get(p.h))); return cache.get(p); };
+  }
+  let max = 0;
+  for (const p of idx.pkgs) max = Math.max(max, p.c || 0);
+  const lmax = Math.log1p(max) || 1;
+  return (p) => {
+    if (!cache.has(p)) cache.set(p, p.c ? cxRamp(CX_RAMP_ACTIVITY, 0.15 + 0.85 * Math.log1p(p.c) / lmax) : CX_RAMP_ACTIVITY[0]);
+    return cache.get(p);
+  };
+}
+
+// Activity is the default colour, unless nothing on the chain was called in
+// the window: a map in one flat colour says nothing, so it opens on age
+// instead and the legend says why. A colour the reader picked is kept.
+function cxMapOpts(idx) {
+  const size = urlParam('size') === 'bytes' ? 'bytes' : 'lines';
+  const c = urlParam('color');
+  let color = c === 'age' || c === 'kind' || c === 'activity' ? c : 'activity';
+  const quiet = !!idx && !idx.pkgs.some(p => p.c);
+  if (!c && quiet) color = 'age';
+  return { size, color, quiet };
+}
+
+function cxMap(main, idx, zoom) {
+  main.textContent = '';
+  if (!idx.pkgs.length) {
+    _cx.map = null;
+    main.appendChild(el('div', { className: 'cx-empty' }, 'no code is indexed on ' + _cx.net + ' yet.'));
+    return;
+  }
+  const wrap = el('div', { className: 'cx-map' });
+  const bar = el('div', { className: 'cx-map-bar' });
+  const crumbs = el('div', { className: 'cx-map-crumbs' });
+  bar.appendChild(crumbs);
+  const toggles = el('div', { className: 'cx-map-toggles' });
+  const opts = cxMapOpts(idx);
+  const group = (label, key, values, current) => {
+    const g = el('div', { className: 'cx-seg', role: 'group', 'aria-label': label });
+    g.appendChild(el('span', { className: 'cx-seg-k' }, label));
+    for (const v of values) {
+      const b = el('button', { type: 'button', className: 'cx-seg-b', 'aria-pressed': v === current ? 'true' : 'false', 'data-v': v }, v);
+      b.addEventListener('click', () => {
+        const def = key === 'size' ? 'lines' : cxMapOpts(idx).quiet ? 'age' : 'activity';
+        urlSetParam(key, v === def ? '' : v);
+        g.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+        _cx.map.opts = cxMapOpts(idx);
+        cxMapRelayout(true);
+      });
+      g.appendChild(b);
+    }
+    return g;
+  };
+  toggles.appendChild(group('size', 'size', ['lines', 'bytes'], opts.size));
+  toggles.appendChild(group('colour', 'color', ['activity', 'age', 'kind'], opts.color));
+  bar.appendChild(toggles);
+  wrap.appendChild(bar);
+  const stage = el('div', { className: 'cx-map-stage' });
+  const canvas = el('canvas', { className: 'cx-map-canvas', role: 'img' });
+  stage.appendChild(canvas);
+  const tip = el('div', { className: 'cx-map-tip', role: 'tooltip' });
+  tip.hidden = true;
+  stage.appendChild(tip);
+  wrap.appendChild(stage);
+  const legend = el('div', { className: 'cx-map-legend' });
+  wrap.appendChild(legend);
+  main.appendChild(wrap);
+
+  const m = _cx.map = { wrap, canvas, stage, tip, crumbs, legend, idx, zoom: '', opts, layout: null, hover: null, anim: null, W: 0, H: 0 };
+  canvas.addEventListener('mousemove', (e) => cxMapHover(e));
+  canvas.addEventListener('mouseleave', () => { m.hover = null; tip.hidden = true; cxMapDraw(); });
+  canvas.addEventListener('click', (e) => cxMapClick(e));
+  if (typeof ResizeObserver === 'function') {
+    m.ro = new ResizeObserver(() => { if (m === _cx.map && wrap.isConnected) cxMapRelayout(false); });
+    m.ro.observe(stage);
+  }
+  cxMapSetZoom(zoom, false);
+}
+
+function cxMapRelayout(keepZoom) {
+  const m = _cx.map;
+  if (!m) return;
+  const r = m.stage.getBoundingClientRect();
+  const W = Math.max(200, Math.floor(r.width)), H = Math.max(200, Math.floor(r.height));
+  const dpr = window.devicePixelRatio || 1;
+  if (W !== m.W || H !== m.H || m.canvas.width !== Math.round(W * dpr)) {
+    m.W = W; m.H = H; m.dpr = dpr;
+    m.canvas.width = Math.round(W * dpr); m.canvas.height = Math.round(H * dpr);
+    m.canvas.style.width = W + 'px'; m.canvas.style.height = H + 'px';
+  }
+  const t0 = performance.now();
+  m.tree = cxMapNodes(m.idx, m.zoom, m.opts.size);
+  m.layout = cxMapLayout(m.tree.root, m.W, m.H);
+  m.color = cxColorFn(m.idx, m.opts.color);
+  m.layoutMs = performance.now() - t0;
+  m.wrap.dataset.layoutMs = m.layoutMs.toFixed(1);
+  m.wrap.dataset.level = m.tree.level;
+  m.wrap.dataset.leaves = String(m.layout.leaves.length);
+  cxMapLegend();
+  cxMapDraw();
+}
+
+// cxMapSetZoom moves the map to a zoom level, animating from where the
+// target sat in the old layout (in) or to where the old view sits in the new
+// one (out).
+function cxMapSetZoom(zoom, animate) {
+  const m = _cx.map;
+  if (!m) return;
+  const idx = m.idx;
+  if (zoom && !idx.byPath.has(zoom) && !idx.nsMap.has(zoom)) zoom = '';
+  const prev = m.zoom, prevLayout = m.layout;
+  m.zoom = zoom;
+  m.opts = cxMapOpts(idx);
+  cxMapCrumbs();
+  cxMapRelayout(false);
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!animate || reduce || prev === zoom || !prevLayout) return;
+  const find = (layout, pred) => layout.groups.find(pred) || layout.leaves.find(pred);
+  const key = (z) => (n) => (n.t === 'ns' && n.g.ns === z) || (n.t === 'pkg' && n.pkg.p === z);
+  let from = null;
+  const into = zoom && find(prevLayout, key(zoom));
+  if (into) {
+    from = { x: into.x, y: into.y, w: into.w, h: into.h };
+  } else if (prev) {
+    // Out: the view being left grows from its place in the new layout.
+    const back = find(m.layout, key(prev));
+    if (back && back.w > 0 && back.h > 0) {
+      const sx = m.W / back.w, sy = m.H / back.h;
+      from = { x: -back.x * sx, y: -back.y * sy, w: m.W * sx, h: m.H * sy };
+    }
+  }
+  if (!from) return;
+  const start = performance.now(), dur = 320;
+  const step = (now) => {
+    if (m !== _cx.map) return;
+    const t = Math.min(1, (now - start) / dur);
+    const e = 1 - Math.pow(1 - t, 3);
+    m.anim = t < 1 ? {
+      x: from.x + (0 - from.x) * e, y: from.y + (0 - from.y) * e,
+      w: from.w + (m.W - from.w) * e, h: from.h + (m.H - from.h) * e,
+    } : null;
+    cxMapDraw();
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function cxMapCrumbs() {
+  const m = _cx.map;
+  const c = m.crumbs;
+  c.textContent = '';
+  const idx = m.idx, z = m.zoom;
+  const link = (label, zoom) => el('a', { href: cxMapURL(zoom) }, label);
+  const sep = () => el('span', { className: 'cx-sep', 'aria-hidden': 'true' }, '/');
+  c.appendChild(z ? link(_cx.net, '') : el('b', {}, _cx.net));
+  let total = idx.data.lines || 0, pk = idx.pkgs.length;
+  if (z) {
+    const pkg = idx.byPath.get(z);
+    const ns = pkg ? pkg.ns : z;
+    c.appendChild(sep());
+    if (pkg) {
+      c.appendChild(link(ns, ns));
+      c.appendChild(sep());
+      c.appendChild(el('b', {}, pkg.rel.split('/').slice(2).join('/')));
+      c.appendChild(el('a', { href: cxURL(pkg.p), className: 'cx-map-open' }, 'open the code →'));
+      total = pkg.l; pk = 1;
+    } else {
+      c.appendChild(el('b', {}, ns));
+      const g = idx.nsMap.get(ns);
+      total = g ? g.l : 0; pk = g ? g.pkgs.length : 0;
+    }
+  }
+  c.appendChild(el('span', { className: 'cx-dim' }, ' ' + fmtNum(pk) + (pk === 1 ? ' package' : ' packages') + ' · ' + fmtNum(total) + ' lines'));
+  c.appendChild(el('span', { className: 'cx-dim cx-map-hint' },
+    !z ? ' · click a namespace to zoom' : idx.byPath.has(z) ? ' · click a file to open it' : ' · click a package to zoom'));
+}
+
+function cxMapLegend() {
+  const m = _cx.map;
+  const lg = m.legend;
+  lg.textContent = '';
+  const mode = m.opts.color;
+  if (mode === 'kind') {
+    for (const [k, label] of [['r', 'realm'], ['p', 'package']]) {
+      const sw = el('i', { className: 'cx-sw' });
+      sw.style.background = CX_KIND[k];
+      lg.appendChild(el('span', { className: 'cx-lg-item' }, sw, label));
+    }
+  } else {
+    const stops = mode === 'age' ? CX_RAMP_AGE : CX_RAMP_ACTIVITY;
+    const bar = el('i', { className: 'cx-lg-bar' });
+    bar.style.background = 'linear-gradient(90deg,' + stops.join(',') + ')';
+    lg.appendChild(el('span', { className: 'cx-lg-item' },
+      mode === 'age' ? 'oldest' : 'no calls', bar,
+      mode === 'age' ? 'newest deploy' : 'most calls in ' + (m.idx.data.window_days || 30) + ' days (log scale)'));
+    if (m.opts.quiet) lg.appendChild(el('span', { className: 'cx-dim' }, '\u00b7 nothing here was called in the last ' + (m.idx.data.window_days || 30) + ' days'));
+  }
+  lg.appendChild(el('span', { className: 'cx-dim' }, ' · area is ' + m.opts.size + ' · tests drawn faded'));
+}
+
+function cxMapDraw() {
+  const m = _cx.map;
+  if (!m || !m.layout) return;
+  const ctx = m.canvas.getContext('2d');
+  const dpr = m.dpr || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0d0d0d';
+  ctx.fillRect(0, 0, m.W, m.H);
+  if (m.anim) {
+    const a = m.anim;
+    ctx.translate(a.x, a.y);
+    ctx.scale(a.w / m.W, a.h / m.H);
+  }
+  const { leaves, groups } = m.layout;
+  const color = m.color;
+  for (const n of leaves) {
+    if (n.w < 0.5 || n.h < 0.5) continue;
+    const name = n.file[0];
+    ctx.globalAlpha = /_(file)?test\.gno$/.test(name) ? 0.5 : /\.gno$/.test(name) ? 1 : 0.35;
+    ctx.fillStyle = color(n.pkg);
+    ctx.fillRect(n.x, n.y, Math.max(0.5, n.w - 0.5), Math.max(0.5, n.h - 0.5));
+  }
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+  for (const g of groups) {
+    if (g.w < 2 || g.h < 2) continue;
+    ctx.strokeStyle = g.t === 'ns' ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.55)';
+    ctx.strokeRect(g.x + 0.5, g.y + 0.5, g.w - 1, g.h - 1);
+    if (g.band) {
+      ctx.fillStyle = g.t === 'ns' ? 'rgba(10,10,10,0.82)' : 'rgba(10,10,10,0.6)';
+      ctx.fillRect(g.x + 1, g.y + 1, g.w - 2, g.band);
+    }
+  }
+  const hv = m.hover;
+  if (hv) {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    const target = m.tree.level === 'chain' ? cxMapGroupOf(hv, 'ns') : m.tree.level === 'ns' ? cxMapGroupOf(hv, 'pkg') : hv;
+    if (target) ctx.strokeRect(target.x + 1, target.y + 1, target.w - 2, target.h - 2);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.strokeRect(hv.x + 0.5, hv.y + 0.5, hv.w - 1, hv.h - 1);
+  }
+  if (m.anim) return;
+  // Names, only where they fit. Canvas text, so a hostile name is pixels.
+  ctx.textBaseline = 'top';
+  const fit = (text, w) => {
+    if (ctx.measureText(text).width <= w) return text;
+    let lo = 0, hi = text.length;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (ctx.measureText(text.slice(0, mid) + '…').width <= w) lo = mid; else hi = mid - 1; }
+    return lo > 1 ? text.slice(0, lo) + '…' : '';
+  };
+  for (const g of groups) {
+    if (!g.band) continue;
+    ctx.font = (g.t === 'ns' ? 'bold 11px ' : '10px ') + 'ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillStyle = g.t === 'ns' ? '#e0e0e0' : '#cfcfcf';
+    const label = g.t === 'ns' ? g.g.ns : g.pkg.rel.split('/').slice(2).join('/');
+    const t = fit(label + '  ' + cxK(g.v), g.w - 8);
+    if (t) ctx.fillText(t, g.x + 4, g.y + 2);
+  }
+  // Package names inside the chain view, where packages carry no band.
+  if (m.tree.level === 'chain') {
+    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    for (const g of groups) {
+      if (g.t !== 'pkg' || g.w < 60 || g.h < 16) continue;
+      const t = fit(g.pkg.rel.split('/').slice(2).join('/'), g.w - 6);
+      if (!t) continue;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillText(t, g.x + 4, g.y + 3);
+      ctx.fillStyle = '#f2f2f2';
+      ctx.fillText(t, g.x + 3, g.y + 2);
+    }
+  }
+  if (m.tree.level !== 'chain') {
+    ctx.font = (m.tree.level === 'pkg' ? '12px ' : '10px ') + 'ui-monospace, SFMono-Regular, Menlo, monospace';
+    for (const n of leaves) {
+      if (n.w < 44 || n.h < 14) continue;
+      const t = fit(n.file[0], n.w - 6);
+      if (!t) continue;
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillText(t, n.x + 3, n.y + 3);
+      if (m.tree.level === 'pkg' && n.h > 30) ctx.fillText(fmtNum(n.file[1]) + ' lines', n.x + 3, n.y + 18);
+    }
+  }
+}
+
+function cxMapGroupOf(leaf, t) {
+  const m = _cx.map;
+  if (t === 'pkg') return m.layout.groups.find(g => g.t === 'pkg' && g.pkg === leaf.pkg) || null;
+  return m.layout.groups.find(g => g.t === 'ns' && g.g.ns === leaf.pkg.ns) || null;
+}
+
+function cxMapHit(e) {
+  const m = _cx.map;
+  const r = m.canvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  for (const n of m.layout.leaves) {
+    if (x >= n.x && x < n.x + n.w && y >= n.y && y < n.y + n.h) return { n, x, y };
+  }
+  // A band or a gutter: the group under the pointer, by its first leaf.
+  const g = m.layout.groups.slice().reverse().find(g => x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h);
+  if (!g) return null;
+  let leaf = g;
+  while (leaf.children && leaf.children.length) leaf = leaf.children[0];
+  return leaf.file ? { n: leaf, x, y } : null;
+}
+
+function cxMapHover(e) {
+  const m = _cx.map;
+  if (!m || !m.layout || m.anim) return;
+  const hit = cxMapHit(e);
+  const n = hit && hit.n;
+  if (n !== m.hover) { m.hover = n; cxMapDraw(); }
+  m.canvas.style.cursor = n ? 'pointer' : 'default';
+  if (!n) { m.tip.hidden = true; return; }
+  const p = n.pkg;
+  m.tip.replaceChildren(
+    el('div', { className: 'cx-tip-path' }, p.rel),
+    el('div', { className: 'cx-tip-file' }, n.file[0], el('span', { className: 'cx-dim' }, ' · ' + fmtNum(n.file[1]) + ' lines · ' + shortBytes(n.file[2]))),
+    el('div', { className: 'cx-dim' },
+      (p.k === 'r' ? 'realm' : 'package') + ' · ' + fmtNum(p.f.length) + ' files · ' + fmtNum(p.l) + ' lines' +
+      (p.c ? ' · ' + fmtNum(p.c) + ' calls' : '') + (p.u ? ' · ' + fmtNum(p.u) + ' callers' : '') +
+      (p.d ? ' · imported by ' + fmtNum(p.d) : '') + ' · ' + (p.h === 0 ? 'genesis' : 'block ' + fmtNum(p.h))));
+  m.tip.hidden = false;
+  const tw = m.tip.offsetWidth, th = m.tip.offsetHeight;
+  let tx = hit.x + 14, ty = hit.y + 14;
+  if (tx + tw > m.W) tx = Math.max(0, hit.x - tw - 10);
+  if (ty + th > m.H) ty = Math.max(0, hit.y - th - 10);
+  m.tip.style.left = tx + 'px';
+  m.tip.style.top = ty + 'px';
+  if (m.tree.level !== 'chain') cxPrefetchSoon(p, m.tree.level === 'pkg' ? n.file[0] : null);
+}
+
+function cxMapClick(e) {
+  const m = _cx.map;
+  if (!m || !m.layout) return;
+  const hit = cxMapHit(e);
+  if (!hit) return;
+  const n = hit.n;
+  if (m.tree.level === 'chain') navigate(cxMapURL(n.pkg.ns));
+  else if (m.tree.level === 'ns') navigate(cxMapURL(n.pkg.p));
+  else navigate(cxURL(n.pkg.p, n.file[0]));
+}
+
 // One click handler for every in-app link, so links can be links.
 //
 // Before this, navigation was `href="/x"` on an anchor with

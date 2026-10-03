@@ -66,6 +66,7 @@ Everything lives in [`docs/`](docs/) — start there.
 | [docs/spec.md](docs/spec.md) | what gnoscope is, the data model, how networks are scoped |
 | [docs/architecture.md](docs/architecture.md) | components, data flow, design decisions, known weak points |
 | [docs/api.md](docs/api.md) | full `/api/*` reference |
+| [docs/code.md](docs/code.md) | `/code`: every package on a chain as a map, a file tree and a jump-to-anything palette |
 | [docs/mcp.md](docs/mcp.md) | the read-only MCP endpoint at `/mcp`, for agents |
 | [docs/rename.md](docs/rename.md) | mygnoscan became gnoscope: what changed, what did not, and where old links go |
 | [docs/badges.md](docs/badges.md) | `/_badges/*`: the SVG cards and shields other documents embed, including a gno realm's `Render()` |

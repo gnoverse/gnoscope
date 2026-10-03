@@ -533,6 +533,8 @@ shipped a failed submission writes nothing to `packages`, but a database synced
 before then can still hold such a row, and the tree checks
 `package_submissions` rather than trusting it.
 
+The `/code` page is the consumer this shape was cut for; see [`code.md`](code.md).
+
 Whether a package is live or parked is not here: that is read over RPC per
 path, with a cold cost measured in seconds, and a payload whose content
 depended on whether that cache happened to be warm could not keep a stable

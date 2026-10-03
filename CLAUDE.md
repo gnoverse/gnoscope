@@ -6,6 +6,7 @@ See [AGENTS.md](AGENTS.md) for repo conventions and invariants, and
 - [`docs/spec.md`](docs/spec.md) — what gnoscope is, and its data model
 - [`docs/architecture.md`](docs/architecture.md) — components and data flow
 - [`docs/api.md`](docs/api.md) — HTTP API reference
+- [`docs/code.md`](docs/code.md): the `/code` explorer: routes, the map, keys, what makes it fast
 - [`docs/rename.md`](docs/rename.md) — what the 2026-09-28 rename moved, and what kept working
 - [`docs/badges.md`](docs/badges.md) — the embeddable `/_badges/*` SVG cards
 - [`docs/development.md`](docs/development.md) — local development
