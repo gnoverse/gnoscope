@@ -178,22 +178,27 @@ func (a *Analyzer) ExtractMsgRunImports(files []indexer.MemFile) []string {
 func (a *Analyzer) ProcessPackage(network string, pkg *indexer.MemPackage, creator, txHash string, blockHeight, msgIndex int, blockTime, send string, success bool) error {
 	isRealm := strings.HasPrefix(pkg.Path, "gno.land/r/")
 
-	// store package: current-state, overwritten by a later submission at the
-	// same path.
-	if err := a.db.UpsertPackage(network, pkg.Path, pkg.Name, creator, txHash, blockHeight, blockTime, isRealm, len(pkg.Files)); err != nil {
-		return err
-	}
-	// store the submission itself, kept even once a later one replaces the
-	// row above — see InsertPackageSubmission.
+	// The submission itself is history, kept whether or not it succeeded and
+	// even once a later one replaces the current state below. See
+	// InsertPackageSubmission.
 	if err := a.db.InsertPackageSubmission(network, txHash, msgIndex, pkg.Path, pkg.Name, creator, blockHeight, blockTime, isRealm, len(pkg.Files), send, success); err != nil {
 		return err
 	}
 
-	// store files
-	for _, f := range pkg.Files {
-		if err := a.db.UpsertPackageFile(network, pkg.Path, f.Name, f.Body); err != nil {
-			return err
-		}
+	// A failed MsgAddPackage changed nothing on chain, so it changes nothing
+	// in the current-state tables either. Writing it anyway replaced a live
+	// package's row, source, search index and dependency edges with code the
+	// chain rejected, and made a path whose only submission failed look
+	// deployed. tx.Success is the indexer's own verdict on the transaction,
+	// and a failed tx applies none of its messages.
+	if !success {
+		return nil
+	}
+
+	// Current state: the package row and its whole file set, replaced
+	// together. Files the new submission no longer carries are dropped.
+	if err := a.db.ReplacePackage(network, pkg.Path, pkg.Name, creator, txHash, blockHeight, blockTime, isRealm, pkg.Files); err != nil {
+		return err
 	}
 
 	// Extract and store dependencies

@@ -219,7 +219,11 @@ func walkTransactions(
 }
 
 func (s *Syncer) syncPackages(ctx context.Context) error {
-	lastHeight, err := s.getLastBlockHeight(ctx, "packages")
+	// The cursor is the newest submission, not the newest package row. A
+	// failed submission writes no package row (see ProcessPackage), so a
+	// cursor derived from packages would sit below it and fetch the same page
+	// again on every pass for as long as it stayed the newest deploy.
+	lastHeight, err := s.getLastBlockHeight(ctx, "package_submissions")
 	if err != nil {
 		return err
 	}

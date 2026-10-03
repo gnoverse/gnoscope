@@ -140,10 +140,11 @@ func NewDB(path string) (*DB, error) {
 	// been a current-state projection (one row per path, INSERT OR REPLACE),
 	// so on a database that already has packages rows but no
 	// package_submissions table, dropping packages is the only way to make
-	// syncPackages re-walk history and backfill it — its resume cursor is
-	// MAX(block_height) FROM packages itself (see getLastBlockHeight), which
-	// already sits at the tip on an existing install and would otherwise
-	// never look back. package_files and dependencies are untouched: both are
+	// syncPackages re-walk history and backfill it — its resume cursor was
+	// then MAX(block_height) FROM packages itself (see getLastBlockHeight),
+	// which already sits at the tip on an existing install and would otherwise
+	// never look back. The cursor reads package_submissions now, which a
+	// missing table leaves empty, so the drop is belt and braces. package_files and dependencies are untouched: both are
 	// path-keyed and idempotently re-upserted by the same resync, so nothing
 	// there needs dropping. See the comment on package_submissions itself.
 	var pkgSubSQL string
@@ -1417,6 +1418,8 @@ func initSchema(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_pkgsub_net_creator ON package_submissions(network, creator);
 		CREATE INDEX IF NOT EXISTS idx_pkgsub_net_path    ON package_submissions(network, path);
 		CREATE INDEX IF NOT EXISTS idx_pkgsub_block_time  ON package_submissions(network, block_time);
+		-- The package sync cursor: MAX(block_height) per network.
+		CREATE INDEX IF NOT EXISTS idx_pkgsub_net_height  ON package_submissions(network, block_height);
 
 		-- The realm/analytics joins group calls by package and count distinct
 		-- callers within it, which this covers without touching the table.
