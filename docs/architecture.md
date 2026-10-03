@@ -58,7 +58,10 @@ single-block probe confirms the indexer really has nothing below it.
 
 **`pkg/analyzer`** — takes `MsgAddPackage` source and extracts
 `import "gno.land/..."` statements by regex, then writes package, file and
-dependency rows.
+dependency rows. Every submission is recorded in `package_submissions`; only a
+successful one replaces the package row and its whole file set, in one
+transaction, because that row's height and hash are the version stamp
+`/api/source` pins bodies under.
 
 **`pkg/gnostate`** — decodes the Amino JSON that `vm/qpkg_json` and
 `vm/qobject_json` return into a named value tree: `posts["hello"].Title` rather
@@ -113,8 +116,10 @@ file, with D3 for the dependency graph. Routing is client-side; the server serve
 ## Data flow
 
 1. The syncer asks the indexer for transactions above its cursor.
-2. `MsgAddPackage` messages go to the analyzer, which extracts imports and writes
-   packages, files and dependency edges. `MsgCall`, `MsgRun` and `BankMsgSend`
+2. `MsgAddPackage` messages go to the analyzer, which records the submission
+   and, if its transaction succeeded, extracts imports and writes packages,
+   files and dependency edges. The package cursor is the newest submission, so
+   a failed one is not fetched again. `MsgCall`, `MsgRun` and `BankMsgSend`
    become `calls`, `msg_runs` and `bank_sends` rows. Every transaction also becomes
    a `transactions` row with its gas and success status.
 3. Block times are fetched per unique height and stamped onto the rows. Blocks

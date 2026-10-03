@@ -75,6 +75,13 @@ survives the reader who triggered it closing the tab.
 Errors are never cached — a cached 500 would pin a transient indexer failure for
 the whole window. `/api/live` and `/api/version` bypass the cache entirely.
 
+One entry lives longer: a pinned source read, `/api/source/{path...}?at=<height>`,
+is kept for 24 hours rather than 30 seconds. Its 200 cannot go stale (a
+redeploy moves the stamp, and the same URL then answers 409, which is never
+stored), so the TTL there bounds memory, not freshness. Where a handler sets
+`Cache-Control` and `ETag` the cache replays both on a hit and answers
+`If-None-Match` itself with a 304.
+
 ## Compression
 
 Responses are gzipped when the client sends `Accept-Encoding: gzip` and the body
@@ -405,6 +412,7 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset` |
 | `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
 | `GET /api/gnohub/forge/{path...}` | what r/moul/forge claims about a package path: `{path, network, realm, linked, repo_id, repo_url, latest_release, release_count, log_head, unavailable}`. **Requires `network`**: the forge is realm state and the same path exists on more than one chain. `linked: false` with no `unavailable` means nobody has registered the package, which is the normal case and not an error. Reads live over `vm/qeval`, cached 2 minutes; see below |
+| `GET /api/source/{path...}` | a package's source apart from everything volatile, addressed by the submission that put it there. **Requires `network`** (400 without it, or with `all`). Without `at`: a manifest `{path, network, name, kind, stamp, files[], siblings[], submissions, redeploys}`, `stamp` = `{height, tx_hash, time}` of the current submission, each file `{name, size, lines}` (size in bytes), `siblings` the other generations of the same app on that network (see `discover.Generation`), each `{path, stamp}`, oldest generation first. `max-age=30` and an `ETag` over the bytes. With `at=<stamp height>`: `{path, network, name, kind, stamp, files[]}` with each file's `body`, `immutable` for a year; add `file=<name>` for one file. Any other `at` is a `409`. See below |
 | `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
 | `GET /api/deps/{path...}` | dependency graph as `{path: [imports]}`. `dir=dependents` reverses direction, and defaults to one hop; `depth=N` caps the reverse walk, `depth=0` is unbounded |
@@ -445,6 +453,35 @@ one path are therefore usually the same code sent again rather than a change.
 What changed *between* two submissions is not answerable here: `package_files`
 stores the current body and nothing else, so a diff needs each submission's
 files re-fetched from the chain.
+
+### Source is addressed by its stamp
+
+`/api/realm/{path...}` ships every file body beside calls, dependents and MsgRun
+references, which move every sync pass, so the whole payload is only good for
+30 seconds even though its largest part changes once per deploy.
+`/api/source/{path...}` splits them: the manifest is small and short-lived, and
+the bodies are served under a **stamp**, the height of the submission whose
+source is stored, which makes them cacheable forever.
+
+| request | answer |
+|---|---|
+| no `at` | the manifest. `Cache-Control: public, max-age=30`, `ETag` over the body (it also carries siblings and counts, which move without this stamp moving) |
+| `at` = the current stamp | the bodies. `Cache-Control: public, max-age=31536000, immutable`, `ETag` derived from network, path, stamp and the `file` asked for |
+| `at` = any other height | `409 {error, path, network, at, current}`, `Cache-Control: no-store`. Re-read at `current.height` |
+| `file=` without `at` | `400`: take the height from the manifest first |
+
+**A stale stamp is a conflict, not a redirect and not today's bytes.** Only the
+current submission's files are stored (see the deploy history above), so the
+bytes an older stamp names do not exist here. Serving the current ones under
+it would put the wrong source into every cache that ever saw that URL, for a
+year. A 409 carrying `current` is one round trip to recover from.
+
+`submissions` counts every `MsgAddPackage` at the path on that network,
+failed ones included; `redeploys` is successful submissions minus the first.
+A failed submission never moves the stamp: it changed nothing on chain, so
+since this endpoint shipped it changes nothing in `packages` or
+`package_files` either. Rows a failed submission overwrote before that fix
+stay as they are until the path is next deployed successfully.
 
 ### The two accounts a package owns
 
