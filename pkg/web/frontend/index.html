@@ -2112,10 +2112,18 @@ function tagChip(t, opts) {
     c.setAttribute('aria-pressed', opts.pressed ? 'true' : 'false');
     c.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); opts.onClick(name); });
   }
-  const means = tagMeans(name, opts.net);
-  const tip = [name + (means ? ': ' + means : '')];
-  if (why) tip.push(why);
-  c.title = tip.join('\n');
+  const setTip = () => {
+    const means = tagMeans(name, opts.net);
+    const tip = [name + (means ? ': ' + means : '')];
+    if (why) tip.push(why);
+    c.title = tip.join('\n');
+    return !!means;
+  };
+  // A chip drawn before the rule table arrived would keep a tooltip without
+  // its sentence for good, so fill it in when the table lands.
+  if (!setTip()) {
+    loadTagIndex(opts.net).then((e) => { if (e) setTip(); });
+  }
   if (why) c.dataset.why = why;
   return c;
 }
