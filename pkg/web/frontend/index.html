@@ -609,6 +609,50 @@ pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4p
 .cx-jump span { flex: 1; text-align: left; }
 .cx-jump:hover { border-color: var(--accent); color: var(--fg); }
 .cx-jump kbd, .cx-pal-foot kbd { font: 11px var(--mono); padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg3); }
+/* The code map's link to its timeline, and the timeline's back to the map. */
+.cx-tab { font-size: 13px; color: var(--fg2); padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; }
+.cx-tab:hover { color: var(--fg); border-color: var(--accent); text-decoration: none; }
+.cx-tab[aria-current="page"] { color: var(--fg); border-color: var(--accent); background: var(--bg3); font-weight: bold; }
+
+/* /code/timeline: every publication on one chain, newest first. tl- scoped. */
+.tl-heat { margin: 4px 0 14px; padding: 12px 14px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); overflow-x: auto; }
+.tl-heat-head { display: flex; gap: 6px 16px; align-items: baseline; flex-wrap: wrap; font-size: 12px; color: var(--fg2); margin-bottom: 8px; }
+.tl-heat-head b { color: var(--fg); font-size: 14px; }
+.tl-cal { display: grid; grid-template-columns: 28px repeat(53, 11px); grid-template-rows: 14px repeat(7, 11px); gap: 3px; width: max-content; }
+.tl-cal-m, .tl-cal-w { font-size: 10px; color: var(--fg2); line-height: 11px; white-space: nowrap; }
+.tl-cell { width: 11px; height: 11px; border-radius: 2px; background: var(--bg3); border: 0; padding: 0; cursor: pointer; }
+.tl-cell[data-l="1"] { background: #164d4a; } .tl-cell[data-l="2"] { background: #23736e; }
+.tl-cell[data-l="3"] { background: #34a099; } .tl-cell[data-l="4"] { background: var(--accent); }
+.tl-cell:hover, .tl-cell:focus-visible { outline: 1px solid var(--fg); outline-offset: 0; }
+.tl-cell[aria-pressed="true"] { outline: 2px solid var(--amber); outline-offset: 0; }
+.tl-cell.tl-out { visibility: hidden; }
+.tl-legend { display: flex; align-items: center; gap: 3px; margin-left: auto; font-size: 11px; color: var(--fg2); }
+.tl-legend .tl-cell { cursor: default; }
+.tl-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.tl-chip { padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg2); color: var(--fg2); font: 12px var(--mono); cursor: pointer; }
+.tl-chip:hover { color: var(--fg); border-color: var(--fg2); }
+.tl-chip[aria-pressed="true"] { color: var(--fg); border-color: var(--accent); background: var(--bg3); }
+.tl-in { padding: 4px 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); font: 12px var(--mono); width: 170px; }
+.tl-in:focus { outline: none; border-color: var(--accent); }
+.tl-count { margin-left: auto; font-size: 12px; color: var(--fg2); }
+.tl-day { margin: 18px 0 8px; font-size: 13px; font-weight: bold; color: var(--fg2); text-transform: lowercase; }
+.tl-day:first-child { margin-top: 0; }
+.tl-card { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 0 12px; padding: 10px 12px; margin-bottom: 6px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); }
+.tl-card:hover { border-color: #3a3a3a; }
+.tl-av .identicon svg { border-radius: 4px; }
+.tl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 14px; min-width: 0; }
+.tl-head .tl-path { font-family: var(--mono); font-weight: bold; overflow-wrap: anywhere; }
+.tl-who { font-weight: bold; color: var(--fg); }
+.tl-verb { color: var(--fg2); }
+.tl-kind { font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px solid currentColor; line-height: 17px; }
+.tl-kind-new { color: var(--green); } .tl-kind-version { color: var(--accent); }
+.tl-kind-redeploy { color: var(--fg2); } .tl-kind-failed { color: var(--red); }
+.tl-debut { color: var(--amber); }
+.tl-sum { margin-top: 4px; color: var(--fg); font-size: 13px; overflow-wrap: anywhere; }
+.tl-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--fg2); }
+.tl-more { display: block; margin: 12px auto; }
+.tl-end { text-align: center; color: var(--fg2); font-size: 12px; margin: 14px 0; }
 .cx-drawer-btn { display: none; padding: 5px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font: 12px var(--mono); cursor: pointer; }
 
 .cx-body { display: grid; grid-template-columns: 300px minmax(0, 1fr); border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
@@ -1528,10 +1572,11 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a href="/apps" id="nav-apps" title="apps"><span class="rail-label">apps</span></a>
         </div>
       </div>
-      <a href="/code" id="nav-code" title="every package on the chain: a map of all the code, a file tree, and a jump-to-anything palette (ctrl-k)"><svg aria-hidden="true"><use href="#i-files"/></svg><span class="rail-label">code</span></a>
       <div class="nav-group">
-        <a href="/developer" id="nav-developer" title="code search, chain and tooling versions, the API"><svg aria-hidden="true"><use href="#i-code"/></svg><span class="rail-label">developer</span></a>
+        <a href="/developer" id="nav-developer" title="the code map, what was published lately, code search, chain and tooling versions, the API"><svg aria-hidden="true"><use href="#i-code"/></svg><span class="rail-label">developer</span></a>
         <div class="nav-kids">
+          <a href="/code" id="nav-code" title="every package on the chain: a map of all the code, a file tree, and a jump-to-anything palette (ctrl-k)"><span class="rail-label">code map</span></a>
+          <a href="/code/timeline" id="nav-codetimeline" title="what was published on the chain, newest first, with a calendar of the last year"><span class="rail-label">timeline</span></a>
           <a href="/developer/search" id="nav-devsearch" title="full-text search over every file the chain stores"><span class="rail-label">code search</span></a>
           <a href="/developer/api" id="nav-devapi" title="the HTTP API this explorer serves"><span class="rail-label">api</span></a>
           <a href="/developer/mcp" id="nav-devmcp" title="the MCP endpoint an agent connects to"><span class="rail-label">mcp</span></a>
@@ -1835,6 +1880,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-lab"><main><div id="lab-content"></div></main></div>
   <div class="view" id="view-cartography"><main><div id="carto-content" class="carto"></div></main></div>
   <div class="view" id="view-code"><main><div id="code-content"></div></main></div>
+  <div class="view" id="view-codetimeline"><main><div id="codetimeline-content"></div></main></div>
   <div class="view" id="view-gnohub"><main><div id="gnohub-content"></div><div id="gnohub-body"></div></main></div>
   <div class="view" id="view-labgithub"><main><div id="labgithub-content"></div></main></div>
   <div class="view" id="view-tx-detail"><main><div id="tx-detail-content"></div></main></div>
@@ -4393,8 +4439,12 @@ const NAV = [
     { id: 'packages', label: 'packages', path: '/packages' },
     { id: 'apps', label: 'apps', path: '/apps' },
   ] },
-  { id: 'code', label: 'code', path: '/code' },
+  // The code map and its timeline sit under developer, but keep the /code
+  // URLs they shipped with: a section is a grouping in the rail, not a URL
+  // prefix (see accounts below), and every link to /code keeps working.
   { id: 'developer', label: 'developer', path: '/developer', own: 'overview', children: [
+    { id: 'code', label: 'code map', path: '/code' },
+    { id: 'codetimeline', label: 'timeline', path: '/code/timeline' },
     { id: 'devsearch', label: 'code search', path: '/developer/search' },
     { id: 'devapi', label: 'api', path: '/developer/api' },
     { id: 'devmcp', label: 'mcp', path: '/developer/mcp' },
@@ -4673,6 +4723,9 @@ function route() {
   else if (path === '/lab/github') { view = 'labgithub'; }
   // Everything under /code is one view; the rest of the path is the package
   // and file, parsed by cxParse.
+  // /code/timeline first: no package path is a bare `timeline` (they all
+  // start r/ or p/), so it cannot shadow one.
+  else if (path === '/code/timeline') { view = 'codetimeline'; }
   else if (path === '/code' || path.startsWith('/code/')) { view = 'code'; data = path.slice(6); }
   // The whole gnohub tree is one view: the sub-page is data, not a second
   // `view-` container, which is what keeps the experiment to one block of
@@ -4742,6 +4795,7 @@ function route() {
     case 'cartography': loadCarto(); break;
     case 'gnohub': loadGnohub(data); break;
     case 'code': loadCode(data); break;
+    case 'codetimeline': loadCodeTimeline(); break;
     case 'labgithub': loadLabGitHub(); break;
     case 'realms': loadRealms(); break;
     case 'packages': enterPackages(urlPv); break;
@@ -22615,7 +22669,7 @@ const KEY_ROUTES = {
   g: ['/gas', 'gas'],
   n: ['/analytics', 'analytics'],
   s: ['/sanity', 'sanity'],
-  c: ['/code', 'code'],
+  c: ['/code', 'code map'],
 };
 
 let _awaitingGoto = false;
@@ -22637,7 +22691,7 @@ function showShortcuts() {
   const rows = [
     ['/', 'focus search'],
     ['g then h/r/p/t/b/a/e/g/n/s/c', 'go to a page'],
-    ['ctrl-k or / on /code', 'jump to any package or file'],
+    ['ctrl-k or / on the code map', 'jump to any package or file'],
     ['g then w', 'go to your watchlist'],
     ['w', 'watch or unwatch what you are viewing'],
     ['?', 'this list'],
@@ -28065,6 +28119,411 @@ async function ghTree(prefix, gen) {
 }
 
 // --- Routing ---
+// --- /code/timeline: what was published on one chain, newest first ----------
+//
+// A GitHub dashboard for the chain: a calendar of the last year on top, and a
+// feed of every MsgAddPackage below it, grouped by day. Two endpoints:
+//
+//   /api/code/timeline          one page of the feed, cursor-paged
+//   /api/code/timeline/heatmap  publications per UTC day, for the calendar
+//
+// Every filter is a query parameter (kind, failed, ns, creator, day), so a
+// view is a link. The first page and the calendar go through apiSWR, so a
+// second visit paints from the session cache before the network answers; the
+// pages below it are fetched as the reader nears the bottom.
+//
+// On-chain content is hostile: paths, names and summaries all go in as text
+// nodes through el().
+
+const TL_KINDS = ['new', 'version', 'redeploy', 'failed'];
+const TL_KIND_LABEL = { new: 'new', version: 'new version', redeploy: 'republished', failed: 'failed' };
+const TL_LIMIT = 50;
+
+const _tl = {
+  gen: 0,
+  net: '',
+  sig: '',       // the filters the feed on screen was fetched for
+  rows: [],
+  next: '',
+  total: 0,
+  loading: null, // the next page in flight
+  observer: null,
+};
+
+function tlFilters() {
+  const q = new URLSearchParams(window.location.search);
+  const kinds = (q.get('kind') || '').split(',').filter(k => TL_KINDS.includes(k));
+  return {
+    kinds,
+    failed: q.get('failed') === '1',
+    ns: q.get('ns') || '',
+    creator: q.get('creator') || '',
+    day: /^\d{4}-\d{2}-\d{2}$/.test(q.get('day') || '') ? q.get('day') : '',
+  };
+}
+
+// tlParams is the query a filter set sends, network excluded: api() adds it.
+function tlParams(f, withDay) {
+  const p = new URLSearchParams();
+  if (f.kinds && f.kinds.length) p.set('kind', f.kinds.join(','));
+  if (f.failed) p.set('failed', '1');
+  if (f.ns) p.set('ns', f.ns);
+  if (f.creator) p.set('creator', f.creator);
+  if (withDay && f.day) p.set('day', f.day);
+  return p;
+}
+
+function tlPagePath(f, before) {
+  const p = tlParams(f, true);
+  p.set('limit', String(TL_LIMIT));
+  if (before) p.set('before', before);
+  return 'code/timeline?' + p.toString();
+}
+
+function tlHeatPath(f) {
+  const q = tlParams({ ns: f.ns, creator: f.creator }, false).toString();
+  return 'code/timeline/heatmap' + (q ? '?' + q : '');
+}
+
+// tlURL is the only place a /code/timeline link is built.
+function tlURL(f, net) {
+  const p = tlParams(f || {}, true);
+  p.set('network', net || _tl.net || getNetwork());
+  return '/code/timeline?' + p.toString();
+}
+
+// tlSetFilters writes a new filter set into the URL and refetches.
+function tlSetFilters(f) {
+  history.replaceState(history.state, '', tlURL(f, _tl.net));
+  loadCodeTimeline();
+}
+
+function tlRowKey(r) { return r.height + '.' + r.msg + '.' + r.tx; }
+
+// The UTC day a row belongs to, the same day the server counts it under.
+function tlDay(r) { return r.time && r.time.length >= 10 ? r.time.slice(0, 10) : ''; }
+
+function tlDayLabel(day, r) {
+  if (!day) return r && r.genesis ? 'genesis' : 'time not synced yet';
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  if (day === today) return 'today';
+  if (day === yesterday) return 'yesterday';
+  return new Date(day + 'T00:00:00Z').toLocaleDateString('en-US',
+    { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+async function loadCodeTimeline() {
+  const gen = ++_tl.gen;
+  const net = await cxResolveNet();
+  if (gen !== _tl.gen) return;
+  const root = document.getElementById('codetimeline-content');
+  if (!net) {
+    root.textContent = '';
+    root.appendChild(el('div', { className: 'dash-msg' }, 'no chain is configured, so there is nothing to show'));
+    return;
+  }
+  const f = tlFilters();
+  const sig = net + '|' + tlPagePath(f, '');
+  if (!root.querySelector('.tl-shell') || _tl.net !== net) tlBuildShell(root, net);
+  _tl.net = net;
+  tlRenderBar(f);
+  if (_tl.sig !== sig) {
+    _tl.sig = sig;
+    _tl.rows = [];
+    _tl.next = '';
+    _tl.total = 0;
+    _tl.loading = null;
+    const feed = root.querySelector('.tl-feed');
+    feed.textContent = '';
+    skeletonBlock(feed);
+  }
+  try {
+    await apiSWR([tlPagePath(f, ''), { path: tlHeatPath(f), fallback: null }], ([page, heat], meta) => {
+      if (gen !== _tl.gen) return;
+      tlTakeHead(page);
+      tlRenderFeed();
+      if (heat) tlRenderHeat(heat, f);
+    });
+  } catch (err) {
+    if (gen !== _tl.gen) return;
+    const feed = root.querySelector('.tl-feed');
+    feed.textContent = '';
+    feed.appendChild(errorPanel(err, () => loadCodeTimeline()));
+  }
+}
+
+// tlTakeHead installs the first page. A render can run again after the reader
+// has scrolled (the cached paint, then the fresh one), so the pages already
+// appended below the head are kept when the fresh head still leads into them.
+function tlTakeHead(page) {
+  const rows = page.rows || [];
+  const old = _tl.rows;
+  let keep = [];
+  let next = page.next || '';
+  if (old.length > rows.length && rows.length) {
+    const i = old.findIndex(r => tlRowKey(r) === tlRowKey(rows[rows.length - 1]));
+    if (i >= 0) { keep = old.slice(i + 1); next = _tl.next; }
+  }
+  _tl.rows = rows.concat(keep);
+  _tl.next = next;
+  _tl.total = page.total || 0;
+}
+
+function tlBuildShell(root, net) {
+  root.textContent = '';
+  if (_tl.observer) { _tl.observer.disconnect(); _tl.observer = null; }
+  const shell = el('div', { className: 'tl-shell' });
+  const top = el('div', { className: 'cx-top' });
+  const title = el('a', { href: cxMapURL('', net), className: 'cx-title' });
+  title.appendChild(icon('files'));
+  title.appendChild(document.createTextNode('code map'));
+  top.appendChild(title);
+  top.appendChild(el('a', { href: tlURL({}, net), className: 'cx-tab', 'aria-current': 'page' }, 'timeline'));
+  const nets = el('div', { className: 'cx-nets', role: 'group', 'aria-label': 'chain' });
+  top.appendChild(nets);
+  networksList().then((list) => {
+    nets.textContent = '';
+    for (const n of list) {
+      const on = n.id === net;
+      const b = el('button', { type: 'button', className: 'cx-net', 'aria-pressed': on ? 'true' : 'false', title: 'show what was published on ' + n.id });
+      const dot = el('i');
+      dot.style.background = netColor(n.id);
+      b.appendChild(dot);
+      b.appendChild(document.createTextNode(n.id));
+      b.addEventListener('click', () => { if (n.id !== _tl.net) switchNetwork(n.id); });
+      nets.appendChild(b);
+    }
+  });
+  shell.appendChild(top);
+  shell.appendChild(el('div', { className: 'tl-heat' }));
+  shell.appendChild(el('div', { className: 'tl-bar' }));
+  shell.appendChild(el('div', { className: 'tl-feed', 'aria-live': 'polite' }));
+  const sentinel = el('div', { className: 'tl-sentinel' });
+  shell.appendChild(sentinel);
+  root.appendChild(shell);
+  // Prefetch: the next page starts loading a screen and a half before the
+  // reader reaches the end of this one.
+  if ('IntersectionObserver' in window) {
+    _tl.observer = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) tlLoadMore();
+    }, { rootMargin: '1200px 0px' });
+    _tl.observer.observe(sentinel);
+  }
+}
+
+function tlRenderBar(f) {
+  const bar = document.querySelector('#codetimeline-content .tl-bar');
+  if (!bar) return;
+  bar.textContent = '';
+  const chip = (label, on, title, fn) => {
+    const b = el('button', { type: 'button', className: 'tl-chip', 'aria-pressed': on ? 'true' : 'false', title }, label);
+    b.addEventListener('click', fn);
+    bar.appendChild(b);
+    return b;
+  };
+  const kinds = f.kinds.filter(k => k !== 'failed');
+  chip('all', !kinds.length, 'every publication: new packages, new versions and republished ones',
+    () => tlSetFilters({ ...f, kinds: f.kinds.filter(k => k === 'failed') }));
+  chip('new only', kinds.length === 1 && kinds[0] === 'new', 'only paths published for the first time',
+    () => tlSetFilters({ ...f, kinds: ['new'] }));
+  for (const k of ['new', 'version', 'redeploy']) {
+    const on = kinds.includes(k);
+    chip(TL_KIND_LABEL[k], on, on ? 'stop showing ' + TL_KIND_LABEL[k] : 'show ' + TL_KIND_LABEL[k], () => {
+      const set = new Set(f.kinds);
+      if (on) set.delete(k); else set.add(k);
+      tlSetFilters({ ...f, kinds: TL_KINDS.filter(x => set.has(x)) });
+    });
+  }
+  const failedOn = f.failed || f.kinds.includes('failed');
+  chip('failed', failedOn, 'also list submissions the chain refused', () =>
+    tlSetFilters({ ...f, failed: !failedOn, kinds: f.kinds.filter(k => k !== 'failed') }));
+
+  const input = (key, placeholder, label) => {
+    const i = el('input', { type: 'search', className: 'tl-in', placeholder, 'aria-label': label, spellcheck: 'false', autocomplete: 'off' });
+    i.value = f[key];
+    const apply = () => { const v = i.value.trim(); if (v !== f[key]) tlSetFilters({ ...f, [key]: v }); };
+    i.addEventListener('change', apply);
+    i.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+    bar.appendChild(i);
+  };
+  input('ns', 'namespace', 'only this namespace');
+  input('creator', 'publisher', 'only this publisher: an address or a registered name');
+  if (f.day) chip(f.day + ' ×', true, 'show every day again', () => tlSetFilters({ ...f, day: '' }));
+  bar.appendChild(el('span', { className: 'tl-count' }));
+}
+
+// tlRenderFeed rebuilds the whole feed from _tl.rows: synchronous, and safe to
+// run any number of times (apiSWR's two paints, then once per page).
+function tlRenderFeed() {
+  const root = document.getElementById('codetimeline-content');
+  const feed = root && root.querySelector('.tl-feed');
+  if (!feed) return;
+  feed.textContent = '';
+  const count = root.querySelector('.tl-count');
+  if (count) count.textContent = fmtNum(_tl.total) + (_tl.total === 1 ? ' publication' : ' publications');
+  if (!_tl.rows.length) {
+    feed.appendChild(el('div', { className: 'dash-msg' }, 'nothing was published that matches these filters'));
+    return;
+  }
+  let label = null;
+  for (const r of _tl.rows) {
+    const l = tlDayLabel(tlDay(r), r);
+    if (l !== label) {
+      label = l;
+      feed.appendChild(el('h3', { className: 'tl-day' }, l));
+    }
+    feed.appendChild(tlCard(r));
+  }
+  if (_tl.next) {
+    const more = el('button', { type: 'button', className: 'tl-chip tl-more' }, 'load more');
+    more.addEventListener('click', () => tlLoadMore());
+    feed.appendChild(more);
+  } else {
+    feed.appendChild(el('div', { className: 'tl-end' }, 'that is everything'));
+  }
+}
+
+function tlWho(r) {
+  const label = r.user ? '@' + r.user : truncAddr(r.creator);
+  const a = el('a', { href: '/address/' + encodeURIComponent(r.creator) + cxNetQ(_tl.net), className: 'tl-who', title: r.creator }, label);
+  return a;
+}
+
+function tlCard(r) {
+  const card = el('article', { className: 'tl-card tl-' + r.kind, 'data-kind': r.kind, 'data-day': tlDay(r) });
+  const av = el('div', { className: 'tl-av' });
+  const ic = identicon(r.creator, 28);
+  if (ic) av.appendChild(ic);
+  card.appendChild(av);
+  const body = el('div', {});
+  const head = el('div', { className: 'tl-head' });
+  head.appendChild(tlWho(r));
+  const rel = cxRel(r.path);
+  const path = r.kind === 'failed'
+    ? el('span', { className: 'tl-path', title: r.path }, rel)
+    : el('a', { href: cxURL(r.path, null, _tl.net), className: 'tl-path', title: 'read ' + rel + ' in the code map' }, rel);
+  const verb = { new: 'published', version: 'released', redeploy: 'republished', failed: 'tried to publish' }[r.kind] || 'published';
+  head.appendChild(el('span', { className: 'tl-verb' }, verb));
+  head.appendChild(path);
+  if (r.kind === 'version' && r.family) {
+    const of = el('span', { className: 'tl-verb', title: r.prev ? 'after ' + cxRel(r.prev) : '' }, 'a new version of ' + cxRel(r.family));
+    head.appendChild(of);
+  }
+  head.appendChild(el('span', { className: 'tl-kind tl-kind-' + r.kind }, TL_KIND_LABEL[r.kind] || r.kind));
+  if (r.debut) head.appendChild(el('span', { className: 'tl-kind tl-debut', title: 'the first package this address published here' }, 'first package'));
+  body.appendChild(head);
+  if (r.summary) body.appendChild(el('div', { className: 'tl-sum' }, r.summary));
+  const meta = el('div', { className: 'tl-meta' });
+  meta.appendChild(el('span', {}, r.k === 'r' ? 'realm' : 'package'));
+  const size = [fmtNum(r.files) + (r.files === 1 ? ' file' : ' files')];
+  if (r.lines) size.push(fmtNum(r.lines) + (r.lines === 1 ? ' line' : ' lines'));
+  if (r.imports) size.push(fmtNum(r.imports) + (r.imports === 1 ? ' import' : ' imports'));
+  meta.appendChild(el('span', {}, size.join(' · ')));
+  if (r.kind === 'redeploy' && r.nth) meta.appendChild(el('span', {}, 'publication ' + r.nth + ' at this path'));
+  if (r.time) {
+    const t = timeEl(r.time);
+    t.title = new Date(r.time).toUTCString();
+    meta.appendChild(t);
+  }
+  const blk = el('span', {}, 'block ');
+  blk.appendChild(blockLink(r.height));
+  meta.appendChild(blk);
+  meta.appendChild(el('a', { href: '/tx/' + encodeURIComponent(r.tx) + cxNetQ(_tl.net), title: r.tx }, 'tx'));
+  body.appendChild(meta);
+  card.appendChild(body);
+  return card;
+}
+
+// tlLoadMore fetches the page after the last row on screen. One in flight at
+// a time; a page that lands after the filters changed is dropped.
+function tlLoadMore() {
+  if (!_tl.next || _tl.loading) return _tl.loading;
+  const sig = _tl.sig;
+  const f = tlFilters();
+  const before = _tl.next;
+  _tl.loading = api(tlPagePath(f, before), _tl.net).then((page) => {
+    if (_tl.sig !== sig || _tl.next !== before) return;
+    _tl.rows = _tl.rows.concat(page.rows || []);
+    _tl.next = page.next || '';
+    tlRenderFeed();
+  }).catch((err) => {
+    console.error('timeline page:', err);
+  }).finally(() => { _tl.loading = null; });
+  return _tl.loading;
+}
+
+// tlRenderHeat draws the calendar: 53 weeks of 7 days, Sunday on top, the
+// current week last, the way GitHub draws a contribution graph. Five steps,
+// zero and the quarters of the busiest day.
+function tlRenderHeat(heat, f) {
+  const box = document.querySelector('#codetimeline-content .tl-heat');
+  if (!box) return;
+  box.textContent = '';
+  const counts = new Map();
+  for (const d of heat.days || []) counts.set(d.d, d);
+  const head = el('div', { className: 'tl-heat-head' });
+  head.appendChild(el('span', {}, el('b', {}, fmtNum(heat.total || 0)), ' publications in the last year, by UTC day'));
+  const legend = el('span', { className: 'tl-legend' }, 'less');
+  for (let l = 0; l <= 4; l++) legend.appendChild(el('span', { className: 'tl-cell', 'data-l': String(l) }));
+  legend.appendChild(document.createTextNode('more'));
+  head.appendChild(legend);
+  box.appendChild(head);
+
+  const to = new Date(heat.to + 'T00:00:00Z');
+  const from = new Date(heat.from + 'T00:00:00Z');
+  const start = new Date(to.getTime() - (52 * 7 + to.getUTCDay()) * 86400000);
+  const max = heat.max || 0;
+  const level = (n) => !n || !max ? 0 : Math.min(4, Math.ceil((n / max) * 4));
+  const cal = el('div', { className: 'tl-cal', role: 'grid', 'aria-label': 'packages published per day' });
+  // Month labels on the first row, weekday labels down the first column.
+  let lastMonth = -1;
+  for (let w = 0; w < 53; w++) {
+    const d = new Date(start.getTime() + w * 7 * 86400000);
+    const m = el('span', { className: 'tl-cal-m' });
+    m.style.gridRow = '1';
+    m.style.gridColumn = String(w + 2);
+    if (d.getUTCMonth() !== lastMonth && d.getUTCDate() <= 7) {
+      m.textContent = d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' }).toLowerCase();
+      lastMonth = d.getUTCMonth();
+    }
+    cal.appendChild(m);
+  }
+  ['', 'mon', '', 'wed', '', 'fri', ''].forEach((name, i) => {
+    const s = el('span', { className: 'tl-cal-w' }, name);
+    s.style.gridRow = String(i + 2);
+    s.style.gridColumn = '1';
+    cal.appendChild(s);
+  });
+  for (let w = 0; w < 53; w++) {
+    for (let dow = 0; dow < 7; dow++) {
+      const d = new Date(start.getTime() + (w * 7 + dow) * 86400000);
+      const day = d.toISOString().slice(0, 10);
+      const c = counts.get(day);
+      const n = c ? (c.n || 0) + (c.v || 0) + (c.r || 0) : 0;
+      const cell = el('button', { type: 'button', className: 'tl-cell', 'data-day': day, 'data-l': String(level(n)), 'data-n': String(n) });
+      cell.style.gridRow = String(dow + 2);
+      cell.style.gridColumn = String(w + 2);
+      if (d < from || d > to) cell.classList.add('tl-out');
+      const nice = d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+      let tip = (n === 0 ? 'no packages' : n === 1 ? '1 package' : n + ' packages') + ' on ' + nice;
+      if (c && n) {
+        const parts = [];
+        if (c.n) parts.push(c.n + ' new');
+        if (c.v) parts.push(c.v + ' new version' + (c.v === 1 ? '' : 's'));
+        if (c.r) parts.push(c.r + ' republished');
+        tip += ': ' + parts.join(', ');
+      }
+      cell.title = tip;
+      cell.setAttribute('aria-label', tip);
+      if (f.day === day) cell.setAttribute('aria-pressed', 'true');
+      cell.addEventListener('click', () => tlSetFilters({ ...tlFilters(), day: tlFilters().day === day ? '' : day }));
+      cal.appendChild(cell);
+    }
+  }
+  box.appendChild(cal);
+}
+
 // --- /code: every package on one chain, as a code explorer -------------------
 //
 // The front door is a map of all the code on the chain, the rest is an editor
@@ -28456,8 +28915,9 @@ function cxBuildShell(root, net) {
   top.appendChild(drawerBtn);
   const title = el('a', { href: cxMapURL('', net), className: 'cx-title' });
   title.appendChild(icon('files'));
-  title.appendChild(document.createTextNode('code'));
+  title.appendChild(document.createTextNode('code map'));
   top.appendChild(title);
+  top.appendChild(el('a', { href: tlURL({}, net), className: 'cx-tab', title: 'what was published on this chain, newest first' }, 'timeline'));
 
   const nets = el('div', { className: 'cx-nets', role: 'group', 'aria-label': 'chain' });
   top.appendChild(nets);

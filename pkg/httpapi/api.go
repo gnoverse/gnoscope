@@ -102,6 +102,11 @@ type API struct {
 	// with no config the best verdict any attributable event reaches is
 	// "maybe". See SetClearance.
 	clearance discover.ClearanceConfig
+
+	// timeline is the classified deploy feed per network, recomputed when
+	// the network's submissions move. Zero value ready; see
+	// api_code_timeline.go.
+	timeline timelineMemo
 }
 
 // SetClearance installs the operator's clearance lists.
@@ -1023,6 +1028,8 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/search", a.HandleSearch)
 	mux.HandleFunc("GET /api/code/search", a.HandleCodeSearch)
 	mux.HandleFunc("GET "+CodeTreePath, a.HandleCodeTree)
+	mux.HandleFunc("GET "+CodeTimelinePath, a.HandleCodeTimeline)
+	mux.HandleFunc("GET "+CodeTimelineHeatmapPath, a.HandleCodeTimelineHeatmap)
 	mux.HandleFunc("GET /api/stdlib", a.HandleStdlib)
 	mux.HandleFunc("GET /api/stdlib/{path...}", a.HandleStdlib)
 	mux.HandleFunc("GET /api/symbols/search", a.HandleSymbolSearch)
