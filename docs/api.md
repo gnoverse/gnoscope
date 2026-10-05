@@ -577,6 +577,7 @@ other and carry `genesis`.
 | `files` | files in the submission |
 | `current` | this submission's source is the one stored. Only then are `lines`, `imports` and `summary` known: the package's doc comment, else the first prose line of its README, cut to one sentence of at most 160 characters, plain text |
 | `family` | the generation family key, when it differs from the path |
+| `gen` | on a `version`, how many generations of its family have been published on this network, this one included, in publication order: the 6 in "6th version". Absent on every other kind |
 | `debut` | the creator's first successful submission on this chain, read from `first_seen` like discover's first-time-publisher event |
 
 Paging is a cursor over (height, tx hash, message index) descending: `next` is
