@@ -46,6 +46,8 @@ type PackageFilter struct {
 	// Namespace is the element after the r/ or p/ marker, the same key
 	// NamespaceOf derives in Go. Empty means every namespace.
 	Namespace string
+	// Tag keeps only packages carrying this code-derived tag (pkg/tags).
+	Tag string
 }
 
 // where renders the filter as a SQL fragment plus its arguments.
@@ -61,6 +63,11 @@ func (f PackageFilter) where(col string) (string, []any) {
 	if f.Namespace != "" {
 		clauses = append(clauses, namespaceExpr(col)+" = ?")
 		args = append(args, f.Namespace)
+	}
+	if f.Tag != "" {
+		clauses = append(clauses, `EXISTS (SELECT 1 FROM package_tags t_f
+			WHERE t_f.network = `+col+`.network AND t_f.path = `+col+`.path AND t_f.tag = ?)`)
+		args = append(args, f.Tag)
 	}
 	if len(clauses) == 0 {
 		return "1=1", nil
@@ -132,7 +139,7 @@ func (d *DB) PackageFacets(network string, f PackageFilter) (KindFacet, []Namesp
 	// The kind counts ignore the kind filter on purpose: a control showing
 	// "realm 210 / pure 159" has to keep showing both after one is picked, or
 	// the reader cannot see what switching would give them.
-	kindFilter := PackageFilter{Namespace: f.Namespace}
+	kindFilter := PackageFilter{Namespace: f.Namespace, Tag: f.Tag}
 	where, args := kindFilter.where("p")
 	q := `SELECT COUNT(*), COALESCE(SUM(p.is_realm = 1), 0), COALESCE(SUM(p.is_realm = 0), 0)
 		FROM packages p WHERE ` + where + ` AND ` + d.networkFilter("p.network", network)
@@ -141,7 +148,7 @@ func (d *DB) PackageFacets(network string, f PackageFilter) (KindFacet, []Namesp
 	}
 
 	// Namespace counts ignore the namespace filter, for the same reason.
-	nsFilter := PackageFilter{Kind: f.Kind}
+	nsFilter := PackageFilter{Kind: f.Kind, Tag: f.Tag}
 	where, args = nsFilter.where("p")
 	q = `SELECT ` + namespaceExpr("p") + ` AS ns,
 		COUNT(*), COALESCE(SUM(p.is_realm = 1), 0), COALESCE(SUM(p.is_realm = 0), 0)

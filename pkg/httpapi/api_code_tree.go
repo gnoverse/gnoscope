@@ -47,7 +47,17 @@ func (a *API) HandleCodeTree(w http.ResponseWriter, r *http.Request) {
 	// bytes under the same ETag. A window sliding by the second would change
 	// the body on every recompute and make the validator useless.
 	since := codeTreeNow().UTC().Truncate(time.Hour).AddDate(0, 0, -codeTreeWindowDays)
+	tag, bad := tagParam(r)
+	if bad != "" {
+		jsonError(w, bad, http.StatusBadRequest)
+		return
+	}
 	pkgs, err := a.db.CodeTree(network, since)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	pkgTags, err := a.db.PackageTags(network, nil)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -55,13 +65,22 @@ func (a *API) HandleCodeTree(w http.ResponseWriter, r *http.Request) {
 
 	out := codeTree{
 		Network:    network,
-		Count:      len(pkgs),
 		Since:      since.Format(time.RFC3339),
 		WindowDays: codeTreeWindowDays,
 		Packages:   make([]codeTreePackage, 0, len(pkgs)),
 	}
 	for _, p := range pkgs {
+		var names []string
+		hasTag := tag == ""
+		for _, t := range pkgTags[p.Path] {
+			names = append(names, t.Tag)
+			hasTag = hasTag || t.Tag == tag
+		}
+		if !hasTag {
+			continue
+		}
 		cp := codeTreePackage{
+			Tags:       names,
 			Path:       p.Path,
 			Namespace:  store.NamespaceOf(p.Path),
 			Kind:       "p",
@@ -98,6 +117,7 @@ func (a *API) HandleCodeTree(w http.ResponseWriter, r *http.Request) {
 		out.Bytes += cp.Bytes
 		out.Packages = append(out.Packages, cp)
 	}
+	out.Count = len(out.Packages)
 
 	body, err := json.Marshal(out)
 	if err != nil {
@@ -144,6 +164,10 @@ type codeTreePackage struct {
 	Calls      int            `json:"c,omitempty"`
 	Callers    int            `json:"u,omitempty"`
 	Dependents int            `json:"d,omitempty"`
+	// Tags are the package's code-derived tag names, in rule order. Names
+	// only: the evidence is per tag and per package, and /api/tags?path=
+	// serves it for the one package on screen.
+	Tags []string `json:"t,omitempty"`
 }
 
 // codeTreeFile serializes as a [name, lines, bytes] triple: an object per

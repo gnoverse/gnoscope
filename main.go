@@ -25,6 +25,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/stdlibs"
 	"github.com/gnoverse/gnoscope/pkg/store"
 	"github.com/gnoverse/gnoscope/pkg/syncer"
+	"github.com/gnoverse/gnoscope/pkg/tags"
 	"github.com/gnoverse/gnoscope/pkg/traffic"
 	"github.com/gnoverse/gnoscope/pkg/web"
 )
@@ -88,6 +89,11 @@ func run() error {
 		// test suite cannot wait ten minutes for the next pass.
 		achievementEvery = flag.Duration("achievement-interval", store.AchievementInterval,
 			"how often to rebuild the achievement table from indexed history")
+		// Same again for the code tags: a package stored through the syncer is
+		// tagged in the same write, so this pass only catches up what was
+		// written another way, and a fixture is exactly that.
+		tagsEvery = flag.Duration("tags-interval", 10*time.Minute,
+			"how often to catch up code-derived package tags; the staleness check is one query")
 		// The MCP endpoint carries no authentication, because the data is a
 		// public chain and an API key would make it useless to the agents it
 		// exists for. Per-IP limits are what make that safe, so they are
@@ -243,7 +249,10 @@ func run() error {
 	// stored source, so it costs nothing on the network and is a no-op once the
 	// current version is recorded. Errors are logged, not fatal: a stale
 	// dependency graph is not a reason to refuse to start.
+	// The code tags wait for it: library reads the edges it rewrites.
+	depsDone := make(chan struct{})
 	go func() {
+		defer close(depsDone)
 		if err := analyzer.ReextractDependencies(); err != nil {
 			log.Printf("re-extract dependencies: %v", err)
 		}
@@ -312,6 +321,42 @@ func run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// The code tags (pkg/tags): caught up once the dependency edges are
+	// re-extracted, then on their own timer. A package stored by the syncer
+	// is tagged in the same write; this is for everything written another
+	// way, and a no-op otherwise, which costs one query.
+	go func() {
+		select {
+		case <-depsDone:
+		case <-ctx.Done():
+			return
+		}
+		db.WaitBackground()
+		pass := func() {
+			start := time.Now()
+			res, err := db.RefreshPackageTags()
+			if err != nil {
+				log.Printf("code tags: %v", err)
+				return
+			}
+			if res.Packages > 0 || res.Removed > 0 {
+				log.Printf("code tags: %d packages tagged, %d removed, rules v%s, in %s",
+					res.Packages, res.Removed, tags.Version, time.Since(start).Round(time.Millisecond))
+			}
+		}
+		pass()
+		ticker := time.NewTicker(*tagsEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pass()
+			}
+		}
+	}()
 
 	// Written by the sync goroutines below, read by the sanity endpoint.
 	syncHealth := syncer.NewRegistry()

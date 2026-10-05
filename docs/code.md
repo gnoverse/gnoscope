@@ -52,6 +52,7 @@ file. The area is lines (or bytes); the colour is per package:
 | `activity` (default) | calls in the tree's window (30 days), on a log scale |
 | `age` | the stamp height, by rank: genesis is the oldest end of the ramp |
 | `kind` | realm or pure package |
+| `tag` | the package's first [code tag](tags.md) in rule order, which puts the specific ones (`token`, `payments`) ahead of the common ones (`render`). The legend's chips pick one tag, and the map lights that tag alone (`?tag=`) |
 
 When nothing on the chain was called in the window, the map opens on `age`
 instead and the legend says why: a map drawn in one flat colour shows nothing.
@@ -120,10 +121,14 @@ from nothing to the busiest day, from `/api/code/timeline/heatmap`. Hovering a
 day says how many packages were published on it; clicking one narrows the feed
 to that day, and clicking it again, or the chip it adds, widens it back.
 
+Each current card carries the package's [code tags](tags.md), the line that
+earned each one on hover; a row of tag chips under the filters, with how many
+packages carry each, narrows the feed (and the calendar) to one (`tag`).
+
 The chips choose the kinds (all, new only, or any mix of new, new version and
 republished) and whether failed submissions are listed; the two boxes narrow to
 a namespace or a publisher (an address or a registered name), and the calendar
-follows them. Every filter is in the URL (`kind`, `failed`, `ns`, `creator`,
+follows them. Every filter is in the URL (`kind`, `failed`, `ns`, `creator`, `tag`,
 `day`), so a view is a link.
 
 The first page and the calendar go through the site's payload cache, so a
@@ -143,6 +148,11 @@ cache, 68 ms on a reload.
 | `enter` | tree | open the package or file |
 | `space` | tree | open or close without navigating |
 | `g` then `c` | anywhere | go to the code map |
+
+`tag:<name>` in the tree filter or the palette narrows either to the packages
+carrying that [code tag](tags.md) (`tag:defi`, `tag:nft pool`); the rest of
+the query applies inside them. The package header carries its tags as chips,
+the evidence on hover.
 
 The palette scores every package path and every file path with a fuzzy
 subsequence match: the best alignment of the query in the path, where a letter
