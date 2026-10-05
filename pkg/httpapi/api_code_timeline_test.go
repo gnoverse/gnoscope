@@ -117,8 +117,13 @@ func TestHandleCodeTimelineClassifies(t *testing.T) {
 	for _, r := range body.Rows {
 		by[r.Tx] = r
 	}
-	if r := by["tx-a2"]; r.Prev != "gno.land/r/ns/app/v1" || r.Family != "gno.land/r/ns/app" {
-		t.Errorf("version row: prev %q family %q", r.Prev, r.Family)
+	if r := by["tx-a2"]; r.Prev != "gno.land/r/ns/app/v1" || r.Family != "gno.land/r/ns/app" || r.Gen != 2 {
+		t.Errorf("version row: prev %q family %q gen %d", r.Prev, r.Family, r.Gen)
+	}
+	// Only a version says which one it is: a first publication is not "the
+	// 1st version" of anything.
+	if r := by["tx-a1"]; r.Gen != 0 {
+		t.Errorf("new row carries gen %d", r.Gen)
 	}
 	// The current submission carries its size, imports and summary; the one
 	// its path was republished over does not.

@@ -640,6 +640,14 @@ pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4p
 .tl-card { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 0 12px; padding: 10px 12px; margin-bottom: 6px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); }
 .tl-card:hover { border-color: #3a3a3a; }
+/* A realm card's picture: a fixed 128x72 box in its own column, so a card is
+   one height whether its image is in flight, drawn, or replaced by a tile. */
+.tl-card.tl-has-shot { grid-template-columns: 32px minmax(0, 1fr) 128px; }
+.tl-shot { align-self: start; flex: 0 0 auto; }
+.tl-pathbox, .tl-whobox { display: inline-flex; align-items: baseline; gap: 2px; min-width: 0; }
+.tl-pathbox .copy-btn, .tl-whobox .copy-btn { opacity: 0; font-size: 11px; }
+.tl-card:hover .copy-btn, .tl-card .copy-btn:focus-visible { opacity: 1; }
+@media (max-width: 720px) { .tl-card.tl-has-shot { grid-template-columns: 32px minmax(0, 1fr); } }
 .tl-av .identicon svg { border-radius: 4px; }
 .tl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 14px; min-width: 0; }
 .tl-head .tl-path { font-family: var(--mono); font-weight: bold; overflow-wrap: anywhere; }
@@ -2335,6 +2343,30 @@ function addrLabel(addr) { return (addrInfo(addr) || {}).label || ''; }
 function truncAddr(addr) {
   if (!addr) return '';
   return addr.length <= 16 ? addr : addr.slice(0, 8) + '\u2026' + addr.slice(-4);
+}
+// shortPkg is the one place a package path is shortened for a reader: the
+// package's own name with its version (`bubblerumble6`, `relay/v0`), the
+// namespace in front only when it is a name somebody chose (`moul/relay/v0`,
+// `gnoswap/pool`), never a g1... address, which says nothing a reader can
+// recognise. A path deeper than two segments under its namespace keeps the
+// tail and marks the cut (`moul/…/governor/v1`). The full path is the
+// caller's to put in the tooltip and the copy button; this is display only.
+function shortPkg(path) {
+  const rel = String(path || '').replace(/^gno\.land\//, '');
+  const segs = rel.split('/');
+  if (segs.length < 3 || (segs[0] !== 'r' && segs[0] !== 'p')) return rel;
+  const ns = segs[1];
+  const rest = segs.slice(2);
+  // A bare version segment names a generation, not a package: keep its parent.
+  const tailN = rest.length >= 2 && /^v\d+$/.test(rest[rest.length - 1]) ? 2 : 1;
+  const shown = rest.length <= 2 ? rest.join('/') : '\u2026/' + rest.slice(-tailN).join('/');
+  return looksLikeAddress(ns) ? shown : ns + '/' + shown;
+}
+// ordinal spells 1 as 1st, 2 as 2nd, 11 as 11th, 22 as 22nd.
+function ordinal(n) {
+  const t = n % 100;
+  const suf = t >= 11 && t <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return n + suf;
 }
 function shortAddr(addr) {
   if (!addr) return '';
@@ -28384,10 +28416,24 @@ function tlRenderFeed() {
   }
 }
 
+// tlWho names the publisher: @name when the address registered one on this
+// chain, else a label the site already knows it by, else the short address.
+// The whole address is in the tooltip and behind the copy button.
 function tlWho(r) {
-  const label = r.user ? '@' + r.user : truncAddr(r.creator);
-  const a = el('a', { href: '/address/' + encodeURIComponent(r.creator) + cxNetQ(_tl.net), className: 'tl-who', title: r.creator }, label);
-  return a;
+  const label = r.user ? '@' + r.user : shortAddr(r.creator);
+  const wrap = el('span', { className: 'tl-whobox' });
+  wrap.appendChild(el('a', { href: '/address/' + encodeURIComponent(r.creator) + cxNetQ(_tl.net), className: 'tl-who', title: r.creator }, label));
+  wrap.appendChild(copyButton(r.creator, 'copy the address'));
+  return wrap;
+}
+
+// tlShot is a realm card's picture, in a box of fixed size so the card is the
+// same height before, during and after the image arrives, and whether or not
+// it arrives at all (shotEl swaps a failed one for a tile of the same box). A
+// pure package draws nothing, and a refused submission has nothing to draw.
+function tlShot(r) {
+  if (r.k !== 'r' || r.kind === 'failed') return null;
+  return shotEl(r.path, { size: 'thumb', cls: 'shot-thumb tl-shot', network: _tl.net, v: r.height });
 }
 
 function tlCard(r) {
@@ -28400,15 +28446,22 @@ function tlCard(r) {
   const head = el('div', { className: 'tl-head' });
   head.appendChild(tlWho(r));
   const rel = cxRel(r.path);
+  const name = shortPkg(r.path);
   const path = r.kind === 'failed'
-    ? el('span', { className: 'tl-path', title: r.path }, rel)
-    : el('a', { href: cxURL(r.path, null, _tl.net), className: 'tl-path', title: 'read ' + rel + ' in the code map' }, rel);
+    ? el('span', { className: 'tl-path', title: rel }, name)
+    : el('a', { href: cxURL(r.path, null, _tl.net), className: 'tl-path', title: rel + '\nread it in the code map' }, name);
   const verb = { new: 'published', version: 'released', redeploy: 'republished', failed: 'tried to publish' }[r.kind] || 'published';
   head.appendChild(el('span', { className: 'tl-verb' }, verb));
-  head.appendChild(path);
-  if (r.kind === 'version' && r.family) {
-    const of = el('span', { className: 'tl-verb', title: r.prev ? 'after ' + cxRel(r.prev) : '' }, 'a new version of ' + cxRel(r.family));
-    head.appendChild(of);
+  const pathBox = el('span', { className: 'tl-pathbox' });
+  pathBox.appendChild(path);
+  pathBox.appendChild(copyButton(rel, 'copy the path'));
+  head.appendChild(pathBox);
+  if (r.kind === 'version') {
+    const what = r.gen > 1 ? ordinal(r.gen) + ' version' : 'new version';
+    const tip = [];
+    if (r.family) tip.push('a new version of ' + cxRel(r.family));
+    if (r.prev) tip.push('after ' + cxRel(r.prev));
+    head.appendChild(el('span', { className: 'tl-verb tl-gen', title: tip.join(', ') }, '(' + what + ')'));
   }
   head.appendChild(el('span', { className: 'tl-kind tl-kind-' + r.kind }, TL_KIND_LABEL[r.kind] || r.kind));
   if (r.debut) head.appendChild(el('span', { className: 'tl-kind tl-debut', title: 'the first package this address published here' }, 'first package'));
@@ -28432,6 +28485,11 @@ function tlCard(r) {
   meta.appendChild(el('a', { href: '/tx/' + encodeURIComponent(r.tx) + cxNetQ(_tl.net), title: r.tx }, 'tx'));
   body.appendChild(meta);
   card.appendChild(body);
+  const shot = tlShot(r);
+  if (shot) {
+    card.classList.add('tl-has-shot');
+    card.appendChild(shot);
+  }
   return card;
 }
 
