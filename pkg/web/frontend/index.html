@@ -662,6 +662,7 @@ pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4p
 .tl-more { display: block; margin: 12px auto; }
 .tl-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: -4px 0 12px; }
 .tl-card .tag-chips { margin-top: 5px; }
+.tl-tags-k { font-size: 12px; color: var(--fg2); }
 
 /* Code-derived tags (pkg/tags), one component everywhere: a chip in the tag's
    own colour, set from JS as --tag so no tag name is ever part of a selector. */
@@ -28550,7 +28551,7 @@ function tlRenderTags(f) {
     box.textContent = '';
     const list = ((ix && ix.list) || []).filter(t => t.packages > 0 || t.tag === f.tag);
     if (!list.length) return;
-    box.appendChild(el('span', { className: 'tl-count', style: { marginLeft: '0' } }, 'tags'));
+    box.appendChild(el('span', { className: 'tl-tags-k' }, 'tags'));
     for (const t of list) {
       box.appendChild(tagChip(t.tag, {
         net, count: t.packages, pressed: f.tag === t.tag,

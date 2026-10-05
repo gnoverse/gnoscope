@@ -411,18 +411,19 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 
 | endpoint | description |
 |---|---|
-| `GET /api/realms` | list realms. `limit`, `offset` |
-| `GET /api/packages/facets` | counts per kind and per namespace, for the current filter |
+| `GET /api/realms` | list realms. `limit`, `offset`, `tag` (see [code tags](#code-tags)). Each item carries its `tags` |
+| `GET /api/packages/facets` | counts per kind, per namespace and per tag, for the current filter (`kind`, `namespace`, `tag`). `tags` is per-chain and empty in all-networks mode |
 | `GET /api/symbols/search` | find a declaration by name. `q`, `network`, `limit` |
 | `GET /api/users/search` | find a registered user by name or address prefix. `q`, `network`, `limit`. See Search below |
 | `GET /api/addresses/search` | address autocomplete: every known address starting with `q` (a `g1` prefix), richest first. `q`, `network`, `limit`. See Search below |
 | `GET /api/symbols/status` | what the symbol index covers |
-| `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset` |
-| `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not |
+| `GET /api/packages` | list all packages, realms and pure packages. `limit`, `offset`, `tag`. Each item carries its `tags` |
+| `GET /api/realm/{path...}` | detail for one package: metadata, source files, imports, dependents, callers, MsgRun references. `recent_calls` and `msgrun_refs` are the 50 most recent of each, and carry `block_time` where the syncer knew it (omitted otherwise, so a consumer plotting them on a time axis can say how many it left out). `address` and `storage_deposit_address` are the two accounts the package owns, derived from its path (see below). `views` is how many times the realm was opened on this explorer over `views_window` (30d), absent when nobody has: see `/api/views` for what that number is and is not. `tags` are its [code tags](#code-tags) with their evidence |
+| `GET /api/tags` | the [code tags](#code-tags) rule table for one network: `{network, rules, tags[]}`, each `{tag, means, packages, realms, pure}`, in rule order, zeros included. With `path=`, that package's tags instead: `{network, path, rules, tags[]}`, each `{tag, why}`. **Requires `network`** |
 | `GET /api/gnohub/forge/{path...}` | what r/moul/forge claims about a package path: `{path, network, realm, linked, repo_id, repo_url, latest_release, release_count, log_head, unavailable}`. **Requires `network`**: the forge is realm state and the same path exists on more than one chain. `linked: false` with no `unavailable` means nobody has registered the package, which is the normal case and not an error. Reads live over `vm/qeval`, cached 2 minutes; see below |
 | `GET /api/source/{path...}` | a package's source apart from everything volatile, addressed by the submission that put it there. **Requires `network`** (400 without it, or with `all`). Without `at`: a manifest `{path, network, name, kind, stamp, files[], siblings[], submissions, redeploys}`, `stamp` = `{height, tx_hash, time}` of the current submission, each file `{name, size, lines}` (size in bytes), `siblings` the other generations of the same app on that network (see `discover.Generation`), each `{path, stamp}`, oldest generation first. `max-age=30` and an `ETag` over the bytes. With `at=<stamp height>`: `{path, network, name, kind, stamp, files[]}` with each file's `body`, `immutable` for a year; add `file=<name>` for one file, and `tokens=1` with it for that file classified for highlighting instead of its body (`{..., file, tokens, lines, decls}`). Any other `at` is a `409`. See below |
-| `GET /api/code/tree` | every deployed package on one network in one payload, for a file-tree explorer and a treemap of all the code on a chain. **Requires `network`** (400 without it, or with `all`). `{network, height, count, files, lines, bytes, since, window_days, packages[]}`, each package in short keys: `p` path, `ns` namespace, `k` kind (`r` realm, `p` pure), `h` stamp height, `f` files as `[name, lines, bytes]`, `l` and `b` the package totals, `fam` and `g` its version family, `c` calls and `u` unique callers in the window, `d` dependents. `public, max-age=60`, an `ETag`, `304` on `If-None-Match`, 5-minute server TTL. See below |
-| `GET /api/code/timeline` | every `MsgAddPackage` on one network, newest first, classified: `new`, `version`, `redeploy` or `failed`. **Requires `network`** (400 without it, or with `all`). `{network, height, total, rows[], next}`. Filters: `kind` (comma-separated or repeated), `failed=1` (failed submissions are hidden otherwise), `ns`, `creator` (an address or a registered name), `day` (`YYYY-MM-DD`, UTC). `limit` defaults to 50, capped at 200; `before=<next>` is the following page. `public, max-age=15` on the head, `max-age=300` behind a cursor, an `ETag`, `304` on `If-None-Match`. See below |
+| `GET /api/code/tree` | every deployed package on one network in one payload, for a file-tree explorer and a treemap of all the code on a chain. **Requires `network`** (400 without it, or with `all`). `{network, height, count, files, lines, bytes, since, window_days, packages[]}`, each package in short keys: `p` path, `ns` namespace, `k` kind (`r` realm, `p` pure), `h` stamp height, `f` files as `[name, lines, bytes]`, `l` and `b` the package totals, `fam` and `g` its version family, `c` calls and `u` unique callers in the window, `d` dependents, `t` tag names. `tag=` keeps only the packages carrying it. `public, max-age=60`, an `ETag`, `304` on `If-None-Match`, 5-minute server TTL. See below |
+| `GET /api/code/timeline` | every `MsgAddPackage` on one network, newest first, classified: `new`, `version`, `redeploy` or `failed`. **Requires `network`** (400 without it, or with `all`). `{network, height, total, rows[], next}`. Filters: `kind` (comma-separated or repeated), `failed=1` (failed submissions are hidden otherwise), `ns`, `creator` (an address or a registered name), `tag`, `day` (`YYYY-MM-DD`, UTC). `limit` defaults to 50, capped at 200; `before=<next>` is the following page. `public, max-age=15` on the head, `max-age=300` behind a cursor, an `ETag`, `304` on `If-None-Match`. See below |
 | `GET /api/code/timeline/heatmap` | successful publications per UTC day over the last 365 days, split by kind, for a contribution calendar: `{network, from, to, total, max, days[]}`, each day `{d, n, v, r}` (new, version, redeploy), only days with something. Takes the timeline's `ns` and `creator`. `public, max-age=60` and an `ETag` |
 | `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
@@ -516,6 +517,7 @@ about 45 ms cold and served from memory after that.
 | `g` | the generation vector, one number per segment under the namespace (`r/ns/app/v2` is `[0, 2]`). Omitted when every entry is zero |
 | `c`, `u` | calls, failed ones included as in `/api/packages`, and unique callers, in the window. Omitted when zero |
 | `d` | how many packages on this network import this one. Omitted when zero |
+| `t` | the package's [code tags](#code-tags), names only, in rule order; `GET /api/tags?path=` has the evidence. Omitted when it has none |
 
 The top level carries the network, `height` (the newest stamp in the list),
 `count`, the chain totals `files`, `lines` and `bytes`, and the window as
@@ -545,6 +547,18 @@ Whether a package is live or parked is not here: that is read over RPC per
 path, with a cold cost measured in seconds, and a payload whose content
 depended on whether that cache happened to be warm could not keep a stable
 validator. Overlay `/api/inert/queue` instead.
+
+### Code tags
+
+What a package's code does, several labels per package, each with the import
+or symbol that earned it (`why`: `imports gno.land/p/nt/grc20/v0 (token.gno:5)`).
+The rules, their calibration and where they are stored are in
+[tags.md](tags.md). They ride on `/api/code/tree` (`t`, names only),
+`/api/code/timeline` rows, `/api/realm/{path}`, `/api/realms` and
+`/api/packages` (`tags`), and each of those takes `tag=` to keep only what
+carries one. A tag the rule table does not have is a 400 naming the ones it
+does, not an empty list that reads as "nothing here does that". Every read is
+per network: one path is a different package on every chain.
 
 ### The code timeline
 
@@ -579,6 +593,7 @@ other and carry `genesis`.
 | `family` | the generation family key, when it differs from the path |
 | `gen` | on a `version`, how many generations of its family have been published on this network, this one included, in publication order: the 6 in "6th version". Absent on every other kind |
 | `debut` | the creator's first successful submission on this chain, read from `first_seen` like discover's first-time-publisher event |
+| `tags` | the stored source's [code tags](#code-tags), `{tag, why}`. Like `lines`, only on a `current` row, so `tag=` matches current rows only |
 
 Paging is a cursor over (height, tx hash, message index) descending: `next` is
 `<height>.<msg>.<tx>`, and `before=<next>` returns the rows strictly after it,
@@ -590,7 +605,7 @@ that can move is a row's lines and summary, which leave it when its path is
 republished.
 
 The classified feed is computed once per network and reused until the
-network's submission count or newest height moves, or five minutes pass (the
+network's submission count, newest height or number of tag rows moves, or five minutes pass (the
 symbol indexer fills doc comments after the deploy that carried them).
 Measured 2026-10-05 against a local copy of gnoland1 (688 submissions): 80 ms
 for the first request, the head page 25 KB of JSON and 5.4 KB gzipped, then

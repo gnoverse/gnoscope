@@ -64,12 +64,18 @@ type CodeTimelineSource struct {
 }
 
 // CodeTimelineStamp is a cheap fingerprint of one network's submissions: any
-// new MsgAddPackage moves the count, and a backfill moves it too.
+// new MsgAddPackage moves the count, and a backfill moves it too. The tag
+// rows are counted in, so the tag refresh pass catching up a database (the
+// first start after the table exists) shows on the feed without waiting out
+// the memo.
 func (d *DB) CodeTimelineStamp(network string) (count, maxHeight int, err error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	err = d.db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(block_height), -1)
-		FROM package_submissions WHERE network = ?`, network).Scan(&count, &maxHeight)
+	err = d.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM package_submissions WHERE network = ?)
+		  + (SELECT COUNT(*) FROM package_tags WHERE network = ?),
+		(SELECT COALESCE(MAX(block_height), -1) FROM package_submissions WHERE network = ?)`,
+		network, network, network).Scan(&count, &maxHeight)
 	return count, maxHeight, err
 }
 

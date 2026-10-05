@@ -8,7 +8,7 @@ the tooltips in the product are the same bytes.
 to this table. Two places inventing their own phrasing for "parked package" is how a reader
 ends up being told two different things about one state.
 
-Version: 2026-09-28
+Version: 2026-10-05
 
 ## Rules
 
@@ -46,6 +46,7 @@ Enforced by `pkg/glossary`, so breaking one fails CI rather than shipping.
 | render | The page a realm draws for itself. Some realms draw one and some do not, and one that does not is not broken. |
 | session key | A second **address** somebody has allowed to act for their account, within limits they set. It signs, but the chain records the account it acts for, so its own page shows nothing it did. |
 | storage deposit | Money locked up to pay for the space that code and data take on the chain. Unlike gas it comes back if the space is freed. |
+| tag | A short label on a **package** or a **realm** saying what its code does, like moving a token or drawing a page. It is worked out from the code itself, never from the name, and it names the line that earned it. One package can carry several. |
 | transaction | One instruction sent to the chain by one person, which either worked or did not. |
 | unique callers | How many different accounts used something, as opposed to how many times it was used. One account using it a thousand times is still one. |
 | validator | One of the machines that agree on what happened and in what order. Mainnet has a small set of them and a different operator runs each one. |
