@@ -153,12 +153,116 @@ test('a hostile path, name and summary are drawn as text', async ({ page }) => {
 
   const card = page.locator('.tl-card');
   await expect(card).toHaveCount(1);
-  await expect(card.locator('.tl-path')).toHaveText('r/evil/' + evil);
+  // Short, and still text: the namespace is a name, so it leads.
+  await expect(card.locator('.tl-path')).toHaveText('evil/' + evil);
+  await expect(card.locator('.tl-path')).toHaveAttribute('title', new RegExp('^r/evil/'));
   await expect(card.locator('.tl-who')).toHaveText('@<b>boss</b>');
   await expect(card.locator('.tl-sum')).toHaveText('<script>window.__pwned=1</script>' + evil);
-  await expect(card).toContainText('a new version of r/evil/<i>fam</i>');
-  expect(await page.locator('.tl-feed img, .tl-feed script, .tl-feed b, .tl-feed i, .tl-feed u').count()).toBe(0);
+  await expect(card.locator('.tl-gen')).toHaveAttribute('title', 'a new version of r/evil/<i>fam</i>, after r/evil/<u>old</u>');
+  // The one image allowed is the realm's own picture, asked for by URL.
+  expect(await page.locator('.tl-feed img:not(.tl-shot img), .tl-feed script, .tl-feed b, .tl-feed i, .tl-feed u').count()).toBe(0);
   expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});
+
+// A card is read at a glance: who, by the name they registered when there is
+// one; what, by the package's own name and version, the namespace only when
+// it is a name. The rest is on hover and behind the copy buttons.
+test('names are short: @name, a short address, the package name and its version', async ({ page }) => {
+  const w = watch(page);
+  const now = new Date().toISOString();
+  const addr = 'g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr';
+  const row = (o) => ({ k: 'r', height: 10, time: now, msg: 0, files: 1, current: false, nth: 1, ...o });
+  await page.route(/\/api\/code\/timeline\?/, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      network: 'alpha', height: 10, total: 5,
+      rows: [
+        row({ kind: 'redeploy', path: 'gno.land/r/moul/relay/v0', ns: 'moul', creator: 'g1moul0000000000000000000000000000000000', user: 'moul', tx: 't1', nth: 3 }),
+        row({ kind: 'version', path: 'gno.land/r/' + addr + '/bubblerumble6', ns: addr, creator: addr, tx: 't2',
+          family: 'gno.land/r/' + addr + '/bubblerumble', prev: 'gno.land/r/' + addr + '/bubblerumble5', gen: 6 }),
+        row({ kind: 'new', path: 'gno.land/p/' + addr + '/relay/v0', ns: addr, k: 'p', creator: addr, tx: 't3' }),
+        row({ kind: 'new', path: 'gno.land/r/moul/x/daily/governor/v1', ns: 'moul', creator: addr, tx: 't4' }),
+        row({ kind: 'new', path: 'gno.land/r/gnoswap/pool', ns: 'gnoswap', creator: addr, tx: 't5' }),
+      ],
+    }),
+  }));
+  await page.goto(URL0);
+  await settle(page);
+
+  const cards = page.locator('.tl-card');
+  await expect(cards).toHaveCount(5);
+  const path = (i) => cards.nth(i).locator('.tl-path');
+  const who = (i) => cards.nth(i).locator('.tl-who');
+
+  // Registered: @name. The namespace is a name, so it leads the path.
+  await expect(who(0)).toHaveText('@moul');
+  await expect(path(0)).toHaveText('moul/relay/v0');
+  await expect(path(0)).toHaveAttribute('title', /^r\/moul\/relay\/v0\n/);
+
+  // Not registered: a short address, the whole one on hover and on copy.
+  await expect(who(1)).toHaveText('g1leu8d2\u202695wr');
+  await expect(who(1)).toHaveAttribute('title', addr);
+  await expect(cards.nth(1).locator('.tl-whobox .copy-btn')).toHaveAttribute('aria-label', 'copy the address');
+  // An address namespace says nothing, so it is dropped; the version is said
+  // in words.
+  await expect(path(1)).toHaveText('bubblerumble6');
+  await expect(cards.nth(1).locator('.tl-gen')).toHaveText('(6th version)');
+  await expect(cards.nth(1).locator('.tl-gen')).toHaveAttribute('title', /bubblerumble, after r\/g1leu.*\/bubblerumble5$/);
+  // A bare version segment keeps its parent.
+  await expect(path(2)).toHaveText('relay/v0');
+  // Deep under a name: the name, the cut, the package.
+  await expect(path(3)).toHaveText('moul/\u2026/governor/v1');
+  await expect(path(4)).toHaveText('gnoswap/pool');
+  for (let i = 0; i < 5; i++) await expect(path(i)).not.toContainText('g1');
+
+  // Copy puts the whole path on the clipboard, not the short one.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await cards.nth(1).hover();
+  await cards.nth(1).locator('.tl-pathbox .copy-btn').click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('r/' + addr + '/bubblerumble6');
+
+  expect(w.jsErrors).toEqual([]);
+  expect(unexpected(w.failedRequests)).toEqual([]);
+});
+
+// A realm card carries what the realm looks like; a pure package has no page
+// to show and carries nothing. The box is sized before the image arrives, so
+// a feed of fifty cards does not jump as fifty pictures land.
+test('realm cards carry a sized, lazy thumbnail, pure ones none, and nothing moves when it lands', async ({ page }) => {
+  const w = watch(page);
+  let release;
+  const gate = new Promise(r => { release = r; });
+  await page.route(/\/api\/shot\?/, async (route) => { await gate; await route.continue(); });
+  await page.goto(URL0 + '&ns=fresh');
+  await expect(page.locator('.tl-card')).toHaveCount(4);
+
+  const realm = page.locator('.tl-card', { has: page.locator('a.tl-path[href^="/code/r/fresh/shop"]') });
+  const pure = page.locator('.tl-card', { has: page.locator('a.tl-path[href^="/code/p/fresh/kit"]') });
+  const img = realm.locator('.tl-shot img');
+  await expect(img).toHaveCount(1);
+  await expect(img).toHaveAttribute('loading', 'lazy');
+  await expect(img).toHaveAttribute('src', /\/api\/shot\?.*size=thumb/);
+  await expect(img).toHaveAttribute('width', /\d+/);
+  await expect(img).toHaveAttribute('height', /\d+/);
+  expect(await img.getAttribute('onerror')).toBeNull();
+  await expect(pure.locator('.tl-shot, img')).toHaveCount(0);
+
+  // Every card's box with the pictures still in flight, then after they land.
+  const boxes = () => page.locator('.tl-card').evaluateAll(cs => cs.map(c => {
+    const r = c.getBoundingClientRect();
+    return [Math.round(r.top), Math.round(r.height)];
+  }));
+  const before = await boxes();
+  const shotBox = await realm.locator('.tl-shot').boundingBox();
+  expect(Math.round(shotBox.width)).toBe(128);
+  expect(Math.round(shotBox.height)).toBe(72);
+  release();
+  await expect.poll(() => img.evaluate(i => i.complete && i.naturalWidth > 0)).toBe(true);
+  await expect(realm.locator('.tl-shot')).not.toHaveClass(/loading/);
+  expect(await boxes()).toEqual(before);
 
   expect(w.jsErrors).toEqual([]);
   expect(unexpected(w.failedRequests)).toEqual([]);

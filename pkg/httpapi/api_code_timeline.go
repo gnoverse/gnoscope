@@ -90,6 +90,10 @@ type timelineRow struct {
 	// path. Prev is, for a version, the newest older generation's path.
 	Family string `json:"family,omitempty"`
 	Prev   string `json:"prev,omitempty"`
+	// Gen is, for a version, how many generations of its family have been
+	// published on this chain, this one included: the 6 in "6th version".
+	// Counted in publication order, so a skipped number does not count.
+	Gen int `json:"gen,omitempty"`
 	// Nth counts successful submissions at this path, this one included, so
 	// a redeploy's is 2 or more.
 	Nth int `json:"nth,omitempty"`
@@ -196,10 +200,10 @@ func classifyTimeline(src store.CodeTimelineSource) *timelineSnap {
 						prev = &families[family][i]
 					}
 				}
-				if prev != nil {
-					r.Kind, r.Prev = tlVersion, prev.path
-				}
 				families[family] = append(families[family], famGen{gen: gen, path: s.Path})
+				if prev != nil {
+					r.Kind, r.Prev, r.Gen = tlVersion, prev.path, len(families[family])
+				}
 			}
 		}
 		if s.Success {

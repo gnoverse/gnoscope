@@ -91,11 +91,29 @@ what was pushed, drawn from `/api/code/timeline` (see
 [api.md](api.md#the-code-timeline) for how each row is classified). Rows are
 grouped under a header per UTC day ("today", "yesterday", then dates), each one
 a card: the publisher's identicon and name, what happened ("published",
-"released ... a new version of ...", "republished", "tried to publish"), a
+"released bubblerumble6 (6th version)", "republished", "tried to publish"), a
 badge for the kind, files, lines and imports when the source is still the
 stored one, the package's own one-line summary, the age (the date on hover),
 the block and the transaction. The path opens in the code map, the publisher
 opens its address page. The page never says "deploy" (see the glossary).
+
+Names are short, because a card is read at a glance. The publisher is its
+`@name` when it registered one on this chain, else a label the site already
+knows it by, else the short address (`g1leu8d2…95wr`). The package is its own
+name with its version (`bubblerumble6`, `relay/v0`), with the namespace in
+front only when it is a name somebody chose (`moul/relay/v0`, `gnoswap/pool`),
+never a `g1...` address; a path more than two segments under its namespace
+keeps the tail (`moul/…/governor/v1`). The whole address and the whole path are
+on hover and behind a copy button on each. One helper, `shortPkg`, does the
+shortening, beside `truncAddr` which does the address.
+
+A realm's card carries a thumbnail of what it looks like, from `/api/shot`
+(the listings' size, `thumb`, in the render crop), lazy-loaded in a box of
+fixed size (128 by 72) so a card is one height before, during and after the
+picture arrives, and a picture that fails is replaced by a tile of the same
+box. A pure package has no page to show and carries none, and neither does a
+refused submission. With no capture service configured there are no pictures
+at all, not a column of placeholders.
 
 Above the feed is a calendar of the last 365 days, 53 weeks by 7, five shades
 from nothing to the busiest day, from `/api/code/timeline/heatmap`. Hovering a
