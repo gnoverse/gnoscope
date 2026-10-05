@@ -2,8 +2,8 @@
   "source": "https://github.com/gnoverse/awesome-gno",
   "readme": "https://github.com/gnoverse/awesome-gno/blob/main/README.md",
   "contributing": "https://github.com/gnoverse/awesome-gno/blob/main/CONTRIBUTING.md",
-  "commit": "85d5dd1db8fd5929087097a03e4c18979537e633",
-  "synced": "2026-09-24",
+  "commit": "1d2cac54b76ec2da81beadb78cf0dbe92249ac5a",
+  "synced": "2026-10-05",
   "sections": [
     {
       "title": "Official Links",
@@ -130,7 +130,7 @@
         },
         {
           "name": "Gnolove",
-          "url": "https://gnolove.world",
+          "url": "https://memba.samourai.app/gnolove",
           "description": "Community leaderboard and contributions analytics for builders of the Gnoland ecosystem.",
           "site": "https://memba.samourai.app/gnolove",
           "site_from": "listed"
@@ -169,6 +169,31 @@
             }
           ],
           "path": "gno.land/r/g1ecsuj0q572jr0dhu29q9njtnmw03hyu7tyyvv6/kourt"
+        },
+        {
+          "name": "Bubble Rumble",
+          "url": "https://bubblerumble.net",
+          "description": "Last bid standing takes the pot: every bid pushes the pool's clock out and pays a share straight to the pool's earlier bidders, and a bid may carry a shot at popping the bubble early. realm.",
+          "links": [
+            {
+              "text": "realm",
+              "url": "https://gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble5"
+            }
+          ],
+          "path": "gno.land/r/g1leu8d2vsplhehcfkjg50mwgdpxdkt8tztu95wr/bubblerumble5"
+        },
+        {
+          "name": "Gnogolf",
+          "url": "https://gnogolf.xyz",
+          "description": "Free 3D mini-golf in the browser where every hole is a contract and the chain computes every shot, so nobody can fake a score; no wallet needed to play. realm.",
+          "links": [
+            {
+              "text": "realm",
+              "url": "https://onyx.testnets.gno.land/r/nym-alexiscolin000/gnogolf/golf/v2"
+            }
+          ],
+          "site": "https://gnogolf.xyz",
+          "site_from": "listed"
         }
       ]
     },
@@ -257,10 +282,17 @@
           "description": "A real-time web dashboard for monitoring validator node health."
         },
         {
-          "name": "gnoscope",
-          "url": "https://github.com/gnoverse/gnoscope",
+          "name": "mygnoscan",
+          "url": "https://github.com/gnoverse/mygnoscan",
           "description": "A fast, minimal block explorer with realm dependency graphs and usage tracking.",
-          "site": "https://gnoscope.com/",
+          "site": "https://gnoscope.com",
+          "site_from": "repo-homepage"
+        },
+        {
+          "name": "gnopm",
+          "url": "https://github.com/moul/gnopm",
+          "description": "A package manager for workspaces: a package's version lives in its gnomod.toml rather than in its directory name, so a bump is a one-line diff instead of a copied directory.",
+          "site": "https://moul.github.io/gnopm/",
           "site_from": "repo-homepage"
         }
       ]
