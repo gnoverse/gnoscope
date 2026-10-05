@@ -178,7 +178,7 @@ test('names are short: @name, a short address, the package name and its version'
   await page.route(/\/api\/code\/timeline\?/, (route) => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({
-      network: 'alpha', height: 10, total: 5,
+      network: 'alpha', height: 10, total: 7,
       rows: [
         row({ kind: 'redeploy', path: 'gno.land/r/moul/relay/v0', ns: 'moul', creator: 'g1moul0000000000000000000000000000000000', user: 'moul', tx: 't1', nth: 3 }),
         row({ kind: 'version', path: 'gno.land/r/' + addr + '/bubblerumble6', ns: addr, creator: addr, tx: 't2',
@@ -186,6 +186,8 @@ test('names are short: @name, a short address, the package name and its version'
         row({ kind: 'new', path: 'gno.land/p/' + addr + '/relay/v0', ns: addr, k: 'p', creator: addr, tx: 't3' }),
         row({ kind: 'new', path: 'gno.land/r/moul/x/daily/governor/v1', ns: 'moul', creator: addr, tx: 't4' }),
         row({ kind: 'new', path: 'gno.land/r/gnoswap/pool', ns: 'gnoswap', creator: addr, tx: 't5' }),
+        row({ kind: 'new', path: 'gno.land/r/' + addr + '/gnofly/nfts/market/bazaar/v0/gnofly', ns: addr, creator: addr, tx: 't6' }),
+        row({ kind: 'new', path: 'gno.land/r/' + addr + '/averyveryverylongapp/with/many/nested/segments/inside/pkg/v2', ns: addr, creator: addr, tx: 't7' }),
       ],
     }),
   }));
@@ -193,7 +195,7 @@ test('names are short: @name, a short address, the package name and its version'
   await settle(page);
 
   const cards = page.locator('.tl-card');
-  await expect(cards).toHaveCount(5);
+  await expect(cards).toHaveCount(7);
   const path = (i) => cards.nth(i).locator('.tl-path');
   const who = (i) => cards.nth(i).locator('.tl-who');
 
@@ -213,10 +215,13 @@ test('names are short: @name, a short address, the package name and its version'
   await expect(cards.nth(1).locator('.tl-gen')).toHaveAttribute('title', /bubblerumble, after r\/g1leu.*\/bubblerumble5$/);
   // A bare version segment keeps its parent.
   await expect(path(2)).toHaveText('relay/v0');
-  // Deep under a name: the name, the cut, the package.
-  await expect(path(3)).toHaveText('moul/\u2026/governor/v1');
+  // A short sub-path stays whole: it is what tells siblings apart.
+  await expect(path(3)).toHaveText('moul/x/daily/governor/v1');
   await expect(path(4)).toHaveText('gnoswap/pool');
-  for (let i = 0; i < 5; i++) await expect(path(i)).not.toContainText('g1');
+  await expect(path(5)).toHaveText('gnofly/nfts/market/bazaar/v0/gnofly');
+  // A long one is cut in the middle: the app, the cut, the package.
+  await expect(path(6)).toHaveText('averyveryverylongapp/\u2026/pkg/v2');
+  for (let i = 0; i < 7; i++) await expect(path(i)).not.toContainText('g1');
 
   // Copy puts the whole path on the clipboard, not the short one.
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
