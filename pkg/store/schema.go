@@ -1323,6 +1323,32 @@ func initSchema(db *sql.DB) error {
 		-- key leads with the address.
 		CREATE INDEX IF NOT EXISTS idx_package_accounts_path ON package_accounts(network, path);
 
+		-- Code-derived tags (pkg/tags): what a package's source does, several
+		-- per package, each with the import or symbol that earned it. Written
+		-- with the package by ReplacePackage, in its transaction, and caught
+		-- up by RefreshPackageTags for anything written another way.
+		CREATE TABLE IF NOT EXISTS package_tags (
+			network  TEXT NOT NULL,
+			path     TEXT NOT NULL,
+			tag      TEXT NOT NULL,
+			evidence TEXT NOT NULL,
+			PRIMARY KEY (network, path, tag)
+		) WITHOUT ROWID;
+		CREATE INDEX IF NOT EXISTS idx_package_tags_tag ON package_tags(network, tag, path);
+
+		-- Which source and which rule set each package's tags were computed
+		-- from. A package with no tags is a real answer and has no rows in
+		-- package_tags, so "has this been looked at" needs a row of its own:
+		-- the same reason symbol_index carries doc_pass. tx_hash moves with a
+		-- redeploy, rules with a bump of tags.Version.
+		CREATE TABLE IF NOT EXISTS package_tags_state (
+			network TEXT NOT NULL,
+			path    TEXT NOT NULL,
+			tx_hash TEXT NOT NULL,
+			rules   TEXT NOT NULL,
+			PRIMARY KEY (network, path)
+		) WITHOUT ROWID;
+
 		CREATE TABLE IF NOT EXISTS achievements (
 			network      TEXT NOT NULL,
 			address      TEXT NOT NULL,
