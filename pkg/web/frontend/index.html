@@ -652,6 +652,23 @@ pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 4p
 .tl-sum { margin-top: 4px; color: var(--fg); font-size: 13px; overflow-wrap: anywhere; }
 .tl-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--fg2); }
 .tl-more { display: block; margin: 12px auto; }
+.tl-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: -4px 0 12px; }
+.tl-card .tag-chips { margin-top: 5px; }
+
+/* Code-derived tags (pkg/tags), one component everywhere: a chip in the tag's
+   own colour, set from JS as --tag so no tag name is ever part of a selector. */
+.tag-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; vertical-align: middle; }
+.tag-chip { --tag: #888; display: inline-flex; align-items: center; gap: 4px; font: 11px var(--mono); line-height: 16px;
+  padding: 0 7px; border-radius: 999px; color: var(--tag); border: 1px solid color-mix(in srgb, var(--tag) 55%, transparent);
+  background: color-mix(in srgb, var(--tag) 10%, transparent); white-space: nowrap; cursor: help; text-decoration: none; }
+a.tag-chip, button.tag-chip { cursor: pointer; }
+a.tag-chip:hover, button.tag-chip:hover { background: color-mix(in srgb, var(--tag) 22%, transparent); text-decoration: none; }
+button.tag-chip { font: 11px var(--mono); }
+button.tag-chip[aria-pressed="true"] { color: var(--bg); background: var(--tag); }
+.tag-chip .tag-n { color: var(--fg2); }
+button.tag-chip[aria-pressed="true"] .tag-n { color: var(--bg); }
+td .tag-chips { display: flex; margin-top: 3px; }
+.cx-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .tl-end { text-align: center; color: var(--fg2); font-size: 12px; margin: 14px 0; }
 .cx-drawer-btn { display: none; padding: 5px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font: 12px var(--mono); cursor: pointer; }
 
@@ -1761,7 +1778,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
     </main>
   </div>
   <div class="view" id="view-watch"><main><div id="watch-content"></div></main></div>
-  <div class="view" id="view-realms"><main><div id="realms-stats" class="stats-bar" style="display:none"></div><div class="section"><div class="section-title">all realms</div>
+  <div class="view" id="view-realms"><main><div id="realms-stats" class="stats-bar" style="display:none"></div><div id="realms-facets" class="facets"></div><div class="section"><div class="section-title">all realms</div>
     <table><thead><tr><th class="shot-cell"></th><th>path</th><th>creator</th>
       <th class="rs" data-sort="calls">calls</th>
       <th class="rs" data-sort="gas">gas used</th>
@@ -2028,6 +2045,86 @@ function badge(type, text) {
   const b = el('span', { className: 'badge badge-' + type }, text);
   b.setAttribute('data-hl', 'badge:' + text);
   return b;
+}
+// --- Code tags ---
+//
+// What a package's code does, derived on the server from its source by
+// pkg/tags: several per package, each carrying the import or symbol that
+// earned it and where (`imports gno.land/p/nt/grc20/v0 (token.gno:5)`). The
+// chip shows the tag and its evidence on hover, and the sentence saying what
+// the rule checks comes from /api/tags, which reads it out of the rule table:
+// this file never writes its own.
+//
+// One colour per tag, in rule order. The canvas code map reads the same table.
+const TAG_COLORS = {
+  token: '#e5c07b', nft: '#c678dd', payments: '#98c379', defi: '#56b6c2',
+  governance: '#e06c75', social: '#61afef', 'access-control': '#d19a66',
+  events: '#a3be8c', render: '#8fbcbb', library: '#b48ead', 'test-only': '#7f848e',
+};
+const TAG_ORDER = Object.keys(TAG_COLORS);
+function tagColor(tag) { return TAG_COLORS[tag] || '#888888'; }
+// The rule table per network, from /api/tags: { tag -> {means, packages, ...} }.
+const _tagIndex = new Map();
+function loadTagIndex(net) {
+  net = net || getNetwork();
+  if (!net || net === 'all') return Promise.resolve(null);
+  if (!_tagIndex.has(net)) {
+    const p = api('tags', net).then((d) => {
+      const m = {};
+      for (const t of (d && d.tags) || []) m[t.tag] = t;
+      _tagIndex.set(net, { ready: true, map: m, list: (d && d.tags) || [] });
+      return _tagIndex.get(net);
+    }, () => { _tagIndex.delete(net); return null; });
+    _tagIndex.set(net, { ready: false, promise: p });
+  }
+  const e = _tagIndex.get(net);
+  return e.ready ? Promise.resolve(e) : e.promise;
+}
+function tagMeans(tag, net) {
+  const e = _tagIndex.get(net || getNetwork());
+  return (e && e.ready && e.map[tag] && e.map[tag].means) || '';
+}
+// tagChip draws one tag. t is {tag, why} or a bare name. opts:
+//   href      a link, e.g. to a listing filtered to the tag
+//   onClick   a toggle button instead, with pressed for its state
+//   count     a number drawn after the name, for a facet
+//   net       the network whose rule sentence goes in the tooltip
+function tagChip(t, opts) {
+  opts = opts || {};
+  const name = String(typeof t === 'string' ? t : (t && t.tag) || '');
+  const why = typeof t === 'string' ? '' : String((t && t.why) || '');
+  const tagName = opts.onClick ? 'button' : opts.href ? 'a' : 'span';
+  const c = el(tagName, { className: 'tag-chip', 'data-tag': name }, name);
+  c.style.setProperty('--tag', tagColor(name));
+  if (opts.count !== undefined && opts.count !== null) c.appendChild(el('span', { className: 'tag-n' }, fmtNum(opts.count)));
+  if (opts.href) c.setAttribute('href', opts.href);
+  if (opts.onClick) {
+    c.setAttribute('type', 'button');
+    c.setAttribute('aria-pressed', opts.pressed ? 'true' : 'false');
+    c.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); opts.onClick(name); });
+  }
+  const means = tagMeans(name, opts.net);
+  const tip = [name + (means ? ': ' + means : '')];
+  if (why) tip.push(why);
+  c.title = tip.join('\n');
+  if (why) c.dataset.why = why;
+  return c;
+}
+// tagChips draws a package's tags, or nothing when it has none.
+function tagChips(list, opts) {
+  if (!list || !list.length) return null;
+  const box = el('span', { className: 'tag-chips' });
+  for (const t of list) box.appendChild(tagChip(t, opts && opts.each ? opts.each(t) : opts));
+  return box;
+}
+// tagListingHref is where a chip on a package leads: the listing of every
+// package carrying the tag, of the same kind.
+function tagListingHref(tag, isRealm, net) {
+  const q = new URLSearchParams();
+  if (!isRealm) q.set('kind', 'all');
+  q.set('tag', tag);
+  if (net) q.set('network', net);
+  return (isRealm ? '/realms?' : '/packages?') + q.toString();
 }
 // link builds an in-app link.
 //
@@ -6017,11 +6114,17 @@ async function loadRealms(page) {
     th.onclick = () => { _realmsSort = key; urlSetParams({ sort: key }); loadRealms(0); };
   });
   try {
-    await apiSWR('realms?limit=' + PAGE_SIZE + '&offset=' + (page * PAGE_SIZE) + '&sort=' + _realmsSort, (data, swrMeta) => {
+    const tag = listingTag();
+    const tq = tag ? '&tag=' + encodeURIComponent(tag) : '';
+    await apiSWR([
+      'realms?limit=' + PAGE_SIZE + '&offset=' + (page * PAGE_SIZE) + '&sort=' + _realmsSort + tq,
+      { path: 'packages/facets?kind=realm' + tq, fallback: null },
+    ], ([data, facets], swrMeta) => {
       // Inside the render, not before it: this runs once on cached data and
       // again on fresh, and a pager appended by the first pass has to go
       // before the second appends its own.
       section.querySelectorAll('.pager').forEach(p => p.remove());
+      renderTagFacet(clear('realms-facets'), facets, tag, () => loadRealms(0));
       if (page === 0) {
         const creators = new Set((data.items || []).map(r => r.creator));
         statsBar.textContent = ''; statsBar.style.display = 'flex';
@@ -6033,6 +6136,8 @@ async function loadRealms(page) {
         const pathTd = el('td', {}, realmPathEl(r.path, r.network));
         const rParked = parkedBadgeEl(r.status);
         if (rParked) { pathTd.appendChild(document.createTextNode(' ')); pathTd.appendChild(rParked); }
+        const rTags = tagChips(r.tags, { each: (t) => ({ net: r.network, href: tagListingHref(t.tag, true, r.network) }) });
+        if (rTags) pathTd.appendChild(rTags);
         // A list of 194 monospace paths is unreadable; a list of 194 pictures
         // is browsable. Lazy and explicitly sized, so a page of them costs
         // nothing before the reader scrolls to them.
@@ -6088,8 +6193,44 @@ function packageFacetQuery() {
   const q = new URLSearchParams();
   if (st.kind) q.set('kind', st.kind);
   if (st.namespace) q.set('namespace', st.namespace);
+  if (listingTag()) q.set('tag', listingTag());
   const s = q.toString();
   return s ? '&' + s : '';
+}
+// listingTag is the tag a listing is narrowed to, from the URL: only one the
+// rule table has, so a stale link widens rather than errors.
+function listingTag() {
+  const t = urlParam('tag') || '';
+  return TAG_ORDER.includes(t) ? t : '';
+}
+// renderTagFacet draws the tag row of a listing's facets: every tag the
+// filtered listing carries, with its count, the picked one pressed. Per chain
+// only, so all-networks mode draws nothing here.
+function renderTagFacet(host, facets, current, reload) {
+  const counts = (facets && facets.tags) || [];
+  if (!counts.length && !current) return;
+  const row = el('div', { className: 'facet-row tag-facet' }, el('span', { className: 'facet-label' }, 'tag'));
+  const any = el('button', { className: 'facet' + (current ? '' : ' active'), type: 'button' }, el('span', { className: 'facet-name' }, 'any'));
+  any.addEventListener('click', () => { urlSetParams({ tag: null, offset: null }); reload(); });
+  row.appendChild(any);
+  const net = getNetwork();
+  for (const c of counts) {
+    row.appendChild(tagChip(c.tag, { net, count: c.packages, pressed: current === c.tag, onClick: (name) => {
+      urlSetParams({ tag: current === name ? null : name, offset: null });
+      reload();
+    } }));
+  }
+  host.appendChild(row);
+  // The rule sentences, for the tooltips, then once more with them.
+  if (!_tagIndex.has(net) || !_tagIndex.get(net).ready) {
+    loadTagIndex(net).then((ix) => {
+      if (!ix || !row.isConnected) return;
+      row.querySelectorAll('.tag-chip').forEach((chip) => {
+        const m = tagMeans(chip.dataset.tag, net);
+        if (m) chip.title = chip.dataset.tag + ': ' + m;
+      });
+    });
+  }
 }
 // renderPackageFacets draws the two control rows from the counts the server
 // computed for the current filter.
@@ -6187,6 +6328,7 @@ async function loadPackages(page) {
       // again on fresh, and controls drawn by the first have to be gone before
       // the second draws its own.
       renderPackageFacets(facets, false);
+      renderTagFacet(document.getElementById('packages-facets'), facets, listingTag(), () => loadPackages(0));
       const st = packageFacetState();
       const titleEl = document.getElementById('packages-title');
       if (titleEl) {
@@ -6209,6 +6351,8 @@ async function loadPackages(page) {
         const pathTd = el('td', {}, realmPathEl(p.path, p.network));
         const pParked = parkedBadgeEl(p.status);
         if (pParked) { pathTd.appendChild(document.createTextNode(' ')); pathTd.appendChild(pParked); }
+        const pTags = tagChips(p.tags, { each: (t) => ({ net: p.network, href: tagListingHref(t.tag, p.is_realm, p.network) }) });
+        if (pTags) pathTd.appendChild(pTags);
         list.appendChild(netRow(p.network,
           el('td', { className: 'shot-cell' }, shotEl(p.path, { network: p.network, v: p.block_height, row: p })),
           pathTd,
@@ -16634,8 +16778,12 @@ async function loadRealmDetail(path, initialTab) {
       }, 'see on gnoweb \u2197');
       titleRow.appendChild(gnowebLink);
       header.appendChild(titleRow);
-      const badgeRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
+      const badgeRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' } },
         detail.is_realm ? badge('realm', 'realm') : badge('pkg', 'package'));
+      // What the code does, each tag with the line that earned it on hover,
+      // and a way to every other package that carries it.
+      const realmTags = tagChips(detail.tags, { each: (t) => ({ net: detail.network, href: tagListingHref(t.tag, detail.is_realm, detail.network) }) });
+      if (realmTags) { realmTags.id = 'realm-tags'; badgeRow.appendChild(realmTags); }
       // A package can succeed at MsgAddPackage and still not be callable: under
       // the "inert" code submission policy a submission is parked until an
       // approver enables it. Without this, a parked package looks identical to
@@ -28159,6 +28307,9 @@ function tlFilters() {
     ns: q.get('ns') || '',
     creator: q.get('creator') || '',
     day: /^\d{4}-\d{2}-\d{2}$/.test(q.get('day') || '') ? q.get('day') : '',
+    // Only a tag the rule table has: the server refuses any other, and a
+    // pasted link with a stale one should widen, not error.
+    tag: TAG_ORDER.includes(q.get('tag') || '') ? q.get('tag') : '',
   };
 }
 
@@ -28169,6 +28320,7 @@ function tlParams(f, withDay) {
   if (f.failed) p.set('failed', '1');
   if (f.ns) p.set('ns', f.ns);
   if (f.creator) p.set('creator', f.creator);
+  if (f.tag) p.set('tag', f.tag);
   if (withDay && f.day) p.set('day', f.day);
   return p;
 }
@@ -28181,7 +28333,7 @@ function tlPagePath(f, before) {
 }
 
 function tlHeatPath(f) {
-  const q = tlParams({ ns: f.ns, creator: f.creator }, false).toString();
+  const q = tlParams({ ns: f.ns, creator: f.creator, tag: f.tag }, false).toString();
   return 'code/timeline/heatmap' + (q ? '?' + q : '');
 }
 
@@ -28298,6 +28450,7 @@ function tlBuildShell(root, net) {
   shell.appendChild(top);
   shell.appendChild(el('div', { className: 'tl-heat' }));
   shell.appendChild(el('div', { className: 'tl-bar' }));
+  shell.appendChild(el('div', { className: 'tl-tags', role: 'group', 'aria-label': 'only packages with this tag' }));
   shell.appendChild(el('div', { className: 'tl-feed', 'aria-live': 'polite' }));
   const sentinel = el('div', { className: 'tl-sentinel' });
   shell.appendChild(sentinel);
@@ -28351,6 +28504,29 @@ function tlRenderBar(f) {
   input('creator', 'publisher', 'only this publisher: an address or a registered name');
   if (f.day) chip(f.day + ' ×', true, 'show every day again', () => tlSetFilters({ ...f, day: '' }));
   bar.appendChild(el('span', { className: 'tl-count' }));
+  tlRenderTags(f);
+}
+
+// tlRenderTags draws the tag filter: one chip per tag the chain has, with how
+// many packages carry it; a click narrows the feed to it, a second widens it.
+function tlRenderTags(f) {
+  const box = document.querySelector('#codetimeline-content .tl-tags');
+  if (!box) return;
+  const net = _tl.net;
+  const draw = (ix) => {
+    if (_tl.net !== net || !box.isConnected) return;
+    box.textContent = '';
+    const list = ((ix && ix.list) || []).filter(t => t.packages > 0 || t.tag === f.tag);
+    if (!list.length) return;
+    box.appendChild(el('span', { className: 'tl-count', style: { marginLeft: '0' } }, 'tags'));
+    for (const t of list) {
+      box.appendChild(tagChip(t.tag, {
+        net, count: t.packages, pressed: f.tag === t.tag,
+        onClick: (name) => tlSetFilters({ ...tlFilters(), tag: tlFilters().tag === name ? '' : name }),
+      }));
+    }
+  };
+  loadTagIndex(net).then(draw);
 }
 
 // tlRenderFeed rebuilds the whole feed from _tl.rows: synchronous, and safe to
@@ -28414,6 +28590,9 @@ function tlCard(r) {
   if (r.debut) head.appendChild(el('span', { className: 'tl-kind tl-debut', title: 'the first package this address published here' }, 'first package'));
   body.appendChild(head);
   if (r.summary) body.appendChild(el('div', { className: 'tl-sum' }, r.summary));
+  const chips = tagChips(r.tags, { net: _tl.net, each: (t) => ({ net: _tl.net, pressed: tlFilters().tag === t.tag,
+    onClick: (name) => tlSetFilters({ ...tlFilters(), tag: tlFilters().tag === name ? '' : name }) }) });
+  if (chips) body.appendChild(chips);
   const meta = el('div', { className: 'tl-meta' });
   meta.appendChild(el('span', {}, r.k === 'r' ? 'realm' : 'package'));
   const size = [fmtNum(r.files) + (r.files === 1 ? ' file' : ' files')];
@@ -28600,6 +28779,8 @@ function cxMapURL(zoom, net) {
   const size = urlParam('size'), color = urlParam('color');
   if (size) q.set('size', size);
   if (color) q.set('color', color);
+  const tag = urlParam('tag');
+  if (color === 'tag' && TAG_ORDER.includes(tag)) q.set('tag', tag);
   return '/code?' + q.toString();
 }
 
@@ -29023,24 +29204,39 @@ function cxStats(idx) {
 // infinitely tall. Rebuilt on every expand and keystroke: 600 packages and
 // 3,000 files flatten in well under a millisecond, so there is nothing to
 // cache.
+// cxTagQuery takes a `tag:<name>` term out of a filter or palette query:
+// the code map narrows to packages carrying that tag, and the rest of the
+// query applies inside them.
+function cxTagQuery(q) {
+  const m = /(?:^|\s)tag:([a-z-]*)/i.exec(q || '');
+  if (!m) return { tag: '', rest: q || '' };
+  return { tag: m[1].toLowerCase(), rest: (q.slice(0, m.index) + ' ' + q.slice(m.index + m[0].length)).trim() };
+}
+function cxHasTag(p, tag) { return !tag || (p.t || []).includes(tag); }
+
 function cxFlatten() {
   const idx = _cx.shell && _cx.shell.idx;
   const rows = [];
   if (!idx) return rows;
-  const q = _cx.filter;
+  const tq = cxTagQuery(_cx.filter);
+  const q = tq.rest;
   for (const g of idx.ns) {
     let pkgs = g.pkgs, fileHits = null;
+    if (tq.tag) {
+      pkgs = pkgs.filter(p => cxHasTag(p, tq.tag));
+      if (!pkgs.length) continue;
+    }
     if (q) {
       const nsHit = g.ns.toLowerCase().includes(q);
       fileHits = new Map();
-      pkgs = g.pkgs.filter((p) => {
+      pkgs = pkgs.filter((p) => {
         const hits = p.f.filter(f => f[0].toLowerCase().includes(q));
         if (hits.length) fileHits.set(p.p, hits);
         return nsHit || p.rel.toLowerCase().includes(q) || hits.length;
       });
       if (!pkgs.length) continue;
     }
-    const nsOpen = q ? true : _cx.expanded.has('ns:' + g.ns);
+    const nsOpen = q || tq.tag ? true : _cx.expanded.has('ns:' + g.ns);
     rows.push({ t: 'ns', key: 'ns:' + g.ns, depth: 0, g, open: nsOpen });
     if (!nsOpen) continue;
     for (const p of pkgs) {
@@ -29277,6 +29473,22 @@ function cxPkgHead(pkg) {
   if (pkg.u) facts.appendChild(el('span', {}, fmtNum(pkg.u) + ' unique callers'));
   if (pkg.d) facts.appendChild(el('span', {}, 'imported by ' + fmtNum(pkg.d)));
   head.appendChild(facts);
+
+  // Tags: the names ride in the tree, the evidence is one small request for
+  // the package on screen, patched in when it lands.
+  if (pkg.t && pkg.t.length) {
+    const box = el('div', { className: 'cx-tags', 'aria-label': 'what this code does' });
+    const fill = (list) => {
+      box.textContent = '';
+      for (const t of list) box.appendChild(tagChip(t, { net: _cx.net, href: tagListingHref(typeof t === 'string' ? t : t.tag, pkg.k === 'r', _cx.net) }));
+    };
+    fill(pkg.t);
+    head.appendChild(box);
+    const tnet = _cx.net;
+    Promise.all([loadTagIndex(tnet), api('tags?path=' + encodeURIComponent(pkg.p), tnet)]).then(([, d]) => {
+      if (box.isConnected && d && d.tags && d.tags.length) fill(d.tags);
+    }, () => {});
+  }
 
   // The stamp's time comes with the manifest. Patched in place rather than
   // re-rendering the header, which would cost the reader their scroll.
@@ -29668,9 +29880,23 @@ function cxOpenPalette() {
     if (results[act]) cxPrefetchSoon(results[act].it.pkg, results[act].it.file && results[act].it.file[0]);
   };
   const run = () => {
-    const q = input.value.trim();
+    const tq = cxTagQuery(input.value.trim());
+    const q = tq.rest;
     const t0 = performance.now();
-    if (!q) {
+    if (tq.tag) {
+      // tag:<name> lists the packages carrying it, busiest first, and narrows
+      // a search to them when more is typed.
+      const pool = s.idx.items.filter(it => !it.file && cxHasTag(it.pkg, tq.tag));
+      if (!q) {
+        results = pool.map(it => ({ it, pos: [] }))
+          .sort((a, b) => (b.it.pkg.c || 0) - (a.it.pkg.c || 0) || b.it.pkg.l - a.it.pkg.l).slice(0, CX_PALETTE_MAX);
+        foot.textContent = fmtNum(pool.length) + ' package' + (pool.length === 1 ? '' : 's') + ' tagged ' + tq.tag + ' · type to narrow';
+      } else {
+        const r = cxSearch(q, pool, CX_PALETTE_MAX);
+        results = r.results;
+        foot.textContent = (r.matched ? fmtNum(r.matched) + ' match' + (r.matched === 1 ? '' : 'es') : 'no match') + ' tagged ' + tq.tag;
+      }
+    } else if (!q) {
       // Nothing typed: the busiest packages, which is what most people came for.
       results = s.idx.pkgs.slice().sort((a, b) => (b.c || 0) - (a.c || 0) || b.l - a.l)
         .slice(0, CX_PALETTE_MAX).map(p => ({ it: p.item, pos: [] }));
@@ -29847,6 +30073,17 @@ function cxRamp(stops, t) {
 function cxColorFn(idx, mode) {
   const cache = new Map();
   if (mode === 'kind') return (p) => CX_KIND[p.k] || '#888';
+  // A package's first tag in rule order, which puts the specific ones
+  // (token, payments, defi) ahead of the common ones (events, render). With a
+  // tag picked, that tag and nothing else.
+  if (mode === 'tag') {
+    const pick = urlParam('tag') || '';
+    return (p) => {
+      const ts = p.t || [];
+      if (pick) return ts.includes(pick) ? tagColor(pick) : '#2a2a2a';
+      return ts.length ? tagColor(ts[0]) : '#2a2a2a';
+    };
+  }
   if (mode === 'age') {
     const hs = Array.from(new Set(idx.pkgs.map(p => p.h))).sort((a, b) => a - b);
     const rank = new Map(hs.map((h, i) => [h, hs.length > 1 ? i / (hs.length - 1) : 1]));
@@ -29867,7 +30104,7 @@ function cxColorFn(idx, mode) {
 function cxMapOpts(idx) {
   const size = urlParam('size') === 'bytes' ? 'bytes' : 'lines';
   const c = urlParam('color');
-  let color = c === 'age' || c === 'kind' || c === 'activity' ? c : 'activity';
+  let color = c === 'age' || c === 'kind' || c === 'activity' || c === 'tag' ? c : 'activity';
   const quiet = !!idx && !idx.pkgs.some(p => p.c);
   if (!c && quiet) color = 'age';
   return { size, color, quiet };
@@ -29903,7 +30140,7 @@ function cxMap(main, idx, zoom) {
     return g;
   };
   toggles.appendChild(group('size', 'size', ['lines', 'bytes'], opts.size));
-  toggles.appendChild(group('colour', 'color', ['activity', 'age', 'kind'], opts.color));
+  toggles.appendChild(group('colour', 'color', ['activity', 'age', 'kind', 'tag'], opts.color));
   bar.appendChild(toggles);
   wrap.appendChild(bar);
   const stage = el('div', { className: 'cx-map-stage' });
@@ -30037,6 +30274,25 @@ function cxMapLegend() {
       sw.style.background = CX_KIND[k];
       lg.appendChild(el('span', { className: 'cx-lg-item' }, sw, label));
     }
+  } else if (mode === 'tag') {
+    // One chip per tag present, each a toggle: picked, the map lights that
+    // tag alone. Counted over what the map holds, so a zoom does not lie.
+    const pick = urlParam('tag') || '';
+    const n = {};
+    for (const p of m.idx.pkgs) for (const t of (p.t || [])) n[t] = (n[t] || 0) + 1;
+    lg.appendChild(el('span', { className: 'cx-dim' }, pick ? 'packages tagged ' : 'first tag of each package '));
+    for (const t of TAG_ORDER) {
+      if (!n[t] && t !== pick) continue;
+      lg.appendChild(tagChip(t, { net: _cx.net, count: n[t] || 0, pressed: pick === t, onClick: (name) => {
+        urlSetParam('tag', pick === name ? '' : name);
+        _cx.map.color = cxColorFn(_cx.map.idx, 'tag');
+        cxMapLegend();
+        cxMapDraw();
+      } }));
+    }
+    const sw = el('i', { className: 'cx-sw' });
+    sw.style.background = '#2a2a2a';
+    lg.appendChild(el('span', { className: 'cx-lg-item' }, sw, pick ? 'other' : 'no tag'));
   } else {
     const stops = mode === 'age' ? CX_RAMP_AGE : CX_RAMP_ACTIVITY;
     const bar = el('i', { className: 'cx-lg-bar' });
@@ -30172,6 +30428,7 @@ function cxMapHover(e) {
       (p.k === 'r' ? 'realm' : 'package') + ' · ' + fmtNum(p.f.length) + ' files · ' + fmtNum(p.l) + ' lines' +
       (p.c ? ' · ' + fmtNum(p.c) + ' calls' : '') + (p.u ? ' · ' + fmtNum(p.u) + ' callers' : '') +
       (p.d ? ' · imported by ' + fmtNum(p.d) : '') + ' · ' + (p.h === 0 ? 'genesis' : 'block ' + fmtNum(p.h))));
+  if (p.t && p.t.length) m.tip.appendChild(el('div', { className: 'cx-dim' }, 'tags: ' + p.t.join(', ')));
   m.tip.hidden = false;
   const tw = m.tip.offsetWidth, th = m.tip.offsetHeight;
   let tx = hit.x + 14, ty = hit.y + 14;

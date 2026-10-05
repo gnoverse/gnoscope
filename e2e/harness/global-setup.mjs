@@ -90,6 +90,8 @@ export default async function globalSetup() {
     // Same reason: the badge table is rebuilt from indexed history, and the
     // history arrives after the binary has already run its startup pass.
     '-achievement-interval', '1s',
+    // And the code tags, computed from the same seeded source.
+    '-tags-interval', '1s',
     // No cache warmer, for the same reason one line up, and it is the reason
     // rather than a convenience: the warmer re-requests the landing endpoints
     // and stores what it gets, and here it would run before seed() has written

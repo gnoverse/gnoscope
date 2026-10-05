@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gnoverse/gnoscope/pkg/indexer"
+	"github.com/gnoverse/gnoscope/pkg/tags"
 	_ "modernc.org/sqlite"
 )
 
@@ -147,6 +148,10 @@ func (d *DB) ReplacePackage(network, path, name, creator, txHash string, blockHe
 			return err
 		}
 	}
+	// The tags describe these files, so they are replaced with them.
+	if err := writeTagsTx(tx, network, path, txHash, tagFiles(files)); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -234,7 +239,26 @@ func (d *DB) SetDependencies(network, pkgPath string, imports []string) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM dependencies WHERE network = ? AND package_path = ?`, network, pkgPath); err != nil {
+	// The paths whose importers this changes, before and after: each one's
+	// library tag is recomputed below. Read by the DELETE itself rather than
+	// a SELECT before it: a transaction that reads first and writes second
+	// has to upgrade its lock, and under WAL that upgrade fails with
+	// SQLITE_BUSY the moment another connection has written in between.
+	affected := map[string]bool{}
+	prev, err := tx.Query(`DELETE FROM dependencies WHERE network = ? AND package_path = ? RETURNING import_path`, network, pkgPath)
+	if err != nil {
+		return err
+	}
+	for prev.Next() {
+		var p string
+		if err := prev.Scan(&p); err != nil {
+			prev.Close()
+			return err
+		}
+		affected[p] = true
+	}
+	prev.Close()
+	if err := prev.Err(); err != nil {
 		return err
 	}
 
@@ -254,6 +278,12 @@ func (d *DB) SetDependencies(network, pkgPath string, imports []string) error {
 			continue
 		}
 		if _, err := stmt.Exec(network, pkgPath, imp); err != nil {
+			return err
+		}
+		affected[imp] = true
+	}
+	for p := range affected {
+		if err := refreshLibraryTx(tx, network, p); err != nil {
 			return err
 		}
 	}
@@ -317,6 +347,9 @@ type PackageInfo struct {
 	// about a pure package: gas, calls and unique users are all zero for the
 	// whole p/ half of the directory by construction.
 	Symbols int `json:"symbols"`
+	// Tags are the package's code-derived tags (pkg/tags), stamped by the API
+	// layer like Status, from package_tags.
+	Tags []tags.Tag `json:"tags,omitempty"`
 }
 
 type PackageDetail struct {

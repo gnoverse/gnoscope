@@ -78,7 +78,12 @@ func (a *API) handleListPackages(w http.ResponseWriter, r *http.Request, kind st
 	// kind parameter on top, which is how "everything" is reachable at all.
 	// A route that pins its kind ignores the parameter rather than letting a
 	// query string turn /api/realms into a list of pure packages.
-	filter := store.PackageFilter{Kind: kind, Namespace: q.Get("namespace")}
+	tag, bad := tagParam(r)
+	if bad != "" {
+		jsonError(w, bad, 400)
+		return
+	}
+	filter := store.PackageFilter{Kind: kind, Namespace: q.Get("namespace"), Tag: tag}
 	if kind == store.KindAll {
 		parsed, ok := store.ParsePackageKind(q.Get("kind"))
 		if !ok {
@@ -96,6 +101,7 @@ func (a *API) handleListPackages(w http.ResponseWriter, r *http.Request, kind st
 			return
 		}
 		a.stampInertStatus(r.Context(), items)
+		a.stampTags(items)
 		JSONResponse(w, map[string]any{"items": items, "total": total})
 		return
 	}
@@ -124,6 +130,7 @@ func (a *API) handleListPackages(w http.ResponseWriter, r *http.Request, kind st
 	}
 	page := merged[offset:end]
 	a.stampInertStatus(r.Context(), page)
+	a.stampTags(page)
 	JSONResponse(w, map[string]any{"items": page, "total": total})
 }
 
@@ -241,8 +248,13 @@ func (a *API) HandlePackageFacets(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "unknown kind: "+q.Get("kind"), 400)
 		return
 	}
-	kinds, namespaces, err := a.db.PackageFacets(network,
-		store.PackageFilter{Kind: kind, Namespace: q.Get("namespace")})
+	tag, bad := tagParam(r)
+	if bad != "" {
+		jsonError(w, bad, 400)
+		return
+	}
+	filter := store.PackageFilter{Kind: kind, Namespace: q.Get("namespace"), Tag: tag}
+	kinds, namespaces, err := a.db.PackageFacets(network, filter)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
@@ -250,7 +262,21 @@ func (a *API) HandlePackageFacets(w http.ResponseWriter, r *http.Request) {
 	if namespaces == nil {
 		namespaces = []store.NamespaceFacet{}
 	}
-	JSONResponse(w, map[string]any{"kinds": kinds, "namespaces": namespaces})
+	// The tag counts honour kind and namespace and ignore tag, the same rule
+	// the other two facets follow. Per-chain only: one path is a different
+	// package on every chain, so a count across them counts nothing.
+	tagFacets := []store.TagCount{}
+	if network != "" {
+		got, err := a.db.TagCounts(network, filter)
+		if err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		if got != nil {
+			tagFacets = got
+		}
+	}
+	JSONResponse(w, map[string]any{"kinds": kinds, "namespaces": namespaces, "tags": tagFacets})
 }
 
 func (a *API) HandleRealm(w http.ResponseWriter, r *http.Request) {
@@ -272,6 +298,11 @@ func (a *API) HandleRealm(w http.ResponseWriter, r *http.Request) {
 		files = append(files, indexer.MemFile(f))
 	}
 	detail.ExportedFuncs = analyzer.ExportedFunctions(files)
+	if detail.Network != "" {
+		if m, err := a.db.PackageTags(detail.Network, []string{detail.Path}); err == nil {
+			detail.Tags = m[detail.Path]
+		}
+	}
 	// Opening a package's docs is also what makes it searchable.
 	//
 	// The background pass owns the corpus and runs on its own timer, which

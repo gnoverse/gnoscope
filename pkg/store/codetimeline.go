@@ -1,6 +1,10 @@
 package store
 
-import "database/sql"
+import (
+	"database/sql"
+
+	"github.com/gnoverse/gnoscope/pkg/tags"
+)
 
 // Every MsgAddPackage on one network, oldest first, with what is cheaply known
 // about the packages they left behind.
@@ -54,6 +58,9 @@ type CodeTimelineSource struct {
 	// submission, from first_seen: the same table discover's "published for
 	// the first time" event reads, so the two cannot disagree.
 	Debuts map[string]int
+	// Tags are the code-derived tags of the stored source, keyed by path.
+	// They describe the current submission only, like Lines and Imports.
+	Tags map[string][]tags.Tag
 }
 
 // CodeTimelineStamp is a cheap fingerprint of one network's submissions: any
@@ -75,6 +82,7 @@ func (d *DB) CodeTimeline(network string) (CodeTimelineSource, error) {
 		Current: map[string]TimelinePackage{},
 		Users:   map[string]string{},
 		Debuts:  map[string]int{},
+		Tags:    map[string][]tags.Tag{},
 	}
 	tx, err := d.db.Begin()
 	if err != nil {
@@ -190,6 +198,25 @@ func (d *DB) CodeTimeline(network string) (CodeTimelineSource, error) {
 		SELECT subject, height FROM first_seen WHERE network = ? AND kind = '`+FirstSeenDeployer+`'`, network,
 		func(addr string, h int) { out.Debuts[addr] = h }); err != nil {
 		return out, err
+	}
+	trows, err := tx.Query(`SELECT path, tag, evidence FROM package_tags WHERE network = ?`, network)
+	if err != nil {
+		return out, err
+	}
+	defer trows.Close()
+	for trows.Next() {
+		var path string
+		var t tags.Tag
+		if err := trows.Scan(&path, &t.Tag, &t.Why); err != nil {
+			return out, err
+		}
+		out.Tags[path] = append(out.Tags[path], t)
+	}
+	if err := trows.Err(); err != nil {
+		return out, err
+	}
+	for _, ts := range out.Tags {
+		tags.Sort(ts)
 	}
 	return out, nil
 }

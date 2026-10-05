@@ -14,6 +14,7 @@ import (
 
 	"github.com/gnoverse/gnoscope/pkg/discover"
 	"github.com/gnoverse/gnoscope/pkg/store"
+	"github.com/gnoverse/gnoscope/pkg/tags"
 )
 
 // The code timeline: every publication on one chain, newest first, the way a
@@ -96,6 +97,9 @@ type timelineRow struct {
 	Debut bool `json:"debut,omitempty"`
 	// Genesis marks a row at height 0, in the chain's starting state.
 	Genesis bool `json:"genesis,omitempty"`
+	// Tags are the code-derived tags of the stored source, so only a current
+	// row carries them, like lines and summary.
+	Tags []tags.Tag `json:"tags,omitempty"`
 
 	day string
 }
@@ -208,6 +212,7 @@ func classifyTimeline(src store.CodeTimelineSource) *timelineSnap {
 				r.Current = true
 				r.Lines, r.Imports = p.Lines, p.Imports
 				r.Summary = timelineSummary(p.Doc)
+				r.Tags = src.Tags[s.Path]
 			}
 		}
 		rows = append(rows, r)
@@ -287,16 +292,27 @@ type timelineFilter struct {
 	ns      string
 	creator string
 	day     string
+	tag     string
 }
 
 func (f timelineFilter) match(r timelineRow) bool {
 	return f.kinds[r.Kind] &&
 		(f.ns == "" || r.NS == f.ns) &&
 		(f.creator == "" || r.Creator == f.creator) &&
-		(f.day == "" || r.day == f.day)
+		(f.day == "" || r.day == f.day) &&
+		(f.tag == "" || hasTag(r.Tags, f.tag))
 }
 
-// parseTimelineFilter reads kind, failed, ns, creator and day. A creator may
+func hasTag(ts []tags.Tag, tag string) bool {
+	for _, t := range ts {
+		if t.Tag == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// parseTimelineFilter reads kind, failed, ns, creator, tag and day. A creator may
 // be an address or a registered name; a name resolves on this network only.
 func parseTimelineFilter(r *http.Request, snap *timelineSnap, withDay bool) (timelineFilter, string) {
 	q := r.URL.Query()
@@ -322,6 +338,11 @@ func parseTimelineFilter(r *http.Request, snap *timelineSnap, withDay bool) (tim
 	default:
 		return f, "failed is 1 or 0"
 	}
+	tag, bad := tagParam(r)
+	if bad != "" {
+		return f, bad
+	}
+	f.tag = tag
 	if c := strings.TrimPrefix(strings.TrimSpace(q.Get("creator")), "@"); c != "" {
 		if addr, ok := snap.byName[c]; ok && !strings.HasPrefix(c, "g1") {
 			c = addr
