@@ -103,6 +103,14 @@
       "category": "content",
       "description": "A profile page that is a realm. gnoweb builds /u/moul by calling Render on the realm at exactly r/<username>/home and embedding the result, so the page is whatever this realm decides to print.",
       "url": "https://gno.land/u/moul"
+    },
+    {
+      "path": "gno.land/r/nym-alexiscolin000/gnogolf/golf/v2",
+      "name": "Gnogolf",
+      "category": "games",
+      "description": "Free 3D mini-golf in the browser: every hole is data published on chain, anyone can add holes of their own, and the realm computes every shot, so nobody can fake a score. Playing needs no wallet; recording a round is a transaction, and only players with a gno.land name are ranked.",
+      "url": "https://gnogolf.xyz",
+      "checked": "2026-10-05"
     }
   ]
 }
