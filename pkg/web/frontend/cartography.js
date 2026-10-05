@@ -92,7 +92,10 @@ var TIP = null;             // the one tooltip element, created on first use
 // -----------------------------------------------------------------------------
 
 var S = {
-  view: 'city',
+  // The landing view. City was the first drawing and the one with no centre;
+  // metropolis is the same chain as a city that has one, which is what this
+  // page set out to show. pkg/web/og_cartography.go previews the same default.
+  view: 'metropolis',
   window: '30d',
   metric: 'calls',
   roads: true,     // the city's import highways between districts
@@ -120,7 +123,20 @@ var S = {
   play: null,      // setInterval handle while the time-lapse plays
   // Find: what the reader typed, applied to whatever view is on screen.
   find: '',
+  // Compare: the second pane's view, or null, and its own variants, so a
+  // reader can put one view beside another or one variant beside another.
+  cmp: null,
+  optsB: {},
+  camKey: null,    // set while a pane draws, so the two panes keep separate cameras
+  anims: [],       // every animation loop on screen, one per settlement pane
+  cur: null,       // the data the panes on screen were drawn from, for hover
 };
+
+// UID makes SVG ids unique per drawing. Two panes can show the same view, and
+// an id defined twice resolves to the first: the second skyline's reflection
+// would mirror the first skyline.
+var UID = 0;
+function uid(name) { return 'carto' + UID + '-' + name; }
 
 // Three groups, shown as three rows of chips: the first five each answer one
 // question about the chain, the city-builders each have a centre, and the
@@ -356,7 +372,8 @@ function tipHide() { if (TIP) TIP.style.display = 'none'; }
 function bindNode(shape, n, extra) {
   shape.setAttribute('data-cp', n.path);
   shape.addEventListener('mousemove', function (ev) { tipShow(ev, nodeCard(n, extra)); });
-  shape.addEventListener('mouseleave', tipHide);
+  shape.addEventListener('mouseenter', function () { nbShow(n.path); });
+  shape.addEventListener('mouseleave', function () { tipHide(); nbClear(); });
   shape.addEventListener('click', function () { tipHide(); window.navigate(pathHref(n)); });
 }
 
@@ -371,6 +388,59 @@ function nodeCard(n, extra) {
   if (n.deployed_at) rows.push(['deployed', n.deployed_at.slice(0, 10)]);
   if (extra) extra.forEach(function (r) { rows.push(r); });
   return rows;
+}
+
+// -----------------------------------------------------------------------------
+// Hover neighbours: what a package stands on, and what stands on it
+// -----------------------------------------------------------------------------
+
+// adjacency is the import graph as two lookups, built once per data set (and
+// per as-of day, since asOf hands back its own).
+function adjacency(d) {
+  if (d._adj) return d._adj;
+  var out = {}, inn = {};
+  d.imports.forEach(function (e) {
+    (out[e.source] = out[e.source] || []).push(e.target);
+    (inn[e.target] = inn[e.target] || []).push(e.source);
+  });
+  d._adj = { out: out, inn: inn };
+  return d._adj;
+}
+
+// nbShow lights every shape of the hovered package's neighbours, in every pane
+// on screen: blue for what it imports, amber for what imports it, the rest
+// stepped back. It is the one question no single drawing answers, because
+// each placed packages by something other than their imports.
+function nbShow(path) {
+  if (!S.cur) return;
+  var adj = adjacency(S.cur), outs = {}, ins = {}, nss = {};
+  (adj.out[path] || []).forEach(function (p) { outs[p] = true; });
+  (adj.inn[path] || []).forEach(function (p) { ins[p] = true; });
+  [path].concat(Object.keys(outs), Object.keys(ins)).forEach(function (p) {
+    var n = S.cur.byPath[p];
+    if (n) nss[n.namespace] = true;
+  });
+  document.querySelectorAll('.carto-stage').forEach(function (stage) {
+    stage.classList.add('carto-nb');
+    stage.querySelectorAll('[data-cp]').forEach(function (e) {
+      var p = e.getAttribute('data-cp');
+      e.classList.toggle('carto-nb-self', p === path);
+      e.classList.toggle('carto-nb-out', !!outs[p] && p !== path);
+      e.classList.toggle('carto-nb-in', !!ins[p] && p !== path);
+    });
+    stage.querySelectorAll('[data-ns]').forEach(function (e) {
+      e.classList.toggle('carto-nb-ns', !!nss[e.getAttribute('data-ns')]);
+    });
+  });
+}
+
+function nbClear() {
+  document.querySelectorAll('.carto-stage.carto-nb').forEach(function (stage) {
+    stage.classList.remove('carto-nb');
+    stage.querySelectorAll('.carto-nb-self, .carto-nb-out, .carto-nb-in, .carto-nb-ns').forEach(function (e) {
+      e.classList.remove('carto-nb-self', 'carto-nb-out', 'carto-nb-in', 'carto-nb-ns');
+    });
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -397,8 +467,9 @@ function mountSVG(stage, svg, opts) {
   svg.appendChild(g);
   stage.appendChild(svg);
 
-  var cam = S.cam[S.view] || { x: 0, y: 0, k: 1 };
-  S.cam[S.view] = cam;
+  var ck = S.camKey || S.view;
+  var cam = S.cam[ck] || { x: 0, y: 0, k: 1 };
+  S.cam[ck] = cam;
 
   function apply() {
     g.setAttribute('transform', 'translate(' + cam.x + ',' + cam.y + ') scale(' + cam.k + ')');
@@ -645,13 +716,28 @@ function render(root) {
   });
   root.appendChild(pick);
   var cur = VIEWS.filter(function (v) { return v.id === S.view; })[0];
-  root.appendChild(el('p', { className: 'carto-blurb' }, cur.blurb));
+  root.appendChild(el('p', { className: 'carto-blurb' }, cur.blurb + '.',
+    el('span', { className: 'carto-hint' }, ' Hover a package: blue is what it imports, amber what imports it.')));
 
   root.appendChild(controls(root));
 
+  // One pane, or two side by side. The second pane has its own view and its
+  // own variants and shares everything else: window, metric, scale, as-of,
+  // find. Those are the things a comparison holds constant.
   var stage = el('div', { className: 'carto-stage', id: 'carto-stage' });
-  root.appendChild(stage);
-  root.appendChild(el('div', { id: 'carto-below' }));
+  var below = el('div', { id: 'carto-below' });
+  if (S.cmp) {
+    var split = el('div', { className: 'carto-split' });
+    var a = el('div', { className: 'carto-pane' }, el('div', { className: 'carto-pane-bar' },
+      el('b', {}, cur.name)), stage, below);
+    var b = el('div', { className: 'carto-pane' }, el('div', { className: 'carto-pane-bar', id: 'carto-bar-b' }),
+      el('div', { className: 'carto-stage', id: 'carto-stage-b' }), el('div', { id: 'carto-below-b' }));
+    split.appendChild(a); split.appendChild(b);
+    root.appendChild(split);
+  } else {
+    root.appendChild(stage);
+    root.appendChild(below);
+  }
 
   draw();
 }
@@ -756,6 +842,20 @@ function controls(root) {
       function (v) { if (opt(o.key) !== v) { S.opts[S.view + '.' + o.key] = v; writeURL(); restate(root); } }));
   });
 
+  // Compare: a second pane beside this one.
+  var cg = el('div', { className: 'carto-grp carto-cmp' }, el('span', {}, 'compare with'));
+  var sel = el('select', { id: 'carto-cmp', 'aria-label': 'show a second view beside this one' });
+  sel.appendChild(el('option', { value: '' }, 'nothing'));
+  VIEWS.forEach(function (v) {
+    var o = el('option', { value: v.id }, v.name);
+    if (S.cmp === v.id) o.setAttribute('selected', 'selected');
+    sel.appendChild(o);
+  });
+  sel.value = S.cmp || '';
+  sel.addEventListener('change', function () { S.cmp = sel.value || null; writeURL(); render(root); });
+  cg.appendChild(sel);
+  bar.appendChild(cg);
+
   // Find: one box for every view, so a reader who knows the realm they care
   // about can see where each drawing put it. Applied to the shapes already on
   // screen rather than by redrawing, so typing is instant.
@@ -803,6 +903,13 @@ function writeURL() {
   if (net && net !== 'all') q.set('network', net); else q.delete('network');
   if (S.asof) q.set('asof', S.asof); else q.delete('asof');
   if (S.find) q.set('find', S.find); else q.delete('find');
+  if (S.cmp) q.set('cmp', S.cmp); else q.delete('cmp');
+  Object.keys(OPTIONS).forEach(function (view) {
+    OPTIONS[view].forEach(function (o) {
+      var k = view + '.' + o.key, v = S.optsB[k];
+      if (S.cmp === view && v !== undefined && v !== o.values[0][1]) q.set('b.' + k, v); else q.delete('b.' + k);
+    });
+  });
   Object.keys(OPTIONS).forEach(function (view) {
     OPTIONS[view].forEach(function (o) {
       var k = view + '.' + o.key, v = S.opts[k];
@@ -837,6 +944,15 @@ function readURL() {
   var asof = q.get('asof');
   S.asof = asof && /^\d{4}-\d{2}-\d{2}$/.test(asof) ? asof : null;
   S.find = (q.get('find') || '').slice(0, 80);
+  var cmp = q.get('cmp');
+  S.cmp = cmp && VIEWS.some(function (x) { return x.id === cmp; }) ? cmp : null;
+  S.optsB = {};
+  Object.keys(OPTIONS).forEach(function (view) {
+    OPTIONS[view].forEach(function (o) {
+      var v = q.get('b.' + view + '.' + o.key);
+      if (v && o.values.some(function (x) { return x[1] === v; })) S.optsB[view + '.' + o.key] = v;
+    });
+  });
   S.opts = {};
   Object.keys(OPTIONS).forEach(function (view) {
     OPTIONS[view].forEach(function (o) {
@@ -848,6 +964,65 @@ function readURL() {
 
 function stopAnim() {
   if (S.anim) { cancelAnimationFrame(S.anim); S.anim = null; }
+  S.anims.forEach(function (a) { cancelAnimationFrame(a.h); });
+  S.anims = [];
+}
+
+var DRAW = function () {
+  return { city: drawCity, settlement: drawSettlement, orbits: drawOrbits,
+    metro: drawMetro, relief: drawRelief, metropolis: drawMetropolis, boroughs: drawBoroughs,
+    hexes: drawHexes, frontier: drawFrontier, oldtown: drawOldTown, honeycomb: drawHoneycomb,
+    skyline: drawSkyline, archipelago: drawArchipelago, lights: drawLights };
+};
+
+// drawPane draws one view into one pane, with that pane's variants and its own
+// camera. Every view reads S.view and S.opts, so the second pane borrows them
+// for the length of a synchronous draw and hands them back.
+function drawPane(view, opts, camKey, stage, below, d) {
+  var keepView = S.view, keepOpts = S.opts, keepCam = S.camKey;
+  S.view = view; S.opts = opts; S.camKey = camKey;
+  try {
+    DRAW()[view](stage, below, d);
+  } finally {
+    S.view = keepView; S.opts = keepOpts; S.camKey = keepCam;
+  }
+}
+
+// paneBar is the second pane's own controls: its name and its variants. It is
+// rebuilt on every draw, because a variant click redraws both panes.
+function paneBar() {
+  var bar = document.getElementById('carto-bar-b');
+  if (!bar) return;
+  bar.textContent = '';
+  var v = VIEWS.filter(function (x) { return x.id === S.cmp; })[0];
+  bar.appendChild(window.el('b', {}, v.name));
+  var keepView = S.view, keepOpts = S.opts;
+  S.view = S.cmp; S.opts = S.optsB;
+  try {
+    (OPTIONS[S.cmp] || []).forEach(function (o) {
+      if (o.when && !o.when()) return;
+      var cur = opt(o.key);
+      bar.appendChild(btnGroup(o.label, o.values, function (x) { return cur === x; }, function (x) {
+        S.optsB[S.cmp + '.' + o.key] = x; writeURL(); draw();
+      }));
+    });
+  } finally {
+    S.view = keepView; S.opts = keepOpts;
+  }
+}
+
+// peopleAsOf swaps the settlement's callers for the ones from the window that
+// ended on the as-of day. Every other view keeps today's traffic; the caller
+// graph is the one quantity stored per day, so it is the one that can go back.
+function peopleAsOf(all, d) {
+  if (d.peopleAt === S.asof) return Promise.resolve(d);
+  var days = { '24h': 1, '7d': 7, '30d': 30, '90d': 90, 'all': 3650 }[S.window] || 30;
+  return window.api('graph/callers?days=' + days + '&topN=80&min_calls=1&until=' + S.asof, all.network)
+    .then(function (r) {
+      d.people = ((r && r.edges) || []).filter(function (e) { return d.byPath[e.pkg_path]; });
+      d.peopleAt = S.asof;
+      return d;
+    }, function () { return d; });
 }
 
 function stopPlay() {
@@ -947,20 +1122,25 @@ function findHit(n, q) {
 // redraw. Packages are matched through data-cp, namespace-level shapes (a
 // hex, a block, an island) through data-ns.
 function applyFind() {
-  var stage = document.getElementById('carto-stage'), out = document.getElementById('carto-find-n');
-  if (!stage) return;
+  var out = document.getElementById('carto-find-n');
+  var stages = document.querySelectorAll('.carto-stage');
+  if (!stages.length) return;
   var q = (S.find || '').toLowerCase(), hits = 0, total = 0, byPath = S.data ? S.data.byPath : {};
-  stage.querySelectorAll('[data-cp]').forEach(function (e) {
-    var n = byPath[e.getAttribute('data-cp')];
-    var hit = !!(q && n && findHit(n, q));
-    total++; if (hit) hits++;
-    e.classList.toggle('carto-hit', hit);
-    e.classList.toggle('carto-dim', !!q && !hit);
-  });
-  stage.querySelectorAll('[data-ns]').forEach(function (e) {
-    var hit = !!(q && findHitNs(e.getAttribute('data-ns'), q));
-    e.classList.toggle('carto-hit', hit);
-    e.classList.toggle('carto-dim', !!q && !hit);
+  // Counted on the first pane only: the second shows the same packages, and a
+  // count of both would double every number.
+  stages.forEach(function (stage, si) {
+    stage.querySelectorAll('[data-cp]').forEach(function (e) {
+      var n = byPath[e.getAttribute('data-cp')];
+      var hit = !!(q && n && findHit(n, q));
+      if (si === 0) { total++; if (hit) hits++; }
+      e.classList.toggle('carto-hit', hit);
+      e.classList.toggle('carto-dim', !!q && !hit);
+    });
+    stage.querySelectorAll('[data-ns]').forEach(function (e) {
+      var hit = !!(q && findHitNs(e.getAttribute('data-ns'), q));
+      e.classList.toggle('carto-hit', hit);
+      e.classList.toggle('carto-dim', !!q && !hit);
+    });
   });
   if (!out) return;
   out.textContent = !q ? '' : !total ? 'not on this view (a canvas)' :
@@ -998,12 +1178,14 @@ function draw() {
     timeControl(d);
     var all = d;
     d = asOf(d);
+    S.cur = d;
     if (S.asof) {
       below.appendChild(window.el('div', { className: 'carto-asof' },
         window.el('b', {}, 'As of ' + S.asof + ': ' + d.nodes.length + ' of ' + all.nodes.length +
           ' packages had been deployed.'),
-        document.createTextNode(' Only existence is historical. Calls are still the last ' + S.window +
-          ' and imports are today\u2019s source, so a building lit here is lit now. Every layout is ' +
+        document.createTextNode(' Only existence is historical, with one exception: the settlement\u2019s ' +
+          'callers are the ' + S.window + ' up to that day, from the per-day call rollup. Elsewhere calls are ' +
+          'still the last ' + S.window + ' and imports are today\u2019s source, so a building lit here is lit now. Every layout is ' +
           'recomputed for what existed: views that rank reshuffle as the chain grows, and frontier, ' +
           'old town and an oldest-first honeycomb only ever add.' +
           (d.undated ? ' ' + d.undated + ' packages carry no deploy date and are left out.' : ''))));
@@ -1013,11 +1195,20 @@ function draw() {
         'nothing had been deployed by ' + S.asof + '; move the date later'));
       return;
     }
-    ({ city: drawCity, settlement: drawSettlement, orbits: drawOrbits,
-       metro: drawMetro, relief: drawRelief, metropolis: drawMetropolis, boroughs: drawBoroughs,
-       hexes: drawHexes, frontier: drawFrontier, oldtown: drawOldTown, honeycomb: drawHoneycomb,
-       skyline: drawSkyline, archipelago: drawArchipelago, lights: drawLights })[S.view](stage, below, d);
-    applyFind();
+    var needPeople = S.asof && (S.view === 'settlement' || S.cmp === 'settlement');
+    (needPeople ? peopleAsOf(all, d) : Promise.resolve(d)).then(function (d2) {
+      if (gen !== S.gen) return;
+      UID++;
+      drawPane(S.view, S.opts, null, stage, below, d2);
+      if (S.cmp) {
+        paneBar();
+        var sb = document.getElementById('carto-stage-b'), bb = document.getElementById('carto-below-b');
+        sb.textContent = ''; bb.textContent = '';
+        UID++;
+        drawPane(S.cmp, S.optsB, 'b:' + S.cmp, sb, bb, d2);
+      }
+      applyFind();
+    });
   }, function (e) {
     if (gen !== S.gen) return;
     stage.textContent = '';
@@ -1611,9 +1802,13 @@ function drawSettlement(stage, below, d) {
       if (w.t > 1) w.t -= 1;
       place(w);
     }
-    S.anim = requestAnimationFrame(step);
+    loop.h = requestAnimationFrame(step);
   }
-  S.anim = requestAnimationFrame(step);
+  // One handle per loop, registered, so two settlements side by side are
+  // both stopped when the page or the drawing changes.
+  var loop = { h: 0 };
+  S.anims.push(loop);
+  loop.h = requestAnimationFrame(step);
 
   note(below, [
     'The caller graph drawn as a place: ', [String(villages.length)], ' villages (realms), ',
@@ -2067,8 +2262,9 @@ function drawReliefField(stage, below, d, pos, met) {
   // magnifying pixels into squares. Two packages that merge into one hill at
   // full extent separate into two when you zoom into them, which is a true
   // statement about the data and not an artefact of the renderer.
-  var cam = S.cam.relief || { cx: 0.5, cy: 0.5, k: 1 };
-  S.cam.relief = cam;
+  var ck = S.camKey || 'relief';
+  var cam = S.cam[ck] || { cx: 0.5, cy: 0.5, k: 1 };
+  S.cam[ck] = cam;
 
   var dpr = Math.min(2, window.devicePixelRatio || 1);
   var cv = document.createElement('canvas');
@@ -3984,18 +4180,19 @@ function drawSkyline(stage, below, d) {
     style: 'max-height:78vh' });
 
   var defs = svgEl('defs');
-  var sky = svgEl('linearGradient', { id: 'carto-sky-grad', x1: 0, y1: 0, x2: 0, y2: 1 });
+  var skyId = uid('sky'), seaId = uid('sea'), towersId = uid('towers');
+  var sky = svgEl('linearGradient', { id: skyId, x1: 0, y1: 0, x2: 0, y2: 1 });
   sky.appendChild(svgEl('stop', { offset: '0', 'stop-color': '#05060d' }));
   sky.appendChild(svgEl('stop', { offset: '0.7', 'stop-color': '#141a33' }));
   sky.appendChild(svgEl('stop', { offset: '1', 'stop-color': '#2a2340' }));
   defs.appendChild(sky);
-  var sea = svgEl('linearGradient', { id: 'carto-sea-grad', x1: 0, y1: 0, x2: 0, y2: 1 });
+  var sea = svgEl('linearGradient', { id: seaId, x1: 0, y1: 0, x2: 0, y2: 1 });
   sea.appendChild(svgEl('stop', { offset: '0', 'stop-color': '#0a1222', 'stop-opacity': 0.55 }));
   sea.appendChild(svgEl('stop', { offset: '1', 'stop-color': '#04060c', 'stop-opacity': 0.97 }));
   defs.appendChild(sea);
   svg.appendChild(defs);
 
-  svg.appendChild(svgEl('rect', { x: -20, y: 0, width: Wd + 40, height: ground, fill: 'url(#carto-sky-grad)' }));
+  svg.appendChild(svgEl('rect', { x: -20, y: 0, width: Wd + 40, height: ground, fill: 'url(#' + skyId + ')' }));
   // Stars and a moon: decoration, seeded so the sky does not change between
   // reloads and nobody mistakes a new star for a new package.
   var rng = rngFrom('stars');
@@ -4006,7 +4203,7 @@ function drawSkyline(stage, below, d) {
   svg.appendChild(svgEl('circle', { cx: Wd * 0.86, cy: 80, r: 30, fill: '#f4ecd2', opacity: 0.9 }));
   svg.appendChild(svgEl('circle', { cx: Wd * 0.86 + 11, cy: 72, r: 27, fill: '#0b0d1a', opacity: 0.85 }));
 
-  var towers = svgEl('g', { id: 'carto-skyline-towers' });
+  var towers = svgEl('g', { id: towersId, 'data-towers': '1' });
   var lit = 0, tallest = null, tallestX = 0;
   row.forEach(function (n, i) {
     var h = hOf(n), x0 = xAt[i], y0 = ground - h;
@@ -4040,10 +4237,10 @@ function drawSkyline(stage, below, d) {
 
   // The harbour: the towers again, mirrored about the waterline, under a dark
   // gradient. One <use>, so the reflection cannot drift from what it reflects.
-  var refl = svgEl('use', { href: '#carto-skyline-towers', transform: 'translate(0,' + (2 * ground) + ') scale(1,-1)', opacity: 0.35,
+  var refl = svgEl('use', { href: '#' + towersId, transform: 'translate(0,' + (2 * ground) + ') scale(1,-1)', opacity: 0.35,
     'pointer-events': 'none' });
   svg.appendChild(refl);
-  svg.appendChild(svgEl('rect', { x: -20, y: ground, width: Wd + 40, height: Hd - ground, fill: 'url(#carto-sea-grad)',
+  svg.appendChild(svgEl('rect', { x: -20, y: ground, width: Wd + 40, height: Hd - ground, fill: 'url(#' + seaId + ')',
     'pointer-events': 'none' }));
   for (var wv = 0; wv < 60; wv++) {
     var wy = ground + 6 + rng() * (Hd - ground - 12), wx2 = rng() * Wd;
@@ -4308,7 +4505,7 @@ function drawLights(stage, below, d) {
   // Three lights, by what a package is: sodium for a realm someone called,
   // a cold blue for a library other code imports, a dim grey for the rest.
   var defs = svgEl('defs');
-  [['carto-glow-warm', '#ffcf73'], ['carto-glow-cool', '#8fc8ff'], ['carto-glow-dim', '#7b8090']].forEach(function (g) {
+  [[uid('glow-warm'), '#ffcf73'], [uid('glow-cool'), '#8fc8ff'], [uid('glow-dim'), '#7b8090']].forEach(function (g) {
     var rg = svgEl('radialGradient', { id: g[0] });
     rg.appendChild(svgEl('stop', { offset: '0', 'stop-color': g[1], 'stop-opacity': 0.95 }));
     rg.appendChild(svgEl('stop', { offset: '0.35', 'stop-color': g[1], 'stop-opacity': 0.35 }));
@@ -4344,7 +4541,7 @@ function drawLights(stage, below, d) {
     var kind = n.is_realm && n.calls > 0 ? 'warm' : !n.is_realm && n.importers > 0 ? 'cool' : 'dim';
     counts[kind]++;
     var g = svgEl('g');
-    g.appendChild(svgEl('circle', { cx: c[0], cy: c[1], r: 3 + f * 30, fill: 'url(#carto-glow-' + kind + ')' }));
+    g.appendChild(svgEl('circle', { cx: c[0], cy: c[1], r: 3 + f * 30, fill: 'url(#' + uid('glow-' + kind) + ')' }));
     g.appendChild(svgEl('circle', { cx: c[0], cy: c[1], r: kind === 'dim' ? 0.7 : 1.1 + f * 1.4,
       fill: kind === 'warm' ? '#fff3d6' : kind === 'cool' ? '#e6f3ff' : '#9a9fae', opacity: kind === 'dim' ? 0.5 : 0.95 }));
     bindNode(g, n, [['light', { warm: 'a realm called in the window', cool: 'a library others import', dim: 'neither' }[kind]]]);

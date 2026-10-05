@@ -221,3 +221,40 @@ func TestChainResetLeavesOtherChainsEdgesAlone(t *testing.T) {
 		t.Errorf("mainnet cursor = (%d, %v), want (500, true): staging's reset took another chain's rollup with it", h, ok)
 	}
 }
+
+// The time-lapse asks who was calling what in the window that ended on a past
+// day. A call after that day must not count, and a call inside it must, or the
+// settlement replays today's traffic under an old date.
+func TestCallerGraphUntilEndsTheWindowOnThatDay(t *testing.T) {
+	db := NewTestDB(t)
+	if err := db.UpsertCallerEdges("live", []CallerEdgeRow{
+		{Caller: "g1early", PkgPath: "gno.land/r/a/x", Day: "2026-09-10", Calls: 5, LastHeight: 1},
+		{Caller: "g1early", PkgPath: "gno.land/r/a/x", Day: "2026-09-20", Calls: 7, LastHeight: 2},
+		{Caller: "g1late", PkgPath: "gno.land/r/b/y", Day: "2026-09-20", Calls: 9, LastHeight: 3},
+		{Caller: "g1ancient", PkgPath: "gno.land/r/a/x", Day: "2026-08-01", Calls: 4, LastHeight: 0},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	g, err := db.GetCallerGraphUntil("live", 30, until, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Edges) != 1 || g.Edges[0].Caller != "g1early" || g.Edges[0].Calls != 5 {
+		t.Fatalf("edges until 2026-09-12 = %+v, want only g1early with the 5 calls of 09-10", g.Edges)
+	}
+	// The window is 30 days back from until, so 08-01 is outside it too.
+	for _, n := range g.Nodes {
+		if n.ID == "g1ancient" || n.ID == "g1late" {
+			t.Fatalf("node %s is outside the window ending 2026-09-12", n.ID)
+		}
+	}
+	// Zero until is today, the old behaviour, and sees both later calls.
+	now, err := db.GetCallerGraphUntil("live", 3650, time.Time{}, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(now.Edges) != 3 {
+		t.Fatalf("edges until today = %d, want 3", len(now.Edges))
+	}
+}

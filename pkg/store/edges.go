@@ -375,7 +375,19 @@ type CallerGraph struct {
 	Edges []CallerGraphEdge `json:"edges"`
 }
 
+// GetCallerGraph is the address-to-realm graph over the last `days` days.
 func (d *DB) GetCallerGraph(network string, days, topN, minCalls int) (CallerGraph, error) {
+	return d.GetCallerGraphUntil(network, days, time.Time{}, topN, minCalls)
+}
+
+// GetCallerGraphUntil is the same graph over the `days` days that end on
+// `until` (inclusive), or on today when until is zero.
+//
+// caller_edges is rolled up per day, so a window that ends in the past costs
+// one more bound on the same index and nothing else. It is what lets the
+// cartography time-lapse show who was calling what *then*, rather than
+// filtering today's callers down to the realms that happened to exist.
+func (d *DB) GetCallerGraphUntil(network string, days int, until time.Time, topN, minCalls int) (CallerGraph, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -385,11 +397,17 @@ func (d *DB) GetCallerGraph(network string, days, topN, minCalls int) (CallerGra
 	if topN > 1000 {
 		topN = 1000
 	}
-	start := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
+	end := until
+	if end.IsZero() {
+		end = time.Now()
+	}
+	end = end.UTC()
+	start := end.AddDate(0, 0, -days).Format("2006-01-02")
+	last := end.Format("2006-01-02")
 
 	callerRows, err := d.db.Query(`
-		SELECT caller, SUM(calls) FROM caller_edges WHERE network = ? AND day >= ?
-		GROUP BY caller ORDER BY SUM(calls) DESC LIMIT ?`, network, start, topN)
+		SELECT caller, SUM(calls) FROM caller_edges WHERE network = ? AND day >= ? AND day <= ?
+		GROUP BY caller ORDER BY SUM(calls) DESC LIMIT ?`, network, start, last, topN)
 	if err != nil {
 		return CallerGraph{}, err
 	}
@@ -416,8 +434,8 @@ func (d *DB) GetCallerGraph(network string, days, topN, minCalls int) (CallerGra
 	}
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(callers)), ",")
-	args := make([]any, 0, 2+len(callers)+1)
-	args = append(args, network, start)
+	args := make([]any, 0, 3+len(callers)+1)
+	args = append(args, network, start, last)
 	for _, c := range callers {
 		args = append(args, c)
 	}
@@ -426,7 +444,7 @@ func (d *DB) GetCallerGraph(network string, days, topN, minCalls int) (CallerGra
 	edgeRows, err := d.db.Query(fmt.Sprintf(`
 		SELECT caller, pkg_path, SUM(calls)
 		FROM caller_edges
-		WHERE network = ? AND day >= ? AND caller IN (%s)
+		WHERE network = ? AND day >= ? AND day <= ? AND caller IN (%s)
 		GROUP BY caller, pkg_path
 		HAVING SUM(calls) >= ?
 		ORDER BY SUM(calls) DESC`, placeholders), args...)

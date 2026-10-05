@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // The two edge-graph endpoints are per-chain and say so rather than answering
@@ -48,7 +49,21 @@ func (a *API) HandleGraphCallers(w http.ResponseWriter, r *http.Request) {
 	topN, _ := strconv.Atoi(r.URL.Query().Get("topN"))
 	minCalls, _ := strconv.Atoi(r.URL.Query().Get("min_calls"))
 
-	g, err := a.db.GetCallerGraph(network, days, topN, minCalls)
+	// until=YYYY-MM-DD ends the window on that day instead of today, for the
+	// cartography time-lapse. Anything else is refused rather than read as
+	// "today": a malformed date silently answering for now would draw a
+	// historical picture out of current traffic.
+	var until time.Time
+	if u := r.URL.Query().Get("until"); u != "" {
+		t, err := time.Parse("2006-01-02", u)
+		if err != nil {
+			jsonError(w, "until must be YYYY-MM-DD", 400)
+			return
+		}
+		until = t
+	}
+
+	g, err := a.db.GetCallerGraphUntil(network, days, until, topN, minCalls)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
