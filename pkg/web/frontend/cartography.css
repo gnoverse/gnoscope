@@ -136,3 +136,27 @@
 .carto-time-d { color: var(--fg); font-weight: normal; min-width: 6.5em; font-variant-numeric: tabular-nums; }
 .carto-asof { color: var(--fg2); font-size: 12px; padding: 10px 2px 0; max-width: 90ch; line-height: 1.6; }
 .carto-asof b { color: var(--amber); font-weight: normal; }
+
+/* Hover neighbours: while a package is hovered, its imports glow blue, its
+   importers amber, and everything else steps back. The stage carries
+   .carto-nb for the duration, so the dimming is one rule, not 600 classes. */
+.carto-stage.carto-nb [data-cp]:not(.carto-nb-self):not(.carto-nb-out):not(.carto-nb-in) { opacity: .13; }
+.carto-stage.carto-nb [data-ns]:not(.carto-nb-ns) { opacity: .3; }
+.carto-stage .carto-nb-self { filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 6px #fff); }
+.carto-stage .carto-nb-out { filter: drop-shadow(0 0 2px #6ab0ff) drop-shadow(0 0 5px #6ab0ff); }
+.carto-stage .carto-nb-in { filter: drop-shadow(0 0 2px #ffb347) drop-shadow(0 0 5px #ffb347); }
+.carto-hint { color: var(--fg2); opacity: .8; }
+
+/* Compare: two panes, each with its own name and variants above it. Stacked
+   on a narrow screen, where two drawings side by side would each be a stamp. */
+.carto-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 960px) { .carto-split { grid-template-columns: minmax(0, 1fr); } }
+.carto-pane { min-width: 0; }
+.carto-pane-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 12px;
+  padding: 0 0 6px; min-height: 26px; }
+.carto-pane-bar > b { color: var(--accent); font-weight: normal; }
+.carto-pane-bar button { background: var(--bg2); border: 1px solid var(--border); color: var(--fg2);
+  font: inherit; font-size: 11px; padding: 1px 7px; border-radius: 4px; cursor: pointer; }
+.carto-pane-bar button.on { background: var(--bg3); border-color: var(--accent); color: var(--accent); }
+.carto-cmp select { background: var(--bg2); border: 1px solid var(--border); color: var(--fg); font: inherit;
+  font-size: 11.5px; padding: 1px 4px; border-radius: 4px; }

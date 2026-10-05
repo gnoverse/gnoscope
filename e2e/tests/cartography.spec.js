@@ -635,18 +635,19 @@ test('the honeycomb gives every package its own cell, outward in rank order', as
 test('the skyline peaks in the middle, and its reflection is the same towers', async ({ page }) => {
   await open(page, 'skyline');
   const r = await page.evaluate(() => {
-    const ts = [...document.querySelectorAll('#carto-skyline-towers > g')];
+    const group = document.querySelector('#carto-stage [data-towers]');
+    const ts = [...group.children];
     const xs = ts.map(t => Number(t.getAttribute('data-x')));
     const hs = ts.map(t => Number(t.querySelector('rect').getAttribute('height')));
     const top = hs.indexOf(Math.max(...hs));
     return { n: ts.length, xTop: xs[top], xMin: Math.min(...xs), xMax: Math.max(...xs),
-      use: document.querySelector('#carto-stage use').getAttribute('href') };
+      use: document.querySelector('#carto-stage use').getAttribute('href'), id: group.id };
   });
   const stated = Number((await page.locator('.carto-note').innerText()).match(/one tower per package, (\d+) of them/)[1]);
   expect(r.n).toBe(stated);
   const mid = (r.xMin + r.xMax) / 2;
   expect(Math.abs(r.xTop - mid)).toBeLessThan((r.xMax - r.xMin) * 0.05);
-  expect(r.use).toBe('#carto-skyline-towers');
+  expect(r.use).toBe('#' + r.id);
 });
 
 test('the archipelago lays one island per namespace and no two overlap', async ({ page }) => {
@@ -740,4 +741,93 @@ test('night lights draws one light per package at the relief\'s positions', asyn
       .filter(c => { const x = +c.getAttribute('cx'), y = +c.getAttribute('cy'); return x < 0 || y < 0 || x > vb.width || y > vb.height; }).length;
   });
   expect(outside).toBe(0);
+});
+
+// Round four: compare, hover neighbours, previews, history for the settlement.
+
+test('a bare /cartography opens on the metropolis', async ({ page }) => {
+  await page.goto('/cartography' + NET);
+  await settle(page);
+  await expect(page.locator('.carto-pick button.on b')).toHaveText('metropolis');
+});
+
+test('compare draws a second view beside the first, with its own variants and camera', async ({ page }) => {
+  const w = watch(page);
+  await open(page, 'metropolis', '&cmp=honeycomb');
+  await page.waitForSelector('#carto-stage-b svg');
+  const a = await page.locator('#carto-stage [data-cp]').count();
+  expect(await page.locator('#carto-stage-b [data-cp]').count()).toBe(a);
+
+  // The second pane's variant is its own, and in the URL under b.
+  await page.locator('#carto-bar-b button', { hasText: 'oldest' }).click();
+  await expect(page).toHaveURL(/b\.honeycomb\.centre=old/);
+  await expect(page.locator('#carto-bar button.on', { hasText: 'land value' })).toHaveCount(1);
+
+  // Zooming one pane leaves the other where it was, even when both show the
+  // same view, and even after a redraw: a shared camera only shows itself
+  // once both panes are repainted from it, so the metric change is the test.
+  await open(page, 'metropolis', '&cmp=metropolis');
+  await page.waitForSelector('#carto-stage-b svg');
+  await wheelOn(page, '#carto-stage svg', -600);
+  await page.locator('#carto-bar button', { hasText: 'storage' }).click();
+  await expect(page.locator('#carto-below .carto-note')).toContainText('storage');
+  const tb = await page.evaluate(() => document.querySelector('#carto-stage-b svg > g').getAttribute('transform'));
+  const ta = await page.evaluate(() => document.querySelector('#carto-stage svg > g').getAttribute('transform'));
+  expect(ta).not.toBe('translate(0,0) scale(1)');
+  expect(tb).toBe('translate(0,0) scale(1)');
+  await open(page, 'metropolis', '&cmp=honeycomb');
+  await page.waitForSelector('#carto-stage-b svg');
+
+  // Find marks both panes.
+  await page.locator('#carto-find').fill('hub');
+  expect(await page.locator('#carto-stage-b .carto-hit[data-cp]').count()).toBeGreaterThan(0);
+
+  // And "nothing" puts the page back to one pane.
+  await page.selectOption('#carto-cmp', '');
+  await expect(page.locator('#carto-stage-b')).toHaveCount(0);
+  await expect(page).not.toHaveURL(/cmp=/);
+  expect(w.jsErrors).toEqual([]);
+});
+
+test('hovering a package lights what imports it, in every pane', async ({ page }) => {
+  const edges = (await (await page.request.get('/api/contracts/edges?kind=imports' + '&network=alpha')).json()).edges;
+  const by = {};
+  edges.forEach(e => { by[e.target] = (by[e.target] || new Set()).add(e.source); });
+  await open(page, 'honeycomb', '&cmp=metropolis');
+  await page.waitForSelector('#carto-stage-b svg');
+  const onStage = new Set(await page.evaluate(() => [...document.querySelectorAll('#carto-stage [data-cp]')].map(e => e.getAttribute('data-cp'))));
+  const target = Object.keys(by).filter(p => onStage.has(p)).sort((x, y) => by[y].size - by[x].size)[0];
+  expect(target).toBeTruthy();
+  const importers = [...by[target]].filter(p => onStage.has(p) && p !== target).length;
+
+  await page.locator('#carto-stage').evaluate(e => e.scrollIntoView({ block: 'center' }));
+  await page.locator(`#carto-stage [data-cp="${target}"]`).hover({ force: true });
+  await expect(page.locator('#carto-stage .carto-nb-self')).toHaveCount(1);
+  expect(await page.locator('#carto-stage .carto-nb-in').count()).toBe(importers);
+  expect(await page.locator('#carto-stage-b .carto-nb-in').count()).toBe(importers);
+
+  // Leaving clears every mark, or the next hover would add to stale ones.
+  await page.mouse.move(2, 2);
+  await expect(page.locator('.carto-nb-in, .carto-nb-out, .carto-nb-self')).toHaveCount(0);
+});
+
+test('the settlement as of a day asks for the callers of the window that ended then', async ({ page }) => {
+  const asked = [];
+  await page.route('**/api/graph/callers*', route => {
+    asked.push(route.request().url());
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify(PEOPLE) });
+  });
+  await open(page, 'metropolis');
+  const first = await page.locator('#carto-asof').getAttribute('data-first');
+  await open(page, 'settlement', `&asof=${first}`);
+  expect(asked.some(u => u.includes(`until=${first}`))).toBe(true);
+  await expect(page.locator('.carto-asof')).toContainText('per-day call rollup');
+});
+
+test('a cartography link previews as the drawing it names', async ({ page }) => {
+  const html = await (await page.request.get('/cartography?v=skyline&network=alpha')).text();
+  expect(html).toMatch(/property="og:image" content="[^"]*\/cartography-og\/skyline\.jpg"/);
+  const img = await page.request.get('/cartography-og/skyline.jpg');
+  expect(img.status()).toBe(200);
+  expect(img.headers()['content-type']).toContain('image/jpeg');
 });

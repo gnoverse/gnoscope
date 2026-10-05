@@ -117,6 +117,11 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 			serveRealmDocument(w, r, index, headEnd, etag, pkgPath, opts.Shots)
 			return
 		}
+		// A cartography link names a drawing, and its preview is that drawing.
+		if v, ok := cartographyViewFromRequest(r); ok {
+			serveTaggedDocument(w, r, index, headEnd, etag, cartographyTags(requestOrigin(r), v, networkParam(r)))
+			return
+		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("ETag", etag)
@@ -148,8 +153,14 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 func serveRealmDocument(w http.ResponseWriter, r *http.Request, index []byte, headEnd int,
 	baseETag, pkgPath string, withImage bool,
 ) {
-	tags := ogTags(requestOrigin(r), pkgPath, networkParam(r), withImage)
+	serveTaggedDocument(w, r, index, headEnd, baseETag, ogTags(requestOrigin(r), pkgPath, networkParam(r), withImage))
+}
 
+// serveTaggedDocument is index.html with a preview block spliced into its head,
+// for any route that has one: a realm, or a cartography view.
+func serveTaggedDocument(w http.ResponseWriter, r *http.Request, index []byte, headEnd int,
+	baseETag string, tags []byte,
+) {
 	sum := sha256.Sum256(append([]byte(baseETag), tags...))
 	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
 
