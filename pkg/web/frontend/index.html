@@ -2455,9 +2455,16 @@ function shortPkg(path) {
   if (segs.length < 3 || (segs[0] !== 'r' && segs[0] !== 'p')) return rel;
   const ns = segs[1];
   const rest = segs.slice(2);
-  // A bare version segment names a generation, not a package: keep its parent.
-  const tailN = rest.length >= 2 && /^v\d+$/.test(rest[rest.length - 1]) ? 2 : 1;
-  const shown = rest.length <= 2 ? rest.join('/') : '\u2026/' + rest.slice(-tailN).join('/');
+  // The sub-path is what tells two packages under one namespace apart
+  // (gnofly/nfts/skins vs gnofly/nfts/planes), so it stays whole while it is
+  // short. Only a long one is cut, and then in the middle: its first segment
+  // (the app) and its tail (the package, plus its parent when the tail is a
+  // bare version segment, which names a generation and not a package).
+  let shown = rest.join('/');
+  if (shown.length > 40 && rest.length > 3) {
+    const tailN = /^v\d+$/.test(rest[rest.length - 1]) ? 2 : 1;
+    shown = rest[0] + '/\u2026/' + rest.slice(-tailN).join('/');
+  }
   return looksLikeAddress(ns) ? shown : ns + '/' + shown;
 }
 // ordinal spells 1 as 1st, 2 as 2nd, 11 as 11th, 22 as 22nd.
