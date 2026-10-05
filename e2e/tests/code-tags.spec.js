@@ -54,6 +54,12 @@ test('timeline cards carry their tags, with the evidence on hover, and a tag nar
 test('a hostile tag and evidence are drawn as text', async ({ page }) => {
   const w = watch(page);
   const evil = '<img src=x onerror="window.__pwned=1">';
+  // The rule table lands after the feed, which is the order that used to
+  // leave a chip's tooltip without its sentence for good.
+  await page.route(/\/api\/tags\?/, async (route) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
   await page.route(/\/api\/code\/timeline\?/, (route) => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({
