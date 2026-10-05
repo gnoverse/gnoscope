@@ -138,12 +138,23 @@ var endpointTTL = map[string]time.Duration{
 // once a day, and short enough that an entry nobody asks for again leaves.
 const pinnedSourceTTL = 24 * time.Hour
 
-// ttlForRequest returns the freshness window for one request. Only the pinned
-// source read depends on more than the path, because what pins it is a query
-// parameter.
+// codeTimelineCursorTTL is the server-side freshness of a timeline page
+// behind a cursor. Its rows are fixed; only the lines and summary of a row
+// that stops being current can move, and ten minutes is soon enough for that.
+const codeTimelineCursorTTL = 10 * time.Minute
+
+// ttlForRequest returns the freshness window for one request. Two reads
+// depend on more than the path, the pinned source read and a timeline page
+// behind a cursor, because what fixes each one is a query parameter.
 func (c *responseCache) ttlForRequest(r *http.Request) time.Duration {
 	if strings.HasPrefix(r.URL.Path, SourcePrefix) && r.URL.Query().Get("at") != "" {
 		return pinnedSourceTTL
+	}
+	// A timeline page behind a cursor holds rows whose kind can never change
+	// (see api_code_timeline.go), so it is recomputed far less often than the
+	// head, which moves with every deploy.
+	if r.URL.Path == CodeTimelinePath && r.URL.Query().Get("before") != "" {
+		return codeTimelineCursorTTL
 	}
 	return c.cacheTTLFor(r.URL.Path)
 }

@@ -1,10 +1,15 @@
-# `/code`: the code explorer
+# `/code`: the code map
 
 Every package deployed on one chain, readable in the browser: a map of all the
 code at the front door, a file tree beside a highlighted file, and a palette
 that jumps to any package or file in a keystroke. It is the place to discover
 what is on a chain, where `/realm/<path>` is the place to see what one realm is
-doing right now.
+doing right now. Its timeline, `/code/timeline`, is the same chain as a feed:
+what was published, newest first.
+
+The page is called **code map**, and it sits in the rail under **developer**,
+first, with **timeline** after it. It used to be a top-level `code` entry; the
+URLs did not move, so every `/code` link still opens the same page.
 
 ## Routes
 
@@ -17,6 +22,7 @@ doing right now.
 | `/code/<r\|p>/<path>/-/<file>` | one file |
 | `/code/<r\|p>/<path>/-/<file>#L42` | that file, line 42 marked and scrolled to |
 | `/code/<r\|p>/<prefix>` | a path with no package of its own (`r/gnoswap`): what is under it |
+| `/code/timeline` | every publication on the chain, newest first, under a calendar of the last year |
 
 Every URL carries `?network=`. The map's controls ride along as `?size=bytes`
 and `?color=age|kind` when they differ from the default. The `/-/` separator is
@@ -78,6 +84,37 @@ from the tree's `fam` key. When the manifest counts more than one submission,
 the rail also draws every `MsgAddPackage` at the path as a dot, failed ones in
 red, the one whose source is shown ringed.
 
+## The timeline
+
+A feed of every `MsgAddPackage` on the chain, the way a GitHub dashboard lists
+what was pushed, drawn from `/api/code/timeline` (see
+[api.md](api.md#the-code-timeline) for how each row is classified). Rows are
+grouped under a header per UTC day ("today", "yesterday", then dates), each one
+a card: the publisher's identicon and name, what happened ("published",
+"released ... a new version of ...", "republished", "tried to publish"), a
+badge for the kind, files, lines and imports when the source is still the
+stored one, the package's own one-line summary, the age (the date on hover),
+the block and the transaction. The path opens in the code map, the publisher
+opens its address page. The page never says "deploy" (see the glossary).
+
+Above the feed is a calendar of the last 365 days, 53 weeks by 7, five shades
+from nothing to the busiest day, from `/api/code/timeline/heatmap`. Hovering a
+day says how many packages were published on it; clicking one narrows the feed
+to that day, and clicking it again, or the chip it adds, widens it back.
+
+The chips choose the kinds (all, new only, or any mix of new, new version and
+republished) and whether failed submissions are listed; the two boxes narrow to
+a namespace or a publisher (an address or a registered name), and the calendar
+follows them. Every filter is in the URL (`kind`, `failed`, `ns`, `creator`,
+`day`), so a view is a link.
+
+The first page and the calendar go through the site's payload cache, so a
+second visit paints before the network answers; the next page is fetched when
+the end of the list comes within a screen and a half, and a "load more" button
+does the same by hand. Measured 2026-10-05 against a local copy of gnoland1,
+headless Chromium: the first card on screen 138 ms after navigation on a cold
+cache, 68 ms on a reload.
+
 ## Keys
 
 | key | where | what |
@@ -87,7 +124,7 @@ red, the one whose source is shown ringed.
 | `l` `h` / right, left | tree | open or close, or go to the parent |
 | `enter` | tree | open the package or file |
 | `space` | tree | open or close without navigating |
-| `g` then `c` | anywhere | go to `/code` |
+| `g` then `c` | anywhere | go to the code map |
 
 The palette scores every package path and every file path with a fuzzy
 subsequence match: the best alignment of the query in the path, where a letter

@@ -86,6 +86,10 @@ stored), so the TTL there bounds memory, not freshness. Where a handler sets
 it carries moves only with a deploy, and the part that moves with every call is
 a 30-day count, which one sync pass changes by too little to see.
 
+A page of `/api/code/timeline` behind a cursor (`before=` set) is kept for 10
+minutes, the head page for the default 30 seconds: what moves on an old page is
+at most a summary, and the head moves with every deploy.
+
 ## Compression
 
 Responses are gzipped when the client sends `Accept-Encoding: gzip` and the body
@@ -418,6 +422,8 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/gnohub/forge/{path...}` | what r/moul/forge claims about a package path: `{path, network, realm, linked, repo_id, repo_url, latest_release, release_count, log_head, unavailable}`. **Requires `network`**: the forge is realm state and the same path exists on more than one chain. `linked: false` with no `unavailable` means nobody has registered the package, which is the normal case and not an error. Reads live over `vm/qeval`, cached 2 minutes; see below |
 | `GET /api/source/{path...}` | a package's source apart from everything volatile, addressed by the submission that put it there. **Requires `network`** (400 without it, or with `all`). Without `at`: a manifest `{path, network, name, kind, stamp, files[], siblings[], submissions, redeploys}`, `stamp` = `{height, tx_hash, time}` of the current submission, each file `{name, size, lines}` (size in bytes), `siblings` the other generations of the same app on that network (see `discover.Generation`), each `{path, stamp}`, oldest generation first. `max-age=30` and an `ETag` over the bytes. With `at=<stamp height>`: `{path, network, name, kind, stamp, files[]}` with each file's `body`, `immutable` for a year; add `file=<name>` for one file, and `tokens=1` with it for that file classified for highlighting instead of its body (`{..., file, tokens, lines, decls}`). Any other `at` is a `409`. See below |
 | `GET /api/code/tree` | every deployed package on one network in one payload, for a file-tree explorer and a treemap of all the code on a chain. **Requires `network`** (400 without it, or with `all`). `{network, height, count, files, lines, bytes, since, window_days, packages[]}`, each package in short keys: `p` path, `ns` namespace, `k` kind (`r` realm, `p` pure), `h` stamp height, `f` files as `[name, lines, bytes]`, `l` and `b` the package totals, `fam` and `g` its version family, `c` calls and `u` unique callers in the window, `d` dependents. `public, max-age=60`, an `ETag`, `304` on `If-None-Match`, 5-minute server TTL. See below |
+| `GET /api/code/timeline` | every `MsgAddPackage` on one network, newest first, classified: `new`, `version`, `redeploy` or `failed`. **Requires `network`** (400 without it, or with `all`). `{network, height, total, rows[], next}`. Filters: `kind` (comma-separated or repeated), `failed=1` (failed submissions are hidden otherwise), `ns`, `creator` (an address or a registered name), `day` (`YYYY-MM-DD`, UTC). `limit` defaults to 50, capped at 200; `before=<next>` is the following page. `public, max-age=15` on the head, `max-age=300` behind a cursor, an `ETag`, `304` on `If-None-Match`. See below |
+| `GET /api/code/timeline/heatmap` | successful publications per UTC day over the last 365 days, split by kind, for a contribution calendar: `{network, from, to, total, max, days[]}`, each day `{d, n, v, r}` (new, version, redeploy), only days with something. Takes the timeline's `ns` and `creator`. `public, max-age=60` and an `ETag` |
 | `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
 | `GET /api/realm/usage/{path...}` | who calls one realm, aggregated over its whole history, plus one page of the message feed. See below |
 | `GET /api/deps/{path...}` | dependency graph as `{path: [imports]}`. `dir=dependents` reverses direction, and defaults to one hop; `depth=N` caps the reverse walk, `depth=0` is unbounded |
@@ -539,6 +545,59 @@ Whether a package is live or parked is not here: that is read over RPC per
 path, with a cold cost measured in seconds, and a payload whose content
 depended on whether that cache happened to be warm could not keep a stable
 validator. Overlay `/api/inert/queue` instead.
+
+### The code timeline
+
+`/api/code/timeline?network=<id>` is the chain's publications as a feed,
+newest first, the way a GitHub dashboard lists what was pushed. It reads
+`package_submissions`, one row per message and never overwritten, for the
+reason the deploy history does (see above): `packages` would show each path
+once and lose every first publication that was later redeployed.
+
+Each row's `kind` is decided against the rows before it on the same network,
+walked in (height, tx hash, message index) order:
+
+| kind | meaning |
+|---|---|
+| `new` | the first successful submission at the path |
+| `version` | the first successful submission at a path whose `discover.Generation` family already had an older generation (`r/ns/app/v2` after `r/ns/app/v1`, `bubblerumble6` after `bubblerumble5`). `prev` names the newest such older path |
+| `redeploy` | the path again, after a success there. `nth` counts the successful submissions at the path, this one included |
+| `failed` | a submission the chain refused. Hidden unless `failed=1` or `kind=failed` |
+
+An older generation arriving after a newer one is `new`, not a version: the
+family relation orders generations, and "released v1 of something already at
+v2" is not a thing anybody did. Genesis rows (height 0) are classified like any
+other and carry `genesis`.
+
+| key | meaning |
+|---|---|
+| `path`, `ns`, `k` | the package path, its namespace, `r` realm or `p` pure package |
+| `creator`, `user` | the submitting address and its registered `r/sys/users` name on this network, when it has one |
+| `height`, `time`, `tx`, `msg` | where the message sits. `time` is absent while the block time is not synced |
+| `files` | files in the submission |
+| `current` | this submission's source is the one stored. Only then are `lines`, `imports` and `summary` known: the package's doc comment, else the first prose line of its README, cut to one sentence of at most 160 characters, plain text |
+| `family` | the generation family key, when it differs from the path |
+| `debut` | the creator's first successful submission on this chain, read from `first_seen` like discover's first-time-publisher event |
+
+Paging is a cursor over (height, tx hash, message index) descending: `next` is
+`<height>.<msg>.<tx>`, and `before=<next>` returns the rows strictly after it,
+so rows that land on top of the feed between two pages neither repeat nor
+shift a row out of the next page. `total` counts every row matching the
+filters, across pages. The kind of a row depends only on the rows before it,
+which is why a page behind a cursor is cached for longer: the one thing on it
+that can move is a row's lines and summary, which leave it when its path is
+republished.
+
+The classified feed is computed once per network and reused until the
+network's submission count or newest height moves, or five minutes pass (the
+symbol indexer fills doc comments after the deploy that carried them).
+Measured 2026-10-05 against a local copy of gnoland1 (688 submissions): 80 ms
+for the first request, the head page 25 KB of JSON and 5.4 KB gzipped, then
+under a millisecond from the response cache.
+
+`/api/code/timeline/heatmap` counts the same classified rows: successful ones
+only, per UTC day, over the 365 days ending today. A row with no block time
+yet is in the feed and not in the calendar.
 
 ### Highlighting tokens
 
