@@ -1157,6 +1157,33 @@ func (c *Client) GetAllPackages(ctx context.Context, lastHeight *int) ([]Transac
 		`messages: { value: { MsgAddPackage: {} } }`, c.bodyFields(ctx))
 }
 
+// GetPackagesInRange fetches every MsgAddPackage transaction with a height in
+// [from, to], with file bodies, oldest first.
+//
+// The submission-source backfill's query: it asks for the bodies of
+// submissions synced before they were kept, a bounded height range at a time.
+// from 0 includes genesis, which the indexer files at height 0 and which a
+// `gt: -1` bound does not match, so the lower bound is left out for it.
+// ErrQueryTooLarge comes back with the partial page, as for every range query;
+// the caller narrows the range.
+func (c *Client) GetPackagesInRange(ctx context.Context, from, to int) ([]Transaction, error) {
+	var result struct {
+		GetTransactions []Transaction `json:"getTransactions"`
+	}
+	bounds := fmt.Sprintf(`lt: %d`, to+1)
+	if from > 0 {
+		bounds = fmt.Sprintf(`gt: %d, lt: %d`, from-1, to+1)
+	}
+	q := fmt.Sprintf(`{
+		getTransactions(
+			where: { block_height: { %s } messages: { value: { MsgAddPackage: {} } } }
+			order: { heightAndIndex: ASC }
+		) { %s }
+	}`, bounds, c.bodyFields(ctx))
+	err := c.query(ctx, q, nil, &result)
+	return result.GetTransactions, err
+}
+
 // GetRecentTransactions fetches the most recent transactions, limited to maxResults.
 func (c *Client) GetRecentTransactions(ctx context.Context, maxResults int) ([]Transaction, error) {
 	var result struct {

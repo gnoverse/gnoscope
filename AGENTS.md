@@ -43,10 +43,14 @@ Break these and things go wrong in ways that are hard to see:
   `network` column, and it is part of the primary key or unique constraint. Any
   new query, join or aggregate must filter or group by `network`, otherwise data
   from two chains gets silently mixed. Joins on `pkg_path` alone are the usual way
-  this goes wrong. The one exception is `pkg/ghlab`, whose subject is GitHub and
+  this goes wrong. There are two exceptions. One is `pkg/ghlab`, whose subject is GitHub and
   not a chain: a repository is the same repository whichever network its realms
   end up on, and a `network` column there would be two rows that must always
   agree. It lives in its own database file and its endpoints take no `network`.
+  The other is `blobs`, file bodies keyed by their sha256: a hash names bytes,
+  not a chain, so it has no `network` to filter by. Reach it only through
+  `submission_files`, which is network-scoped and says where a body was
+  published.
 - **Nothing private reaches `gh_repos`.** A GitHub search runs as the token, so
   an operator's token returns private repositories it can read: measured
   2026-09-29, the first discovery run here surfaced eight of them, with the

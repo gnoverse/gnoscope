@@ -462,9 +462,10 @@ deployer who verifies by querying the path concludes the deploy failed and
 resubmits, once per retry, for as long as an approver is stuck. Several rows at
 one path are therefore usually the same code sent again rather than a change.
 
-What changed *between* two submissions is not answerable here: `package_files`
-stores the current body and nothing else, so a diff needs each submission's
-files re-fetched from the chain.
+Every submission's files are stored, failed ones included (`submission_files`,
+see [spec.md](spec.md#data-model)), so what one submission carried is readable
+long after a later one replaced it: `/api/source/{path...}?at=<height>` serves
+it.
 
 ### Source is addressed by its stamp
 
@@ -479,22 +480,38 @@ source is stored, which makes them cacheable forever.
 |---|---|
 | no `at` | the manifest. `Cache-Control: public, max-age=30`, `ETag` over the body (it also carries siblings and counts, which move without this stamp moving) |
 | `at` = the current stamp | the bodies. `Cache-Control: public, max-age=31536000, immutable`, `ETag` derived from network, path, stamp and the `file` asked for |
-| `at` = any other height | `409 {error, path, network, at, current}`, `Cache-Control: no-store`. Re-read at `current.height` |
+| `at` = the height of any other submission at the path | that submission's bodies, same caching, its own `ETag`. A submission the chain rejected is served too, with `failed: true`: what was sent, never what was published. `tx=<hash>` picks one when a block holds two submissions at the path; without it a successful one is preferred |
+| `at` = a height with no stored submission at the path | `409 {error, path, network, at, current}`, `Cache-Control: no-store`. Re-read at `current.height`. `current` is absent when the path has no current state (every submission there failed); a path never submitted is a `404` |
 | `file=` without `at` | `400`: take the height from the manifest first |
 | `at` + `file` + `tokens=1` | that file as highlighting tokens, same caching and its own `ETag`. `tokens` without both, or with any value but the one the server speaks (`1`), is a `400` |
 
-**A stale stamp is a conflict, not a redirect and not today's bytes.** Only the
-current submission's files are stored (see the deploy history above), so the
-bytes an older stamp names do not exist here. Serving the current ones under
-it would put the wrong source into every cache that ever saw that URL, for a
-year. A 409 carrying `current` is one round trip to recover from.
+**An unknown stamp is a conflict, not a redirect and not today's bytes.** A
+height names bytes only when a submission at the path was made at it and its
+files are stored; serving the current ones under any other height would put the
+wrong source into every cache that ever saw that URL, for a year. A 409 carrying
+`current` is one round trip to recover from. On a database synced before
+per-submission source existed, an older height answers 409 until the backfill
+has fetched that submission's files (the manifest's `history[].stored` says
+which have been).
 
 `submissions` counts every `MsgAddPackage` at the path on that network,
 failed ones included; `redeploys` is successful submissions minus the first.
+`history` lists them, oldest first, each `{height, tx_hash, msg_index, time,
+success, files, stored}`: `files` is how many the message carried, `stored`
+whether they are held here, which is what decides whether `at=<height>` can
+serve them.
+
 A failed submission never moves the stamp: it changed nothing on chain, so
 since this endpoint shipped it changes nothing in `packages` or
-`package_files` either. Rows a failed submission overwrote before that fix
-stay as they are until the path is next deployed successfully.
+`package_files` either. Rows a failed submission overwrote before that fix are
+put back by a one-off repair once every submission's files are stored (see
+[deployment.md](deployment.md#per-submission-source-and-the-one-off-repair)).
+A browser that pinned such a stamp keeps what it was served, and that is the
+one thing the repair cannot reach: an `immutable` response is never asked for
+again. What it holds is the bytes the failed submission carried, merged over
+whatever files the path had before; for a path whose only submission failed
+(the only case a replay of gnoland1's history finds), that is exactly the failed submission's
+files, which the same URL now serves with `failed: true`.
 
 ### The code tree
 
@@ -1968,11 +1985,11 @@ when the last pass ran. The Go and SQL sides assemble the same string, and
 column where Go counts bytes, so the query casts to BLOB and a test pins the
 two against a package with non-ASCII source.
 
-The index is keyed on the **package**, not on the submission, because
-`package_files` holds current bodies only — a redeploy overwrites them, and the
-bodies an older submission was compiled from are simply not in the database. An
-API diff between two deploys of the same path therefore still needs a spine of
-its own, and this table is not it.
+The index is keyed on the **package**, not on the submission, because it
+indexes `package_files`, which holds current bodies only. Every submission's
+bodies are in `submission_files` now, but an API diff between two deploys of
+the same path parses those directly rather than keeping a symbol table per
+submission.
 
 ## The GitHub lab
 

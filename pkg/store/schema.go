@@ -671,6 +671,43 @@ func initSchema(db *sql.DB) error {
 			PRIMARY KEY (network, package_path, file_name)
 		);
 
+		-- The source of every submission, not just the current one.
+		--
+		-- package_files above is current state: one body per (network, path,
+		-- file), overwritten by the next successful submission. That made two
+		-- things impossible: reading what an earlier submission carried (what
+		-- changed between two publishes, or what an approver was asked to
+		-- accept and the chain rejected), and repairing current state that a
+		-- bug wrote wrong, because the right bytes were nowhere.
+		--
+		-- Content-addressed, so a resubmission of the same code costs a row per
+		-- file and no body. Most submissions at a path are exactly that (the
+		-- inert-policy retry loop described on package_submissions), and most
+		-- files of a new version are unchanged from the last. blobs carries no
+		-- network: a hash names bytes, not a chain, and the same file published
+		-- on two chains is one row. Everything that says *where* a body was
+		-- published is in submission_files, which is network-scoped like every
+		-- other table.
+		--
+		-- hash is the lowercase hex sha256 of body.
+		CREATE TABLE IF NOT EXISTS blobs (
+			hash TEXT PRIMARY KEY,
+			body TEXT NOT NULL
+		);
+
+		-- One row per file of one MsgAddPackage, keyed to its
+		-- package_submissions row. Written with the submission for every
+		-- message, failed ones included: what the chain rejected is exactly
+		-- what a reader asking "why did this fail" wants to see.
+		CREATE TABLE IF NOT EXISTS submission_files (
+			network   TEXT NOT NULL,
+			tx_hash   TEXT NOT NULL,
+			msg_index INTEGER NOT NULL,
+			file_name TEXT NOT NULL,
+			hash      TEXT NOT NULL,
+			PRIMARY KEY (network, tx_hash, msg_index, file_name)
+		) WITHOUT ROWID;
+
 		CREATE TABLE IF NOT EXISTS dependencies (
 			network TEXT NOT NULL DEFAULT 'gnoland1',
 			package_path TEXT NOT NULL,

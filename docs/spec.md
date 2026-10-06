@@ -28,6 +28,8 @@ path exists on multiple chains and means different things on each.
 |---|---|---|
 | `packages` | one deployed package per network | `is_realm` distinguishes realms from pure packages. Written from the newest **successful** submission only; a failed `MsgAddPackage` lands in `package_submissions` and nowhere else |
 | `package_files` | one `.gno` file | full source body, stored verbatim. The newest successful submission's file set, replaced whole: a file a redeploy removed is removed here too |
+| `submission_files` | one file of one `MsgAddPackage` | keyed to its `package_submissions` row (`tx_hash`, `msg_index`), failed submissions included, with the content hash of its body. What lets an older or a rejected submission be read, and current state be checked |
+| `blobs` | one distinct file body | keyed by sha256, **no `network`**: a hash names bytes, not a chain, so a body published on two chains, or resubmitted unchanged, is stored once. Where it was published is `submission_files`' to say |
 | `dependencies` | one import edge | `package_path` → `import_path` |
 | `calls` | one `MsgCall` message | caller, target path, function name |
 | `msg_runs` | one `MsgRun` message | full source of the run |

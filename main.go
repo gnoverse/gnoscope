@@ -358,6 +358,12 @@ func run() error {
 		}
 	}()
 
+	// The response cache, created before the sync goroutines because the one
+	// write that changes stored source without a new submission (the source
+	// repair) has to drop what it holds for the paths it rewrote. Wired into
+	// the handler chain further down.
+	cache := httpapi.NewResponseCache(httpapi.CacheTTL)
+
 	// Written by the sync goroutines below, read by the sanity endpoint.
 	syncHealth := syncer.NewRegistry()
 
@@ -372,6 +378,10 @@ func run() error {
 			go func(net config.NetworkConfig) {
 				sy := syncer.NewSyncer(syncClients[net.ID], db, analyzer, net.ID)
 				sy.SetBlockHistoryDays(*blockHistoryDays)
+				sy.SetOnSourceRepaired(func(network string, paths []string) {
+					log.Printf("[%s] source repair: dropped %d cached responses for %d repaired paths",
+						network, cache.InvalidatePackages(paths), len(paths))
+				})
 				log.Printf("[%s] starting initial sync...", net.ID)
 				err := sy.SyncAll(ctx)
 				syncHealth.Record(net.ID, err)
@@ -688,7 +698,6 @@ func run() error {
 	// WithServerTiming sits inside the cache on purpose: the number it reports
 	// is the cost of computing an answer, so its presence on a response means
 	// somebody paid for that answer and its absence means they did not.
-	cache := httpapi.NewResponseCache(httpapi.CacheTTL)
 	// The read counter is outside the cache, and that is not a preference: a
 	// cached answer never reaches the handler, so counting deeper would count
 	// the first reader of a realm and miss everyone who followed. The more a

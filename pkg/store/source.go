@@ -13,8 +13,8 @@ import (
 // the packages row's (block_height, tx_hash), which is what this file calls
 // the stamp. The stamp is what lets a reader cache source forever: the bytes
 // served under a stamp can never change, because a redeploy moves the stamp.
-// Bodies of earlier submissions are not stored, so a stamp that is no longer
-// current cannot be answered from here at all.
+// Bodies of earlier submissions live in submission_files (see subsource.go),
+// so an older stamp is answered from there, by SubmissionSource.
 
 // SourceStamp identifies the submission whose source package_files holds.
 type SourceStamp struct {
@@ -41,6 +41,9 @@ type PackageSource struct {
 	IsRealm bool         `json:"-"`
 	Stamp   SourceStamp  `json:"stamp"`
 	Files   []SourceFile `json:"files"`
+	// Failed is set when Stamp names a submission the chain rejected (see
+	// SubmissionSource). The current stamp never does.
+	Failed bool `json:"-"`
 }
 
 // ErrNoSource is returned when the network has no package at the path.
