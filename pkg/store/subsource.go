@@ -74,6 +74,13 @@ func (d *DB) RecordSubmission(network, txHash string, msgIndex int, path, name, 
 // no submission (network, txHash, msgIndex) at path exists: the backfill
 // fetches whole height ranges, and a message this database never recorded is
 // not its to invent.
+//
+// The transaction writes before it reads. One that reads first and writes
+// second has to upgrade its lock, and under WAL that upgrade fails with
+// SQLITE_BUSY at once, busy_timeout or not, when another connection has
+// committed in between (the startup ANALYZE, a sync pass): seen in CI on
+// 2026-10-06. Writing first takes the write lock, which does wait. The same
+// reason SetDependencies reads through its DELETE.
 func (d *DB) AddSubmissionFiles(network, txHash string, msgIndex int, path string, files []indexer.MemFile) (bool, error) {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -84,6 +91,10 @@ func (d *DB) AddSubmissionFiles(network, txHash string, msgIndex int, path strin
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// A statement that matches nothing still opens the write transaction.
+	if _, err := tx.Exec(`DELETE FROM submission_files WHERE 0`); err != nil {
+		return false, err
+	}
 	var one int
 	err = tx.QueryRow(`SELECT 1 FROM package_submissions WHERE network = ? AND tx_hash = ? AND msg_index = ? AND path = ?`,
 		network, txHash, msgIndex, path).Scan(&one)

@@ -53,6 +53,10 @@ func (a *API) HandleSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimRight("gno.land/"+r.PathValue("path"), "/")
+	if base, ok := a.isDiffRequest(network, path); ok {
+		a.serveSourceDiff(w, r, network, base)
+		return
+	}
 	q := r.URL.Query()
 	atParam, file := q.Get("at"), q.Get("file")
 	tokens := q.Has("tokens")

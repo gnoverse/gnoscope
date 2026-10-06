@@ -150,6 +150,11 @@ func (c *responseCache) ttlForRequest(r *http.Request) time.Duration {
 	if strings.HasPrefix(r.URL.Path, SourcePrefix) && r.URL.Query().Get("at") != "" {
 		return pinnedSourceTTL
 	}
+	// A diff with both ends named by height is as fixed as a pinned read.
+	if strings.HasPrefix(r.URL.Path, SourcePrefix) && strings.HasSuffix(r.URL.Path, SourceDiffSuffix) &&
+		r.URL.Query().Get("from") != "" && r.URL.Query().Get("to") != "" {
+		return pinnedSourceTTL
+	}
 	// A timeline page behind a cursor holds rows whose kind can never change
 	// (see api_code_timeline.go), so it is recomputed far less often than the
 	// head, which moves with every deploy.
