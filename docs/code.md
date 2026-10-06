@@ -188,9 +188,10 @@ What makes the second and every later visit fast:
 
 ## What it does not do
 
-- **Diffs between versions.** Only the current submission's files are stored
-  (see [api.md](api.md#the-deploy-history-is-the-submissions-not-the-package-row)),
-  so the rail can name every submission but not show what changed.
+- **Diffs between versions.** Every submission's files are stored now (see
+  [api.md](api.md#the-deploy-history-is-the-submissions-not-the-package-row)),
+  and `/api/source?at=` serves any of them, but nothing draws what changed
+  between two yet.
 - **Live or parked.** The tree does not carry it (it would cost an RPC read per
   path); the realm page does.
 - **A global palette.** `ctrl-k` belongs to `/code`. Elsewhere `/` still

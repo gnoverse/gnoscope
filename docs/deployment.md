@@ -324,6 +324,60 @@ brand new and re-syncs from genesis. To relabel while keeping history, update th
 `transactions`, `blocks`, `proposers`) — that preserves the cursor too. Back up
 first.
 
+## Per-submission source and the one-off repair
+
+Every `MsgAddPackage` keeps the files it carried (`submission_files`, bodies in
+`blobs`), so `/api/source?at=` can serve any submission and the current state
+can be checked against the chain's own history. A database synced before that
+existed has the submission rows and not their files, and two things run on
+their own, after the package sync, on every pass until they are done:
+
+- **The backfill** asks the indexer for those submissions again, oldest first,
+  40 at a time and at most 5 requests a pass, half a second apart. It keeps its
+  own cursor (`subsrc_backfill_cursor:<network>` in `sync_state`) and writes
+  nothing any other cursor is derived from, so it never makes the forward sync
+  re-walk anything. A failed request (a 429 from the public indexer, say) ends
+  the pass and the next pass asks again. A submission the indexer does not
+  return is counted in the log line and passed over. One line a request:
+
+  ```
+  [mainnet] submission source backfill: blocks 26404..77253, 40 submission(s) asked, 40 stored, 0 not returned, in 848ms
+  ```
+
+- **The repair** runs once per network when the backfill has nothing left. For
+  every path it compares the `packages` row and `package_files` with the newest
+  successful submission, and rewrites whatever differs through the same writes
+  a successful submission makes (search index, tags and dependency edges move
+  with it). A path whose every submission failed loses its current state. It
+  exists because, until failed submissions stopped writing current state, one
+  replaced the row's stamp and its files over the live ones. Its result is one
+  line, also kept in `sync_state` under `subsrc_repair:<network>`:
+
+  ```
+  [mainnet] source repair: 0 of 628 paths were wrong and were rewritten from their newest successful submission (0 with the wrong stamp, 0 with the wrong files), 2 removed because every submission there failed, 0 skipped without stored files, in 33ms
+  ```
+
+  ```bash
+  journalctl -u gnoscope | grep 'source repair'
+  sqlite3 /var/lib/gnoscope/gnoscope.db "SELECT key, value FROM sync_state WHERE key LIKE 'subsrc_%'"
+  ```
+
+  The response cache drops what it holds for every repaired path. A browser
+  that pinned a stamp's bodies as `immutable` is out of reach; see
+  [api.md](api.md#source-is-addressed-by-its-stamp).
+
+Measured 2026-10-06 against a local copy of gnoland1 (688 submissions stored,
+30 more synced forward first), with the public indexer: the backfill took 4
+passes and 14.8 s of requests, none refused. 718 submissions carry 3,677 files
+and 16.4 MB of source; content addressing stores 3,335 distinct bodies in
+15.2 MB, about what `package_files` holds (15.3 MB), so per-submission source
+roughly doubles the source half of the database, a few percent of the whole.
+The repair compared 628 paths in 33 ms and found that copy correct, as
+expected of one synced after the fix. Replaying the same history the way the
+old code wrote it predicts what a server synced before the fix holds: 2 paths
+wrong, `r/moul/gno4` and `r/moul/gno4/preview`, whose only submission failed
+and which production served as current, stamped at 408521, on 2026-10-06.
+
 ## Reset-prone networks
 
 Portal-loop and staging style chains restart from a low height. gnoscope detects

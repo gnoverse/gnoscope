@@ -320,6 +320,69 @@ func (c *responseCache) stats() CacheStats {
 // Stats is the exported view, for the handler that serves it.
 func (c *responseCache) Stats() CacheStats { return c.stats() }
 
+// InvalidatePackages drops every entry that names one of paths, and every
+// code tree and timeline entry, and returns how many it dropped.
+//
+// For the one write that changes stored source without a new submission: the
+// repair that puts back current state a failed submission overwrote (see
+// analyzer.RepairCurrentSource). A pinned source read is cached for a day
+// (pinnedSourceTTL) on the promise that what a stamp names never changes; a
+// repaired path is the case where the bytes under it were wrong, so its
+// entries go now. Everything else these paths appear in expires within its
+// own TTL, minutes at most, and a code tree or timeline page, which lists
+// every path, is dropped whole.
+//
+// A path is matched on segment boundaries anywhere in the key, which covers
+// both shapes it travels in: in the URL path (/api/source/r/x/v1) and in a
+// query parameter (path=gno.land/r/x/v1). gno.land/r/x does not match
+// gno.land/r/x2.
+func (c *responseCache) InvalidatePackages(paths []string) int {
+	rels := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if rel := strings.TrimPrefix(p, "gno.land/"); rel != "" {
+			rels = append(rels, rel)
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for k := range c.entries {
+		if strings.HasPrefix(k, CodeTreePath) || strings.HasPrefix(k, CodeTimelinePath) || keyNamesAny(k, rels) {
+			delete(c.entries, k)
+			n++
+		}
+	}
+	return n
+}
+
+// keyNamesAny reports whether a cache key contains one of rels as whole path
+// segments. A key carries a path two ways: verbatim in the URL path, and
+// query-escaped in the canonical query (canonicalQuery re-encodes, so "/" is
+// "%2F" there). Either form counts, preceded by a separator ("/", "=", or an
+// escaped "/") and followed by the end of the key or one.
+func keyNamesAny(key string, rels []string) bool {
+	for _, rel := range rels {
+		for _, form := range []string{rel, url.QueryEscape(rel)} {
+			for from := 0; ; {
+				i := strings.Index(key[from:], form)
+				if i < 0 {
+					break
+				}
+				i += from
+				end := i + len(form)
+				before := i > 0 && (key[i-1] == '/' || key[i-1] == '=' || strings.HasSuffix(key[:i], "%2F"))
+				after := end == len(key) || strings.IndexByte("/?&\x00", key[end]) >= 0 ||
+					strings.HasPrefix(key[end:], "%2F")
+				if before && after {
+					return true
+				}
+				from = i + 1
+			}
+		}
+	}
+	return false
+}
+
 // cachingWriter buffers a handler's response so it can be stored. It records the
 // status so only successes are kept: caching a 500 would pin a transient indexer
 // failure for the whole TTL.

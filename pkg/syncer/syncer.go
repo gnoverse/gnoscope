@@ -34,12 +34,22 @@ type Syncer struct {
 	// unlimited, so a Syncer built without setting it behaves exactly as it did
 	// before the cap existed.
 	blockHistoryDays int
+
+	// onSourceRepaired is told which paths the one-off source repair
+	// rewrote. See SetOnSourceRepaired.
+	onSourceRepaired func(network string, paths []string)
+
+	// The submission-source backfill's budget, fields for the same reason
+	// the block paging budget is: a test bounds a pass to a few submissions.
+	subsrcBatch, subsrcBatchesPerPass int
+	subsrcPause                       time.Duration
 }
 
 func NewSyncer(client *indexer.Client, db *store.DB, analyzer *analyzer.Analyzer, networkID string) *Syncer {
 	return &Syncer{
 		client: client, db: db, analyzer: analyzer, networkID: networkID,
 		blockPageSize: defaultBlockPageSize, blockPagesPerPass: defaultBlockPagesPerPass,
+		subsrcBatch: defaultSubsrcBatch, subsrcBatchesPerPass: defaultSubsrcBatchesPerPass, subsrcPause: defaultSubsrcPause,
 	}
 }
 
@@ -70,6 +80,12 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 	s.syncUsers(ctx)
 	if err := s.syncPackages(ctx); err != nil {
 		return fmt.Errorf("sync packages: %w", err)
+	}
+	// After syncPackages, so everything below the package cursor has a row
+	// to attach files to. Not fatal, like the other backfills: an indexer
+	// having a bad minute costs a retry on the next pass.
+	if s.backfillSubmissionSource(ctx) {
+		s.repairSubmissionSource()
 	}
 	if err := s.syncCalls(ctx); err != nil {
 		return fmt.Errorf("sync calls: %w", err)

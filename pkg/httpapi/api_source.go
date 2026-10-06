@@ -31,17 +31,18 @@ const SourcePrefix = "/api/source/"
 //     source is stored), file names with sizes and line counts, the other
 //     generations of the same app on this network, and how often the path was
 //     deployed. Short-lived, with an ETag over its bytes.
-//   - with `at=<height>` equal to the current stamp, the bodies too, marked
-//     immutable. What a stamp names cannot change, so a browser keeps it
-//     forever and the server keeps it a day.
+//   - with `at=<height>` naming the current stamp or any other submission at
+//     the path, that submission's bodies, marked immutable. What a stamp
+//     names cannot change, so a browser keeps it forever and the server
+//     keeps it a day. Every submission's files are stored (submission_files),
+//     failed ones included; `tx=<hash>` picks one when a block holds two.
 //   - with `at`, `file` and `tokens=<version>`, that one file as classified
 //     segments per line instead of a body (see pkg/srctok), same caching:
 //     the segments are a pure function of the stamp's bytes and the
 //     tokenizer version, and the version is in the URL.
-//   - with `at` naming any other height, 409 with the current stamp. Only the
-//     current submission's source is stored, so the bytes of an older one do
-//     not exist here, and serving today's bytes under yesterday's stamp would
-//     poison every cache that ever saw that URL.
+//   - with `at` naming a height with no stored submission at the path, 409
+//     with the current stamp. Serving other bytes under that stamp would
+//     poison every cache that ever saw the URL.
 //
 // network is required, like /api/storage: a stamp is a block height, and a
 // height means nothing without its chain.
@@ -105,6 +106,9 @@ type sourceManifest struct {
 	Siblings    []store.SourceSibling `json:"siblings"`
 	Submissions int                   `json:"submissions"`
 	Redeploys   int                   `json:"redeploys"`
+	// History is every MsgAddPackage at the path, oldest first. A separate
+	// name from Submissions, which has always been the count.
+	History []store.SubmissionInfo `json:"history"`
 }
 
 func (a *API) serveSourceManifest(w http.ResponseWriter, r *http.Request, network, path string) {
@@ -131,11 +135,16 @@ func (a *API) serveSourceManifest(w http.ResponseWriter, r *http.Request, networ
 	if redeploys < 0 {
 		redeploys = 0
 	}
+	history, err := a.db.PathSubmissions(network, path)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	body, err := json.Marshal(sourceManifest{
 		Path: src.Path, Network: src.Network, Name: src.Name, Kind: sourceKind(src),
 		Stamp: src.Stamp, Files: src.Files, Siblings: siblings,
-		Submissions: total, Redeploys: redeploys,
+		Submissions: total, Redeploys: redeploys, History: history,
 	})
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -151,12 +160,15 @@ func (a *API) serveSourceManifest(w http.ResponseWriter, r *http.Request, networ
 }
 
 type pinnedSource struct {
-	Path    string             `json:"path"`
-	Network string             `json:"network"`
-	Name    string             `json:"name"`
-	Kind    string             `json:"kind"`
-	Stamp   store.SourceStamp  `json:"stamp"`
-	Files   []store.SourceFile `json:"files"`
+	Path    string            `json:"path"`
+	Network string            `json:"network"`
+	Name    string            `json:"name"`
+	Kind    string            `json:"kind"`
+	Stamp   store.SourceStamp `json:"stamp"`
+	// Failed marks the source of a submission the chain rejected: what was
+	// sent, never what was published.
+	Failed bool               `json:"failed,omitempty"`
+	Files  []store.SourceFile `json:"files"`
 }
 
 // pinnedTokens is one file of one stamp, classified. Lines has one entry per
@@ -170,6 +182,7 @@ type pinnedTokens struct {
 	Name    string                     `json:"name"`
 	Kind    string                     `json:"kind"`
 	Stamp   store.SourceStamp          `json:"stamp"`
+	Failed  bool                       `json:"failed,omitempty"`
 	File    string                     `json:"file"`
 	Version string                     `json:"tokens"`
 	Lines   [][]srctok.Segment         `json:"lines"`
@@ -177,29 +190,33 @@ type pinnedTokens struct {
 }
 
 func (a *API) servePinnedSource(w http.ResponseWriter, r *http.Request, network, path string, at int, file string, tokens bool) {
-	src, err := a.db.PackageSource(network, path, true)
-	if errors.Is(err, store.ErrNoSource) {
-		jsonError(w, "package not found: "+path, http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if at != src.Stamp.Height {
+	src, err := a.pinnedSubmission(network, path, at, r.URL.Query().Get("tx"))
+	var conflict *sourceConflict
+	if errors.As(err, &conflict) {
+		if conflict.current == nil && !conflict.anySubmission {
+			jsonError(w, "package not found: "+path, http.StatusNotFound)
+			return
+		}
 		// Never cached by the response cache (it stores 200s only), and told
 		// not to be cached anywhere else: the right answer changes the moment
 		// a reader follows `current`, and a stale 409 is a loop.
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error":   "only the current submission's source is stored; re-read at the current stamp",
+		body := map[string]any{
+			"error":   "no stored submission at this height for this path; re-read at the current stamp",
 			"path":    path,
 			"network": network,
 			"at":      at,
-			"current": src.Stamp,
-		})
+		}
+		if conflict.current != nil {
+			body["current"] = conflict.current
+		}
+		_ = json.NewEncoder(w).Encode(body)
+		return
+	}
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -234,12 +251,12 @@ func (a *API) servePinnedSource(w http.ResponseWriter, r *http.Request, network,
 		variant = "tokens:" + srctok.Version + ":" + file
 		body, err = json.Marshal(pinnedTokens{
 			Path: src.Path, Network: src.Network, Name: src.Name, Kind: sourceKind(src),
-			Stamp: src.Stamp, File: file, Version: srctok.Version, Lines: lines, Decls: ix.Decls,
+			Stamp: src.Stamp, Failed: src.Failed, File: file, Version: srctok.Version, Lines: lines, Decls: ix.Decls,
 		})
 	} else {
 		body, err = json.Marshal(pinnedSource{
 			Path: src.Path, Network: src.Network, Name: src.Name, Kind: sourceKind(src),
-			Stamp: src.Stamp, Files: files,
+			Stamp: src.Stamp, Failed: src.Failed, Files: files,
 		})
 	}
 	if err != nil {
@@ -255,6 +272,62 @@ func (a *API) servePinnedSource(w http.ResponseWriter, r *http.Request, network,
 	}, "\x00")))
 	writeSourceJSON(w, r, `"src-`+hex.EncodeToString(sum[:16])+`"`,
 		"public, max-age=31536000, immutable", body)
+}
+
+// sourceConflict is why a pinned read has nothing to serve: no stored
+// submission at that height. current is the path's stamp, nil when the path
+// has no current state (never published, or every submission failed);
+// anySubmission says whether the path was ever submitted at all, which is the
+// difference between a 409 and a 404.
+type sourceConflict struct {
+	current       *store.SourceStamp
+	anySubmission bool
+}
+
+func (c *sourceConflict) Error() string { return "no stored submission at that height" }
+
+// pinnedSubmission resolves `at` (and `tx`, when given) to the source of one
+// submission.
+//
+// The current stamp is answered from package_files, which is what it always
+// was, and works on a database the per-submission backfill has not reached
+// yet. Any other height is answered from submission_files. Both name immutable
+// bytes, so either is served under the same caching.
+func (a *API) pinnedSubmission(network, path string, at int, tx string) (*store.PackageSource, error) {
+	cur, err := a.db.PackageSource(network, path, false)
+	if err != nil && !errors.Is(err, store.ErrNoSource) {
+		return nil, err
+	}
+	if cur != nil && cur.Stamp.Height == at && (tx == "" || tx == cur.Stamp.TxHash) {
+		// Bodies in their own read, which is one snapshot of the row and the
+		// files together; a redeploy landing between the two reads moves the
+		// stamp, and the comparison below sends the request on to the
+		// submission's own files instead.
+		full, err := a.db.PackageSource(network, path, true)
+		if err != nil && !errors.Is(err, store.ErrNoSource) {
+			return nil, err
+		}
+		if full != nil && full.Stamp == cur.Stamp {
+			return full, nil
+		}
+	}
+	sub, err := a.db.SubmissionSource(network, path, at, tx, true)
+	if errors.Is(err, store.ErrNoSubmissionSource) {
+		c := &sourceConflict{}
+		if cur != nil {
+			c.current = &cur.Stamp
+		}
+		total, _, cerr := a.db.SubmissionCounts(network, path)
+		if cerr != nil {
+			return nil, cerr
+		}
+		c.anySubmission = total > 0
+		return nil, c
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sub, nil
 }
 
 // writeSourceJSON answers with a validator, and with 304 when the reader

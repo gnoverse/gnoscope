@@ -179,9 +179,10 @@ func (a *Analyzer) ProcessPackage(network string, pkg *indexer.MemPackage, creat
 	isRealm := strings.HasPrefix(pkg.Path, "gno.land/r/")
 
 	// The submission itself is history, kept whether or not it succeeded and
-	// even once a later one replaces the current state below. See
-	// InsertPackageSubmission.
-	if err := a.db.InsertPackageSubmission(network, txHash, msgIndex, pkg.Path, pkg.Name, creator, blockHeight, blockTime, isRealm, len(pkg.Files), send, success); err != nil {
+	// even once a later one replaces the current state below: its row and
+	// every file it carried, so an older or a rejected submission can still
+	// be read. See InsertPackageSubmission and RecordSubmission.
+	if err := a.db.RecordSubmission(network, txHash, msgIndex, pkg.Path, pkg.Name, creator, blockHeight, blockTime, isRealm, send, success, pkg.Files); err != nil {
 		return err
 	}
 

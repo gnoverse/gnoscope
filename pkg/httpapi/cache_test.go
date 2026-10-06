@@ -572,3 +572,40 @@ func TestLiveCountersAreNotCacheable(t *testing.T) {
 		}
 	}
 }
+
+// The source repair drops what the cache holds for a path it rewrote: the
+// pinned reads (a day) above all, in either shape a path travels in, and
+// nothing for a path that merely shares a prefix.
+func TestInvalidatePackages(t *testing.T) {
+	c := NewResponseCache(time.Minute)
+	keys := map[string]bool{
+		"/api/source/r/ns/app?at=11&network=alpha":                    true,
+		"/api/source/r/ns/app?at=11&file=a.gno&network=alpha\x00gzip": true,
+		"/api/realm/r/ns/app?network=alpha":                           true,
+		"/api/tags?network=alpha&path=gno.land%2Fr%2Fns%2Fapp":        true,
+		"/api/code/tree?network=alpha":                                true,
+		"/api/code/timeline?network=alpha":                            true,
+		"/api/source/r/ns/app2?at=11&network=alpha":                   false,
+		"/api/source/r/ns/app/sub?network=alpha":                      true,
+		"/api/source/r/xns/app?network=alpha":                         false,
+		"/api/tags?network=alpha&path=gno.land%2Fr%2Fns%2Fapp2":       false,
+		"/api/blocks?network=alpha":                                   false,
+	}
+	for k := range keys {
+		c.put(k, cacheEntry{storedAt: time.Now(), ttl: time.Hour})
+	}
+	n := c.InvalidatePackages([]string{"gno.land/r/ns/app"})
+	want := 0
+	for k, gone := range keys {
+		_, ok := c.get(k)
+		if ok == gone {
+			t.Errorf("%q: kept %v, want dropped %v", k, ok, gone)
+		}
+		if gone {
+			want++
+		}
+	}
+	if n != want {
+		t.Errorf("dropped %d, want %d", n, want)
+	}
+}

@@ -58,10 +58,15 @@ single-block probe confirms the indexer really has nothing below it.
 
 **`pkg/analyzer`** — takes `MsgAddPackage` source and extracts
 `import "gno.land/..."` statements by regex, then writes package, file and
-dependency rows. Every submission is recorded in `package_submissions`; only a
-successful one replaces the package row and its whole file set, in one
-transaction, because that row's height and hash are the version stamp
-`/api/source` pins bodies under.
+dependency rows. Every submission is recorded in `package_submissions`, with
+every file it carried in `submission_files` (bodies content-addressed in
+`blobs`), failed ones included; only a successful one replaces the package row
+and its whole file set, in one transaction, because that row's height and hash
+are the version stamp `/api/source` pins bodies under. Submissions synced before
+their files were kept are fetched again by a bounded backfill under its own
+cursor, and once it has nothing left a one-off repair rewrites any current state
+that disagrees with the path's newest successful submission (see
+[deployment.md](deployment.md#per-submission-source-and-the-one-off-repair)).
 
 **`pkg/srctok`**: splits one file of a package into classified segments per
 line for the source viewer (`/api/source?tokens=1`). Lexing is `go/scanner`

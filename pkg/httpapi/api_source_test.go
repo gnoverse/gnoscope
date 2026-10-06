@@ -166,14 +166,14 @@ func TestHandleSourcePinned(t *testing.T) {
 	}
 }
 
-// A stamp that is no longer current names bytes this database no longer has.
-// Answering with today's bytes would cache them under yesterday's stamp, for
-// a year, in every browser that asked.
-func TestHandleSourceStaleStampIsAConflict(t *testing.T) {
+// A height with no stored submission at the path names no bytes here.
+// Answering with today's bytes would cache them under that stamp, for a year,
+// in every browser that asked.
+func TestHandleSourceUnknownStampIsAConflict(t *testing.T) {
 	api, db := newTestAPI(t)
 	seedSource(t, db)
 
-	for _, at := range []string{"20", "26", "99"} {
+	for _, at := range []string{"0", "21", "99"} {
 		rec := sourceGET(t, api, "/api/source/r/ns/app/v2?network=alpha&at="+at)
 		if rec.Code != http.StatusConflict {
 			t.Errorf("at=%s: status %d, want 409", at, rec.Code)
@@ -196,6 +196,80 @@ func TestHandleSourceStaleStampIsAConflict(t *testing.T) {
 	}
 }
 
+// Every submission's files are stored, so a stamp that is no longer current
+// still names bytes: the ones that submission carried, failed ones included,
+// under the same immutable caching as the current stamp.
+func TestHandleSourceServesAnOlderSubmission(t *testing.T) {
+	api, db := newTestAPI(t)
+	seedSource(t, db)
+
+	rec := sourceGET(t, api, "/api/source/r/ns/app/v2?network=alpha&at=20")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("at=20: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Errorf("at=20: Cache-Control = %q", cc)
+	}
+	var got pinnedSource
+	decodeInto(t, rec, &got)
+	if got.Stamp.Height != 20 || got.Stamp.TxHash != "tx-v2a" || got.Failed {
+		t.Errorf("at=20: stamp %+v failed %v, want 20 tx-v2a, not failed", got.Stamp, got.Failed)
+	}
+	// gone.gno was dropped at 25 and is still part of what 20 published.
+	if len(got.Files) != 2 || got.Files[1].Name != "gone.gno" || got.Files[1].Body == nil || *got.Files[1].Body != "package v2\n" {
+		t.Errorf("at=20: files %+v", got.Files)
+	}
+	etag20 := rec.Header().Get("ETag")
+
+	// The failed submission at 26: what was sent, and marked as rejected.
+	rec = sourceGET(t, api, "/api/source/r/ns/app/v2?network=alpha&at=26")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("at=26: status %d: %s", rec.Code, rec.Body.String())
+	}
+	decodeInto(t, rec, &got)
+	if !got.Failed || got.Stamp.TxHash != "tx-v2c" || len(got.Files) != 1 || *got.Files[0].Body != "broken" {
+		t.Errorf("at=26: %+v, want the failed submission's one file", got)
+	}
+	if rec.Header().Get("ETag") == etag20 {
+		t.Error("two submissions share an ETag")
+	}
+
+	// Tokens work on an older stamp too.
+	rec = sourceGET(t, api, "/api/source/r/ns/app/v2?network=alpha&at=20&file=gone.gno&tokens=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tokens at=20: status %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The current stamp still answers from current state.
+	rec = sourceGET(t, api, "/api/source/r/ns/app/v2?network=alpha&at=25&tx=tx-v2b")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("at=25 tx=: status %d", rec.Code)
+	}
+	// A tx that is not at that height is a conflict, not a fallback.
+	if rec := sourceGET(t, api, "/api/source/r/ns/app/v2?network=alpha&at=25&tx=tx-v2a"); rec.Code != http.StatusConflict {
+		t.Errorf("at=25 tx=tx-v2a: status %d, want 409", rec.Code)
+	}
+}
+
+// A database synced before per-submission source existed has the submission
+// rows and not their files, until the backfill reaches them: those heights
+// stay a conflict rather than being served something else.
+func TestHandleSourceUnbackfilledSubmissionIsAConflict(t *testing.T) {
+	api, db := newTestAPI(t)
+	seedSource(t, db)
+	if _, err := db.SQL().Exec(`DELETE FROM submission_files WHERE tx_hash = 'tx-v2a'`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := sourceGET(t, api, "/api/source/r/ns/app/v2?network=alpha&at=20"); rec.Code != http.StatusConflict {
+		t.Errorf("at=20 without files: status %d, want 409", rec.Code)
+	}
+	var m sourceManifest
+	decodeInto(t, sourceGET(t, api, "/api/source/r/ns/app/v2?network=alpha"), &m)
+	if len(m.History) != 3 || m.History[0].Stored || !m.History[1].Stored || m.History[2].Success {
+		t.Errorf("history = %+v, want 20 unstored, 25 stored, 26 failed", m.History)
+	}
+}
+
 func TestHandleSourceRejects(t *testing.T) {
 	api, db := newTestAPI(t)
 	seedSource(t, db)
@@ -212,8 +286,8 @@ func TestHandleSourceRejects(t *testing.T) {
 		{"/api/source/r/ns/app/v2?network=beta", http.StatusNotFound},
 		{"/api/source/r/ns/app/v2?network=alpha&at=abc", http.StatusBadRequest},
 		{"/api/source/r/ns/app/v2?network=alpha&at=-1", http.StatusBadRequest},
-		// 0 is a height like any other, so it is a stale stamp here, not a
-		// malformed one.
+		// 0 is a height like any other, so it is an unknown stamp here, not
+		// a malformed one.
 		{"/api/source/r/ns/app/v2?network=alpha&at=0", http.StatusConflict},
 		{"/api/source/r/ns/app/v2?network=alpha&file=app.gno", http.StatusBadRequest},
 		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=gone.gno", http.StatusNotFound},
@@ -224,7 +298,7 @@ func TestHandleSourceRejects(t *testing.T) {
 		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=app.gno&tokens=2", http.StatusBadRequest},
 		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=app.gno&tokens=", http.StatusBadRequest},
 		{"/api/source/r/ns/app/v2?network=alpha&at=25&file=gone.gno&tokens=1", http.StatusNotFound},
-		{"/api/source/r/ns/app/v2?network=alpha&at=20&file=app.gno&tokens=1", http.StatusConflict},
+		{"/api/source/r/ns/app/v2?network=alpha&at=21&file=app.gno&tokens=1", http.StatusConflict},
 	} {
 		if rec := sourceGET(t, api, tc.url); rec.Code != tc.want {
 			t.Errorf("%s: status %d, want %d (%s)", tc.url, rec.Code, tc.want, rec.Body.String())
