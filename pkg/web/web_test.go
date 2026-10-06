@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gnoverse/gnoscope/pkg/tags"
 )
 
 // The app is one 450 KB file re-served on every deep link and every cold tab.
@@ -323,6 +325,35 @@ func TestRailMatchesNavTable(t *testing.T) {
 		if fromRail[i] != fromTable[i] {
 			t.Errorf("entry %d: the rail says %+v, NAV says %+v", i, fromRail[i], fromTable[i])
 		}
+	}
+}
+
+// The frontend colours each code tag from TAG_COLORS and orders chips by its
+// keys, so it is a second copy of the rule table's names and order. A tag the
+// table gained and this map did not is drawn grey, sorted nowhere, and missing
+// from the code map's legend: quiet, so it is held here.
+func TestTagColorsFollowTheRules(t *testing.T) {
+	index, err := Index()
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	table := between(t, string(index), "const TAG_COLORS = {", "\n};")
+	re := regexp.MustCompile(`(?:^|[\s,])'?([a-z][a-z-]*)'?: '(#[0-9a-f]{6})'`)
+	var got []string
+	seen := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(table, -1) {
+		got = append(got, m[1])
+		if prev, ok := seen[m[2]]; ok {
+			t.Errorf("%s and %s share the colour %s", prev, m[1], m[2])
+		}
+		seen[m[2]] = m[1]
+	}
+	var want []string
+	for _, r := range tags.Rules {
+		want = append(want, r.Tag)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("TAG_COLORS has\n  %v\ntags.Rules has\n  %v", got, want)
 	}
 }
 

@@ -48,7 +48,7 @@ func TestTagsOnTheTimeline(t *testing.T) {
 	if !strings.Contains(coin.Tags[0].Why, "imports gno.land/p/nt/grc20/v0 (a.gno:5)") {
 		t.Errorf("evidence: %q", coin.Tags[0].Why)
 	}
-	if tagNamesOf(by["gno.land/p/x/kit"].Tags) != "library" {
+	if tagNamesOf(by["gno.land/p/x/kit"].Tags) != "library,self-contained" {
 		t.Errorf("kit: %+v", by["gno.land/p/x/kit"].Tags)
 	}
 
@@ -109,7 +109,7 @@ func TestTagsOnListingsRealmTreeAndIndex(t *testing.T) {
 	for _, c := range facets.Tags {
 		fs = append(fs, c.Tag+"="+strings.Repeat("|", c.Packages))
 	}
-	if strings.Join(fs, " ") != "token=| events=| render=||" {
+	if strings.Join(fs, " ") != "token=| events=| render=|| self-contained=|" {
 		t.Errorf("facets: %v", fs)
 	}
 
@@ -122,7 +122,7 @@ func TestTagsOnListingsRealmTreeAndIndex(t *testing.T) {
 	}
 	detail.Tags = nil
 	decodeInto(t, sourceGET(t, api, "/api/realm/r/x/coin?network=beta"), &detail)
-	if len(detail.Tags) != 0 {
+	if tagNamesOf(detail.Tags) != "self-contained" {
 		t.Errorf("beta realm: %+v", detail.Tags)
 	}
 
@@ -138,7 +138,7 @@ func TestTagsOnListingsRealmTreeAndIndex(t *testing.T) {
 	for _, p := range tree.Packages {
 		got[p.Path] = strings.Join(p.Tags, ",")
 	}
-	if got["gno.land/r/x/coin"] != "token,events,render" || got["gno.land/p/x/kit"] != "library" {
+	if got["gno.land/r/x/coin"] != "token,events,render" || got["gno.land/p/x/kit"] != "library,self-contained" {
 		t.Errorf("tree: %v", got)
 	}
 	tree.Packages = nil
@@ -173,7 +173,7 @@ func TestTagsOnListingsRealmTreeAndIndex(t *testing.T) {
 		Tags []tags.Tag `json:"tags"`
 	}
 	decodeInto(t, sourceGET(t, api, "/api/tags?network=alpha&path=gno.land/p/x/kit"), &one)
-	if len(one.Tags) != 1 || one.Tags[0].Why != "imported by gno.land/r/x/coin" {
+	if tagNamesOf(one.Tags) != "library,self-contained" || one.Tags[0].Why != "imported by gno.land/r/x/coin" {
 		t.Errorf("one: %+v", one)
 	}
 	if rec := sourceGET(t, api, "/api/tags"); rec.Code != http.StatusBadRequest {

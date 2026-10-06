@@ -49,7 +49,8 @@ func tagsOf(t *testing.T, db *DB, network, path string) string {
 func TestReplacePackageTagsItAndScopesByNetwork(t *testing.T) {
 	db := NewTestDB(t)
 	tgStore(t, db, "alpha", tgLib, "tx-lib", 1, "func F() {}")
-	if got := tagsOf(t, db, "alpha", tgLib); got != "" {
+	// Self-contained, as every fixture here without a gno.land import is.
+	if got := tagsOf(t, db, "alpha", tgLib); got != "self-contained" {
 		t.Errorf("a library nobody imports yet: %q", got)
 	}
 	tgStore(t, db, "alpha", tgToken, "tx-coin", 2,
@@ -58,7 +59,7 @@ func TestReplacePackageTagsItAndScopesByNetwork(t *testing.T) {
 	if got := tagsOf(t, db, "alpha", tgToken); got != "token,events,render" {
 		t.Errorf("realm tags: %q", got)
 	}
-	if got := tagsOf(t, db, "alpha", tgLib); got != "library" {
+	if got := tagsOf(t, db, "alpha", tgLib); got != "library,self-contained" {
 		t.Errorf("imported now, so a library: %q", got)
 	}
 	m, _ := db.PackageTags("alpha", []string{tgLib})
@@ -69,10 +70,10 @@ func TestReplacePackageTagsItAndScopesByNetwork(t *testing.T) {
 	// Same paths on another chain, nothing importing the library there.
 	tgStore(t, db, "beta", tgLib, "tx-lib-b", 1, "func F() {}")
 	tgStore(t, db, "beta", tgToken, "tx-coin-b", 2, "func F() {}")
-	if got := tagsOf(t, db, "beta", tgToken); got != "" {
+	if got := tagsOf(t, db, "beta", tgToken); got != "self-contained" {
 		t.Errorf("beta's realm took alpha's tags: %q", got)
 	}
-	if got := tagsOf(t, db, "beta", tgLib); got != "" {
+	if got := tagsOf(t, db, "beta", tgLib); got != "self-contained" {
 		t.Errorf("beta's library counted alpha's importer: %q", got)
 	}
 	if got := tagsOf(t, db, "alpha", tgToken); got != "token,events,render" {
@@ -83,13 +84,13 @@ func TestReplacePackageTagsItAndScopesByNetwork(t *testing.T) {
 	if err := db.SetDependencies("alpha", tgToken, []string{"gno.land/p/nt/grc20/v0"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := tagsOf(t, db, "alpha", tgLib); got != "" {
+	if got := tagsOf(t, db, "alpha", tgLib); got != "self-contained" {
 		t.Errorf("still a library with no importer: %q", got)
 	}
 
 	// A redeploy replaces the tags with what the new source earns.
 	tgStore(t, db, "alpha", tgToken, "tx-coin-2", 3, "func F() {}")
-	if got := tagsOf(t, db, "alpha", tgToken); got != "" {
+	if got := tagsOf(t, db, "alpha", tgToken); got != "self-contained" {
 		t.Errorf("redeploy kept the old tags: %q", got)
 	}
 }
@@ -125,13 +126,13 @@ func F() { chain.Emit("x") }'),
 	if res.Packages != 3 {
 		t.Errorf("first pass recomputed %d, want 3", res.Packages)
 	}
-	if got := tagsOf(t, db, "alpha", tgToken); got != "events" {
+	if got := tagsOf(t, db, "alpha", tgToken); got != "events,self-contained" {
 		t.Errorf("alpha coin: %q", got)
 	}
-	if got := tagsOf(t, db, "alpha", tgLib); got != "library" {
+	if got := tagsOf(t, db, "alpha", tgLib); got != "library,self-contained" {
 		t.Errorf("alpha kit: %q", got)
 	}
-	if got := tagsOf(t, db, "beta", tgToken); got != "" {
+	if got := tagsOf(t, db, "beta", tgToken); got != "self-contained" {
 		t.Errorf("beta coin: %q", got)
 	}
 	if v, _ := db.GetSyncState(TagsStateKey); v != tags.Version {
@@ -223,7 +224,7 @@ func TestTagFilterAndCounts(t *testing.T) {
 		s = append(s, c.Tag+"="+itoa(c.Packages))
 	}
 	// The tag filter is ignored for the counts, the network is not.
-	if strings.Join(s, " ") != "token=1 render=2 library=1" {
+	if strings.Join(s, " ") != "token=1 render=2 library=1 self-contained=2" {
 		t.Errorf("counts: %v", s)
 	}
 }
