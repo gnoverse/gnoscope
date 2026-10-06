@@ -168,8 +168,10 @@ test('switching chain refetches the tree for the other chain', async ({ page }) 
   await page.locator('.cx-net', { hasText: 'beta' }).click();
   await expect(page).toHaveURL(/network=beta/);
   await expect(page.locator('.cx-net[aria-pressed="true"]')).toHaveText('beta');
-  await expect(page.locator('.cx-stats b').first()).toHaveText('2');
-  expect(alphaCount).not.toBe('2');
+  // beta: the hub, r/beta/only, and the two generations the diff view tests
+  // compare (r/diffy/app/v1 and v2).
+  await expect(page.locator('.cx-stats b').first()).toHaveText('4');
+  expect(alphaCount).not.toBe('4');
   expect(trees).toContain('alpha');
   expect(trees).toContain('beta');
   await expect(page.locator('.cx-row.cx-ns .cx-lbl', { hasText: /^beta$/ })).toHaveCount(1);

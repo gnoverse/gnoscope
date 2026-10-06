@@ -443,6 +443,8 @@ export function seed(dbPath) {
       tx.run('alpha', `app-busy-${i}`, h, when, 90000, 150000, 800);
     }
 
+    // On beta, so the layout-sensitive drawings of alpha (the cartography
+    // relief zooms at a fixed point) do not move under it.
     // A package with a history worth comparing: two generations, the second
     // published, republished with a changed signature and a new file, then a
     // submission the chain refused. Every submission carries its files in
@@ -457,19 +459,19 @@ export function seed(dbPath) {
     const publish = (path, hash, height, files, ok = true) => {
       const name = path.split('/').pop();
       if (ok) {
-        pkg.run('alpha', path, name, DIFF_CREATOR, height, blockTime(height), hash, 1);
-        sub.run('alpha', hash, path, name, DIFF_CREATOR, height, blockTime(height), 1);
-        db.prepare(`DELETE FROM package_files WHERE network = 'alpha' AND package_path = ?`).run(path);
-        for (const [n, b] of Object.entries(files)) file.run('alpha', path, n, b);
+        pkg.run('beta', path, name, DIFF_CREATOR, height, blockTime(height), hash, 1);
+        sub.run('beta', hash, path, name, DIFF_CREATOR, height, blockTime(height), 1);
+        db.prepare(`DELETE FROM package_files WHERE network = 'beta' AND package_path = ?`).run(path);
+        for (const [n, b] of Object.entries(files)) file.run('beta', path, n, b);
       } else {
-        subFail.run('alpha', hash, path, name, DIFF_CREATOR, height, blockTime(height), Object.keys(files).length);
+        subFail.run('beta', hash, path, name, DIFF_CREATOR, height, blockTime(height), Object.keys(files).length);
       }
       for (const [n, b] of Object.entries(files)) {
         const h = createHash('sha256').update(b).digest('hex');
         blob.run(h, b);
-        subFile.run('alpha', hash, n, h);
+        subFile.run('beta', hash, n, h);
       }
-      tx.run('alpha', hash, height, blockTime(height), 100000, 200000, 1000);
+      tx.run('beta', hash, height, blockTime(height), 100000, 200000, 1000);
     };
     publish(DIFF_V1, 'tx-diff-v1', 800, { 'app.gno': DIFF_SRC_V1 });
     publish(DIFF_V2, 'tx-diff-v2a', 801, { 'app.gno': DIFF_SRC_V1.replace('package v1', 'package v2') });

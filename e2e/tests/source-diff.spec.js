@@ -12,7 +12,7 @@ const V2 = '/code/r/diffy/app/v2';
 
 test('the diff view draws the API change and the file hunks', async ({ page }) => {
   const w = watch(page);
-  await page.goto(V2 + '?network=alpha&compare=..');
+  await page.goto(V2 + '?network=beta&compare=..');
   await settle(page);
 
   const head = page.locator('.cx-diff-head');
@@ -48,7 +48,7 @@ test('the diff view draws the API change and the file hunks', async ({ page }) =
 
 test('no exported signature changed is said in so many words', async ({ page }) => {
   const w = watch(page);
-  await page.goto(V2 + '?network=alpha&compare=800..801&base=r/diffy/app/v1');
+  await page.goto(V2 + '?network=beta&compare=800..801&base=r/diffy/app/v1');
   await settle(page);
   await expect(page.locator('.cx-diff-api')).toContainText('no exported signature changed');
   expect(w.jsErrors).toEqual([]);
@@ -56,7 +56,7 @@ test('no exported signature changed is said in so many words', async ({ page }) 
 
 test('the version rail opens the diff, and a failed submission is marked', async ({ page }) => {
   const w = watch(page);
-  await page.goto(V2 + '?network=alpha');
+  await page.goto(V2 + '?network=beta');
   await settle(page);
 
   const compare = page.locator('.cx-deploys a.cx-compare');
@@ -65,14 +65,14 @@ test('the version rail opens the diff, and a failed submission is marked', async
   await expect(page).toHaveURL(/compare=/);
   await expect(page.locator('.cx-diff-head')).toContainText('what changed');
 
-  await page.goto(V2 + '?network=alpha');
+  await page.goto(V2 + '?network=beta');
   await settle(page);
   await page.locator('.cx-dot.fail').click();
   await expect(page).toHaveURL(/compare=802\.\.803/);
   await expect(page.locator('.cx-diff-head .cx-diff-side').last()).toContainText('failed');
 
   // The generation chip row compares with the previous generation.
-  await page.goto(V2 + '?network=alpha');
+  await page.goto(V2 + '?network=beta');
   await settle(page);
   await page.locator('.cx-gens a.cx-compare').click();
   await expect(page).toHaveURL(/base=r%2Fdiffy%2Fapp%2Fv1/);
@@ -84,7 +84,7 @@ test('the version rail opens the diff, and a failed submission is marked', async
 
 test('timeline cards link to what changed', async ({ page }) => {
   const w = watch(page);
-  await page.goto('/code/timeline?network=alpha&ns=diffy');
+  await page.goto('/code/timeline?network=beta&ns=diffy');
   await settle(page);
 
   const republished = page.locator('.tl-card').filter({ has: page.locator('.tl-kind-redeploy') });
@@ -93,7 +93,7 @@ test('timeline cards link to what changed', async ({ page }) => {
   await expect(page).toHaveURL(/\/code\/r\/diffy\/app\/v2\?.*compare=\.\.802/);
   await expect(page.locator('.cx-diff-head .cx-diff-side').first()).toContainText('801');
 
-  await page.goto('/code/timeline?network=alpha&ns=diffy');
+  await page.goto('/code/timeline?network=beta&ns=diffy');
   await settle(page);
   const version = page.locator('.tl-card').filter({ has: page.locator('.tl-kind-version') });
   await version.locator('a.tl-changed').click();
@@ -106,7 +106,7 @@ test('timeline cards link to what changed', async ({ page }) => {
 
 test('the realm page links to its changes', async ({ page }) => {
   const w = watch(page);
-  await page.goto('/realm/r/diffy/app/v2?network=alpha');
+  await page.goto('/realm/r/diffy/app/v2?network=beta');
   await settle(page);
   const changes = page.locator('a.tab-changes');
   await expect(changes).toHaveText('changes');
