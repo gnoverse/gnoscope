@@ -22,6 +22,8 @@ URLs did not move, so every `/code` link still opens the same page.
 | `/code/<r\|p>/<path>/-/<file>` | one file |
 | `/code/<r\|p>/<path>/-/<file>#L42` | that file, line 42 marked and scrolled to |
 | `/code/<r\|p>/<prefix>` | a path with no package of its own (`r/gnoswap`): what is under it |
+| `/code/<r\|p>/<path>?compare=<from>..<to>` | what changed between two submissions at the path: either height may be left out (`..` is the last publication against the one before it) |
+| `/code/<r\|p>/<path>?compare=..<to>&base=<r\|p>/<other>` | the same against another path, the previous generation |
 | `/code/timeline` | every publication on the chain, newest first, under a calendar of the last year |
 
 Every URL carries `?network=`. The map's controls ride along as `?size=bytes`
@@ -83,7 +85,30 @@ and the **version rail**: every generation of the same app on this chain
 (`v0`, `v1`, `bubblerumble2`, ...) in deploy order, the current one marked,
 from the tree's `fam` key. When the manifest counts more than one submission,
 the rail also draws every `MsgAddPackage` at the path as a dot, failed ones in
-red, the one whose source is shown ringed.
+red, the one whose source is shown ringed. A dot opens what that submission
+changed against the successful one before it; "compare with the previous
+publication" does the same for the current stamp, and a generation after the
+first carries "compare with" its predecessor.
+
+## What changed
+
+`?compare=` turns a package's page into a diff of two submissions, from
+[`/api/source/{path}/diff`](api.md#what-changed-between-two-publications): the
+two sides (path, block, transaction, `failed` on a refused one), the file and
+line counts, then the exported API, which says "no exported signature
+changed" when that is the answer, and lists added, removed and changed
+declarations with the old and the new signature otherwise. Under it each
+changed file is drawn as its hunks, line numbers on both sides, removed lines
+red and added ones green, `.gno` lines through the same regex highlighter the
+viewer paints first with, and the unchanged stretches between hunks folded
+into one line that says how long they are. A header folds a file; a file with
+more than 600 changed lines starts folded. Unchanged files are named at the
+end.
+
+Three ways in besides the rail: a timeline card for a republication or a new
+version carries "what changed" (a new version against the previous
+generation's latest source, `prev`), and the realm page carries "changes"
+beside its gnohub link.
 
 ## The timeline
 
@@ -95,8 +120,9 @@ a card: the publisher's identicon and name, what happened ("published",
 "released bubblerumble6 (6th version)", "republished", "tried to publish"), a
 badge for the kind, files, lines and imports when the source is still the
 stored one, the package's own one-line summary, the age (the date on hover),
-the block and the transaction. The path opens in the code map, the publisher
-opens its address page. The page never says "deploy" (see the glossary).
+the block and the transaction, and on a republication or a new version a
+"what changed" link into the diff. The path opens in the code map, the
+publisher opens its address page. The page never says "deploy" (see the glossary).
 
 Names are short, because a card is read at a glance. The publisher is its
 `@name` when it registered one on this chain, else a label the site already
@@ -188,10 +214,6 @@ What makes the second and every later visit fast:
 
 ## What it does not do
 
-- **Diffs between versions.** Every submission's files are stored now (see
-  [api.md](api.md#the-deploy-history-is-the-submissions-not-the-package-row)),
-  and `/api/source?at=` serves any of them, but nothing draws what changed
-  between two yet.
 - **Live or parked.** The tree does not carry it (it would cost an RPC read per
   path); the realm page does.
 - **A global palette.** `ctrl-k` belongs to `/code`. Elsewhere `/` still

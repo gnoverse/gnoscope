@@ -4,6 +4,7 @@
 // rather than through the syncer, so the fixture is a fact rather than the
 // outcome of a sync. The schema is never restated here — the binary owns it, and
 // duplicating it in JavaScript would let the two drift silently.
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { TAB_TRANSFERS } from './fake-indexer.mjs';
 
@@ -25,6 +26,30 @@ export const HUB_CREATOR = 'g1hubcreator00000000000000000000000000';
 export const APP_BUSY = 'gno.land/r/gnoland/blog';
 export const APP_QUIET = 'gno.land/r/gnoland/wugnot';
 export const APP_ELSEWHERE = 'gno.land/r/gov/dao';
+
+// A package whose submissions are compared: see the diff view tests.
+export const DIFF_V1 = 'gno.land/r/diffy/app/v1';
+export const DIFF_V2 = 'gno.land/r/diffy/app/v2';
+export const DIFF_CREATOR = 'g1diffcreator000000000000000000000000';
+export const DIFF_SRC_V1 = `package v1
+
+// Count says how many.
+func Count() int { return 1 }
+
+func Render(path string) string { return "app" }
+`;
+export const DIFF_SRC_V2 = `package v2
+
+// Count says how many, now of what.
+func Count(of string) int { return 2 }
+
+// <img src=x onerror=alert(1)> is a comment, never markup.
+func Render(path string) string { return "app" }
+`;
+export const DIFF_SRC_EXTRA = `package v2
+
+func Extra() {}
+`;
 
 // A pure package with a symbol table worth an outline. Kept beside the source
 // it is generated from so the two cannot drift: the counts below are what the
@@ -417,6 +442,39 @@ export function seed(dbPath) {
       call.run('alpha', `app-busy-${i}`, h, when, `g1appuser${i}0000000000000000000000000`, APP_BUSY, 'Render');
       tx.run('alpha', `app-busy-${i}`, h, when, 90000, 150000, 800);
     }
+
+    // A package with a history worth comparing: two generations, the second
+    // published, republished with a changed signature and a new file, then a
+    // submission the chain refused. Every submission carries its files in
+    // submission_files, the way the sync writes them, so the diff view has
+    // both sides; one line is markup, which has to come out as text.
+    const blob = db.prepare(`INSERT OR IGNORE INTO blobs (hash, body) VALUES (?, ?)`);
+    const subFile = db.prepare(`INSERT OR REPLACE INTO submission_files
+      (network, tx_hash, msg_index, file_name, hash) VALUES (?, ?, 0, ?, ?)`);
+    const subFail = db.prepare(`INSERT OR REPLACE INTO package_submissions
+      (network, tx_hash, msg_index, path, name, creator, block_height, block_time, is_realm, num_files, success)
+      VALUES (?, ?, 0, ?, ?, ?, ?, ?, 1, ?, 0)`);
+    const publish = (path, hash, height, files, ok = true) => {
+      const name = path.split('/').pop();
+      if (ok) {
+        pkg.run('alpha', path, name, DIFF_CREATOR, height, blockTime(height), hash, 1);
+        sub.run('alpha', hash, path, name, DIFF_CREATOR, height, blockTime(height), 1);
+        db.prepare(`DELETE FROM package_files WHERE network = 'alpha' AND package_path = ?`).run(path);
+        for (const [n, b] of Object.entries(files)) file.run('alpha', path, n, b);
+      } else {
+        subFail.run('alpha', hash, path, name, DIFF_CREATOR, height, blockTime(height), Object.keys(files).length);
+      }
+      for (const [n, b] of Object.entries(files)) {
+        const h = createHash('sha256').update(b).digest('hex');
+        blob.run(h, b);
+        subFile.run('alpha', hash, n, h);
+      }
+      tx.run('alpha', hash, height, blockTime(height), 100000, 200000, 1000);
+    };
+    publish(DIFF_V1, 'tx-diff-v1', 800, { 'app.gno': DIFF_SRC_V1 });
+    publish(DIFF_V2, 'tx-diff-v2a', 801, { 'app.gno': DIFF_SRC_V1.replace('package v1', 'package v2') });
+    publish(DIFF_V2, 'tx-diff-v2b', 802, { 'app.gno': DIFF_SRC_V2, 'extra.gno': DIFF_SRC_EXTRA });
+    publish(DIFF_V2, 'tx-diff-v2c', 803, { 'app.gno': 'package v2\n\nbroken(' }, false);
 
     // A second chain carrying the same package path, so anything that joins on
     // path alone rather than (path, network) shows up as wrong counts.

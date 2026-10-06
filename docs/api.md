@@ -423,6 +423,7 @@ same reason: 3 of 4 is a library being picked up, 3 of 300 is noise.
 | `GET /api/gnohub/forge/{path...}` | what r/moul/forge claims about a package path: `{path, network, realm, linked, repo_id, repo_url, latest_release, release_count, log_head, unavailable}`. **Requires `network`**: the forge is realm state and the same path exists on more than one chain. `linked: false` with no `unavailable` means nobody has registered the package, which is the normal case and not an error. Reads live over `vm/qeval`, cached 2 minutes; see below |
 | `GET /api/source/{path...}` | a package's source apart from everything volatile, addressed by the submission that put it there. **Requires `network`** (400 without it, or with `all`). Without `at`: a manifest `{path, network, name, kind, stamp, files[], siblings[], submissions, redeploys, history[]}`, `stamp` = `{height, tx_hash, time}` of the current submission, each file `{name, size, lines}` (size in bytes), `siblings` the other generations of the same app on that network (see `discover.Generation`), each `{path, stamp}`, oldest generation first. `max-age=30` and an `ETag` over the bytes. With `at=<height>` naming any stored submission at the path (the current stamp or an older one, failed ones included, `tx=` to pick one of two in a block): `{path, network, name, kind, stamp, failed, files[]}` with each file's `body`, `immutable` for a year; add `file=<name>` for one file, and `tokens=1` with it for that file classified for highlighting instead of its body (`{..., file, tokens, lines, decls}`). A height with no stored submission is a `409`. See below |
 | `GET /api/code/tree` | every deployed package on one network in one payload, for a file-tree explorer and a treemap of all the code on a chain. **Requires `network`** (400 without it, or with `all`). `{network, height, count, files, lines, bytes, since, window_days, packages[]}`, each package in short keys: `p` path, `ns` namespace, `k` kind (`r` realm, `p` pure), `h` stamp height, `f` files as `[name, lines, bytes]`, `l` and `b` the package totals, `fam` and `g` its version family, `c` calls and `u` unique callers in the window, `d` dependents, `t` tag names. `tag=` keeps only the packages carrying it. `public, max-age=60`, an `ETag`, `304` on `If-None-Match`, 5-minute server TTL. See below |
+| `GET /api/source/{path...}/diff` | what changed between two submissions at a path: the exported API compared declaration by declaration, and every file diffed by line. **Requires `network`**. `to=<height>` (default the current stamp), `from=<height>` (default the newest successful submission below `to`), `from_path=<path>` to compare against another path, a previous generation (`from` then defaults to its current stamp). `{path, network, from, to, api, files[], totals}`; `from` is `null` for a first publication. `immutable` when both heights are given, else `max-age=30`. `409` for a height with nothing stored, `404` for a path with no source. See below |
 | `GET /api/code/timeline` | every `MsgAddPackage` on one network, newest first, classified: `new`, `version`, `redeploy` or `failed`. **Requires `network`** (400 without it, or with `all`). `{network, height, total, rows[], next}`. Filters: `kind` (comma-separated or repeated), `failed=1` (failed submissions are hidden otherwise), `ns`, `creator` (an address or a registered name), `tag`, `day` (`YYYY-MM-DD`, UTC). `limit` defaults to 50, capped at 200; `before=<next>` is the following page. `public, max-age=15` on the head, `max-age=300` behind a cursor, an `ETag`, `304` on `If-None-Match`. See below |
 | `GET /api/code/timeline/heatmap` | successful publications per UTC day over the last 365 days, split by kind, for a contribution calendar: `{network, from, to, total, max, days[]}`, each day `{d, n, v, r}` (new, version, redeploy), only days with something. Takes the timeline's `ns` and `creator`. `public, max-age=60` and an `ETag` |
 | `GET /api/realm/deploys/{path...}` | every `MsgAddPackage` ever submitted at one path, newest first: `{path, network, deploys[], total, truncated}`, each row `{network, tx_hash, msg_index, creator, name, block_height, block_time, success, num_files}`. `limit` defaults to 200, capped at 1000. Reads `package_submissions`, never `packages` — see below |
@@ -512,6 +513,45 @@ again. What it holds is the bytes the failed submission carried, merged over
 whatever files the path had before; for a path whose only submission failed
 (the only case a replay of gnoland1's history finds), that is exactly the failed submission's
 files, which the same URL now serves with `failed: true`.
+
+### What changed between two publications
+
+`/api/source/{path...}/diff?network=<id>` compares two submissions. Both sides
+resolve the way `at=` does, so either may be an older submission or a failed
+one (marked `failed`), and a height with no stored submission is a `409`
+naming the path's `current` stamp.
+
+| key | meaning |
+|---|---|
+| `from`, `to` | `{path, height, tx_hash, time, failed}` of each side. `from` is `null` when there is nothing before `to` at the path: every file is then added |
+| `api` | the exported surface: `added[]` and `removed[]` (`{kind, recv, name, signature, file}`), `changed[]` (`{kind, recv, name, old, new, file}`), `same` (how many did not move) and `exports_changed`, false when no exported signature changed, which the page says in so many words |
+| `files[]` | every file of either side, by name: `{name, status, added, removed, old_lines, new_lines, hunks[]}`. `status` is `added`, `removed`, `modified` or `unchanged`. A hunk is a unified diff's `@@ -old_start,old_lines +new_start,new_lines @@` with its `lines[]`, each `{op, text, old, new}` (`op` is `" "`, `-` or `+`, the numbers 1-based and absent on the side a line is not in), three lines of context, two changes whose contexts touch sharing a hunk |
+| `totals` | files added, removed, modified and unchanged, lines added and removed |
+
+The API half is `go/parser` on both sides (gno is Go syntax), tests left out.
+A declaration is its kind, receiver and name; its signature is the
+declaration printed with no body and no comments, compared with whitespace
+collapsed. So reordering a file, editing a body or a doc comment, or gofmt
+realigning a struct is no change, and a parameter's type is. Unexported names
+are not API: an unexported declaration, a method on an unexported type, an
+unexported struct field or interface method (godoc's rule) are all left out,
+so renaming one changes nothing here. A constant's value is part of its
+declaration; a variable's initializer only when it has no type. A file that
+does not parse contributes no declarations, which is how a failed
+submission's broken file shows its API as removed.
+
+The line half is a Myers diff, `pkg/srcdiff`, no dependency. Its memory grows
+with the square of the edits, so past 2,000 edits in one file it stops and
+shows the file removed whole and added whole (`too_large`).
+
+A path whose last segment is `diff` (a package named `diff`) keeps its URL:
+`/api/source/p/ns/diff` is that package, and its diff is
+`/api/source/p/ns/diff/diff`.
+
+Measured 2026-10-06 against a local copy of gnoland1: 2 to 3 ms for the
+republished paths with three submissions (`r/moul/home`,
+`r/moul/agents/relay/v0`), 12 ms for the chain's largest package,
+`r/gnoland/boards2/v0` (252 files), against another path, every file added.
 
 ### The code tree
 

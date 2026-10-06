@@ -507,6 +507,7 @@ html.embed .pagenav { display: none; }
    never `active`: it navigates away rather than switching a panel. */
 .tab-lab { margin-left: auto; color: var(--fg2); opacity: 0.7; }
 .tab-lab:hover { opacity: 1; text-decoration: none; }
+.tab-changes + .tab-lab { margin-left: 0; }
     /* The state tree. Monospace throughout: these are values a developer will
        compare, copy and paste, and a proportional font makes two addresses that
        differ in one character look identical. */
@@ -732,6 +733,34 @@ td .tag-chips { display: flex; margin-top: 3px; }
 .cx-dot.fail { background: var(--red); opacity: 0.7; }
 .cx-dot.cur { opacity: 1; box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--accent); }
 .cx-dot:hover { opacity: 1; text-decoration: none; }
+.cx-compare { font-size: 12px; }
+/* The diff view: what changed between two publications. */
+.cx-diff-head { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.cx-diff-sides { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--fg2); }
+.cx-diff-side { display: inline-flex; gap: 6px; align-items: baseline; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--fg); }
+.cx-diff-totals { font-size: 12.5px; color: var(--fg2); }
+.cx-diff-api { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; background: var(--bg); font-size: 12.5px; }
+.cx-diff-api h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg2); margin: 0 0 6px; }
+.cx-diff-api-none { color: var(--fg2); }
+.cx-diff-sig { font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; margin: 2px 0; padding: 2px 6px; border-radius: 4px; }
+.cx-diff-sig.add, .cx-diff-row.add { background: rgba(80, 200, 120, 0.13); }
+.cx-diff-sig.del, .cx-diff-row.del { background: rgba(255, 99, 99, 0.13); }
+.cx-diff-file { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; overflow: hidden; background: var(--bg); }
+.cx-diff-fhead { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 12.5px; cursor: pointer; user-select: none; }
+.cx-diff-fhead .cx-blob-name { flex: 1 1 auto; min-width: 0; word-break: break-all; }
+.cx-diff-file.closed .cx-diff-body { display: none; }
+.cx-diff-file.closed .cx-diff-fhead { border-bottom: none; }
+.cx-diff-n.add { color: var(--green); }
+.cx-diff-n.del { color: var(--red); }
+.cx-diff-body { overflow-x: auto; }
+.cx-diff-row { display: flex; font: 12.5px/1.5 var(--mono); white-space: pre; min-width: max-content; }
+.cx-diff-ln { flex: 0 0 4.5em; padding: 0 8px; text-align: right; color: var(--fg2); opacity: 0.7; user-select: none; }
+.cx-diff-sign { flex: 0 0 1.4em; text-align: center; user-select: none; color: var(--fg2); }
+.cx-diff-row.add .cx-diff-sign { color: var(--green); }
+.cx-diff-row.del .cx-diff-sign { color: var(--red); }
+.cx-diff-text { padding-right: 16px; }
+.cx-diff-gap { padding: 2px 12px; font: 12px/1.6 var(--mono); color: var(--fg2); background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.cx-diff-more { padding: 8px 12px; font-size: 12.5px; }
 /* One row that scrolls sideways: r/gnoland/boards2/v0 ships 252 files, and a
    strip that wraps would push the code a screen down. The tree lists them all. */
 .cx-files { position: relative; display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; border-bottom: 1px solid var(--border); margin-bottom: 0; }
@@ -17012,6 +17041,23 @@ async function loadRealmDetail(path, initialTab) {
         navigate(hubLink.getAttribute('href'));
       });
       tabs.appendChild(hubLink);
+      // What the last publication changed, in the code map's diff view. A
+      // link like gnohub's, not a tab: it leaves the page. Only for a chain
+      // named in the detail, since a diff is between two of one chain's
+      // submissions.
+      if (detail.network) {
+        const changes = el('a', {
+          className: 'tab tab-lab tab-changes',
+          href: cxCompareURL(detail.path, '', '', '', detail.network),
+        }, 'changes');
+        changes.title = 'what the last publication changed, against the one before it';
+        changes.addEventListener('click', (e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+          e.preventDefault();
+          navigate(changes.getAttribute('href'));
+        });
+        tabs.insertBefore(changes, hubLink);
+      }
       // Info
       const info = clear('tab-info');
       if (activeTab === 'info') info.classList.add('active'); else info.classList.remove('active');
@@ -28685,6 +28731,15 @@ function tlCard(r) {
   blk.appendChild(blockLink(r.height));
   meta.appendChild(blk);
   meta.appendChild(el('a', { href: '/tx/' + encodeURIComponent(r.tx) + cxNetQ(_tl.net), title: r.tx }, 'tx'));
+  // A republication against the one before it at the path; a new version
+  // against the previous generation's latest source.
+  if (r.kind === 'redeploy' || (r.kind === 'version' && r.prev)) {
+    meta.appendChild(el('a', {
+      href: cxCompareURL(r.path, '', r.height, r.kind === 'version' ? r.prev : '', _tl.net),
+      className: 'tl-changed',
+      title: r.kind === 'version' ? 'what changed since ' + cxRel(r.prev) : 'what changed since the previous publication at this path',
+    }, 'what changed'));
+  }
   body.appendChild(meta);
   card.appendChild(body);
   const shot = tlShot(r);
@@ -28851,6 +28906,17 @@ function cxURL(path, file, net) {
   if (path) u += '/' + cxRel(path).split('/').map(encodeURIComponent).join('/');
   if (file) u += '/-/' + encodeURIComponent(file);
   return u + cxNetQ(net);
+}
+
+// cxCompareURL is the only place a diff link is built: the package's /code
+// URL with compare=<from>..<to> (either side may be empty, the server then
+// picks it) and base=<path> to compare against another generation.
+function cxCompareURL(path, from, to, base, net) {
+  const q = new URLSearchParams();
+  q.set('network', net || _cx.net);
+  q.set('compare', (from === '' || from == null ? '' : from) + '..' + (to === '' || to == null ? '' : to));
+  if (base) q.set('base', cxRel(base));
+  return '/code/' + cxRel(path).split('/').map(encodeURIComponent).join('/') + '?' + q.toString();
 }
 
 function cxMapURL(zoom, net) {
@@ -29154,6 +29220,15 @@ function cxShow(r, rec, t0, gen, repaint) {
     _cx.cur = null;
     cxRenderTree();
     cxDir(s.main, idx, r.path);
+    return;
+  }
+  if (r.kind === 'pkg' && urlParam('compare') !== null) {
+    _cx.cur = null;
+    _cx.expanded.add('ns:' + pkg.ns);
+    _cx.expanded.add(pkg.p);
+    _cx.selKey = 'p:' + pkg.p;
+    cxRenderTree(true);
+    cxDiffView(s.main, pkg, urlParam('compare'), urlParam('base') || '');
     return;
   }
   const file = r.kind === 'file' ? r.file : cxMainFile(pkg);
@@ -29623,6 +29698,8 @@ function cxVersionRail(rail, pkg) {
     gens.appendChild(chip);
   });
   if (fam.length === 1) gens.appendChild(el('span', { className: 'cx-dim' }, 'no other generation on this chain'));
+  const at = fam.findIndex(p => p.p === pkg.p);
+  if (at > 0) gens.appendChild(el('a', { href: cxCompareURL(pkg.p, '', '', fam[at - 1].p, _cx.net), className: 'cx-compare' }, 'compare with ' + cxGenLabel(fam[at - 1])));
   rail.appendChild(gens);
 
   const hist = el('div', { className: 'cx-deploys' });
@@ -29641,23 +29718,183 @@ function cxVersionRail(rail, pkg) {
       const rows = (d.deploys || []).slice().reverse();
       hist.appendChild(el('span', { className: 'cx-rail-k' }, fmtNum(d.total || subs) + ' submissions · ' + fmtNum(m.redeploys || 0) + ' redeploys'));
       const dots = el('span', { className: 'cx-dots' });
+      // Each dot opens what that submission changed against the successful
+      // one before it (rows are oldest first here).
+      let prevOk = null;
       for (const dp of rows) {
         const cur = m.stamp && dp.block_height === m.stamp.height && dp.success;
         const a = el('a', {
-          href: '/tx/' + encodeURIComponent(dp.tx_hash) + cxNetQ(net),
+          href: cxCompareURL(pkg.p, prevOk === null ? '' : prevOk, dp.block_height, '', net),
           className: 'cx-dot ' + (dp.success ? 'ok' : 'fail') + (cur ? ' cur' : ''),
           title: (dp.block_height === 0 ? 'genesis' : 'block ' + fmtNum(dp.block_height)) +
             (dp.block_time ? ' · ' + new Date(dp.block_time).toISOString().slice(0, 16).replace('T', ' ') : '') +
-            (dp.success ? '' : ' · failed') + (cur ? ' · the source shown here' : ''),
-          'aria-label': (dp.success ? 'deploy' : 'failed deploy') + ' at block ' + dp.block_height,
+            (dp.success ? '' : ' · failed') + (cur ? ' · the source shown here' : '') + ' · what changed',
+          'aria-label': 'what changed in the ' + (dp.success ? 'publication' : 'failed submission') + ' at block ' + dp.block_height,
         });
         dots.appendChild(a);
+        if (dp.success) prevOk = dp.block_height;
       }
       hist.appendChild(dots);
       if (d.truncated) hist.appendChild(el('span', { className: 'cx-dim' }, 'newest ' + rows.length));
+      if ((m.redeploys || 0) > 0) hist.appendChild(el('a', { href: cxCompareURL(pkg.p, '', '', '', net), className: 'cx-compare' }, 'compare with the previous publication'));
       hist.appendChild(el('a', { href: '/gnohub/' + pkg.rel + '/-/commits' + cxNetQ(net), className: 'cx-dim' }, 'history →'));
     });
   }).catch(() => { /* the rail stays without a history; the code is the point */ });
+}
+
+// cxDiffView draws what changed between two submissions: the exported API
+// first, then every file's lines. The server computes both
+// (/api/source/{path}/diff); this only lays them out. Safe to run twice: it
+// rebuilds main, and a late answer for an older call is dropped.
+let _cxDiffGen = 0;
+function cxDiffView(main, pkg, compare, base) {
+  const gen = ++_cxDiffGen;
+  const net = _cx.net;
+  main.textContent = '';
+  main.scrollTop = 0;
+  const wrap = el('div', { className: 'cx-pkg cx-diff' });
+  wrap.appendChild(cxCrumbs(pkg.p, ''));
+  const body = el('div');
+  skeletonBlock(body);
+  wrap.appendChild(body);
+  main.appendChild(wrap);
+
+  const m = /^(\d*)\.\.(\d*)$/.exec(compare || '..') || [null, '', ''];
+  const q = new URLSearchParams();
+  if (m[1]) q.set('from', m[1]);
+  if (m[2]) q.set('to', m[2]);
+  if (base) q.set('from_path', base);
+  const qs = q.toString();
+  cxSilent('source/' + pkg.rel + '/diff' + (qs ? '?' + qs : ''), net).then((d) => {
+    if (gen !== _cxDiffGen || !body.isConnected) return;
+    body.replaceWith(cxDiffBody(pkg, d, net));
+  }, (err) => {
+    if (gen !== _cxDiffGen || !body.isConnected) return;
+    let msg = null;
+    try { msg = JSON.parse(err.message).error; } catch (_) { /* not JSON */ }
+    body.replaceChildren(msg
+      ? el('div', { className: 'cx-empty' }, 'nothing to compare: ' + msg)
+      : errorPanel(err, () => cxDiffView(main, pkg, compare, base)));
+  });
+}
+
+function cxDiffSide(v, net) {
+  const side = el('span', { className: 'cx-diff-side' });
+  side.appendChild(el('a', { href: cxURL(v.path, '', net) }, shortPkg(v.path)));
+  side.appendChild(blockWithAge(v.height, v.time, net));
+  side.appendChild(txLink(v.tx_hash, v.height, net, { showBlock: false }));
+  if (v.failed) side.appendChild(badge('fail', 'failed'));
+  return side;
+}
+
+function cxDiffBody(pkg, d, net) {
+  const out = el('div');
+  const head = el('div', { className: 'cx-diff-head' });
+  head.appendChild(el('h2', { className: 'cx-pkg-path' }, 'what changed in ' + pkg.p));
+  const sides = el('div', { className: 'cx-diff-sides' });
+  if (d.from) sides.appendChild(cxDiffSide(d.from, net));
+  else sides.appendChild(el('span', { className: 'cx-diff-side' }, 'nothing before it: its first publication'));
+  sides.appendChild(el('span', { 'aria-hidden': 'true' }, '→'));
+  sides.appendChild(cxDiffSide(d.to, net));
+  sides.appendChild(el('a', { href: cxURL(pkg.p, '', net) }, 'back to the code'));
+  head.appendChild(sides);
+  const t = d.totals || {};
+  const parts = [];
+  if (t.files_modified) parts.push(fmtNum(t.files_modified) + ' modified');
+  if (t.files_added) parts.push(fmtNum(t.files_added) + ' added');
+  if (t.files_removed) parts.push(fmtNum(t.files_removed) + ' removed');
+  if (t.files_unchanged) parts.push(fmtNum(t.files_unchanged) + ' unchanged');
+  head.appendChild(el('div', { className: 'cx-diff-totals' },
+    'files: ' + (parts.join(', ') || 'none') + ' · lines ',
+    el('span', { className: 'cx-diff-n add' }, '+' + fmtNum(t.lines_added || 0)), ' ',
+    el('span', { className: 'cx-diff-n del' }, '−' + fmtNum(t.lines_removed || 0))));
+  out.appendChild(head);
+  out.appendChild(cxDiffAPI(d.api || {}));
+  for (const f of d.files || []) {
+    if (f.status === 'unchanged') continue;
+    out.appendChild(cxDiffFile(f));
+  }
+  const same = (d.files || []).filter(f => f.status === 'unchanged').map(f => f.name);
+  if (same.length) out.appendChild(el('div', { className: 'cx-dim cx-diff-more' }, 'unchanged: ' + same.join(', ')));
+  return out;
+}
+
+function cxDiffAPI(api) {
+  const box = el('section', { className: 'cx-diff-api', 'aria-label': 'exported API' });
+  box.appendChild(el('h3', {}, 'exported API'));
+  if (!api.exports_changed) {
+    box.appendChild(el('div', { className: 'cx-diff-api-none' }, 'no exported signature changed' +
+      (api.same ? ' (' + fmtNum(api.same) + ' declarations compared)' : '')));
+    return box;
+  }
+  const name = (x) => x.recv ? x.recv + '.' + x.name : x.name;
+  for (const a of api.added || []) {
+    box.appendChild(el('div', { className: 'cx-diff-sig add', title: 'added, ' + a.file }, '+ ' + a.signature));
+  }
+  for (const r of api.removed || []) {
+    box.appendChild(el('div', { className: 'cx-diff-sig del', title: 'removed, was in ' + r.file }, '− ' + r.signature));
+  }
+  for (const c of api.changed || []) {
+    const row = el('div', { className: 'cx-diff-changed', 'aria-label': 'changed ' + name(c) });
+    row.appendChild(el('div', { className: 'cx-diff-sig del' }, '− ' + c.old));
+    row.appendChild(el('div', { className: 'cx-diff-sig add' }, '+ ' + c.new));
+    box.appendChild(row);
+  }
+  if (api.same) box.appendChild(el('div', { className: 'cx-dim' }, fmtNum(api.same) + ' unchanged'));
+  return box;
+}
+
+// A file's diff: the hunks the server sent, with the unchanged stretch
+// between two of them folded into one line that says how long it is. A big
+// file starts closed.
+function cxDiffFile(f) {
+  const n = (f.added || 0) + (f.removed || 0);
+  const box = el('section', { className: 'cx-diff-file' + (n > 600 ? ' closed' : ''), 'data-file': f.name });
+  const label = { added: 'added', removed: 'removed', modified: 'modified' }[f.status] || f.status;
+  const fhead = el('div', { className: 'cx-diff-fhead', role: 'button', tabindex: '0', 'aria-expanded': n > 600 ? 'false' : 'true' },
+    el('span', { className: 'cx-blob-name' }, f.name),
+    badge(f.status === 'removed' ? 'fail' : f.status === 'added' ? 'ok' : 'realm', label),
+    el('span', { className: 'cx-diff-n add' }, '+' + fmtNum(f.added || 0)),
+    el('span', { className: 'cx-diff-n del' }, '−' + fmtNum(f.removed || 0)));
+  const toggle = () => {
+    const closed = box.classList.toggle('closed');
+    fhead.setAttribute('aria-expanded', closed ? 'false' : 'true');
+    if (!closed && !body.firstChild) cxDiffFill(body, f);
+  };
+  fhead.addEventListener('click', toggle);
+  fhead.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  box.appendChild(fhead);
+  const body = el('div', { className: 'cx-diff-body' });
+  box.appendChild(body);
+  if (n <= 600) cxDiffFill(body, f);
+  return box;
+}
+
+function cxDiffFill(body, f) {
+  const gno = /\.gno$/.test(f.name);
+  const frag = document.createDocumentFragment();
+  if (f.too_large) frag.appendChild(el('div', { className: 'cx-diff-gap' }, 'changed too much to line up: shown removed whole and added whole'));
+  let lastOld = 0;
+  for (const h of f.hunks || []) {
+    const firstOld = h.old_lines ? h.old_start : h.old_start + 1;
+    const skipped = firstOld - 1 - lastOld;
+    if (skipped > 0) frag.appendChild(el('div', { className: 'cx-diff-gap' }, '⋯ ' + fmtNum(skipped) + ' unchanged line' + (skipped === 1 ? '' : 's')));
+    for (const l of h.lines || []) {
+      const cls = l.op === '+' ? 'add' : l.op === '-' ? 'del' : 'ctx';
+      const text = el('span', { className: 'cx-diff-text' });
+      if (gno) highlightLine(text, l.text, null);
+      else text.textContent = l.text;
+      frag.appendChild(el('div', { className: 'cx-diff-row ' + cls },
+        el('span', { className: 'cx-diff-ln' }, l.old ? String(l.old) : ''),
+        el('span', { className: 'cx-diff-ln' }, l.new ? String(l.new) : ''),
+        el('span', { className: 'cx-diff-sign' }, l.op === ' ' ? '' : l.op === '-' ? '−' : '+'),
+        text));
+    }
+    lastOld = h.old_lines ? h.old_start + h.old_lines - 1 : h.old_start;
+  }
+  const tail = (f.old_lines || 0) - lastOld;
+  if ((f.hunks || []).length && tail > 0) frag.appendChild(el('div', { className: 'cx-diff-gap' }, '⋯ ' + fmtNum(tail) + ' unchanged line' + (tail === 1 ? '' : 's')));
+  body.appendChild(frag);
 }
 
 // cxShowFile draws one file into the viewer. A warm body is drawn in the same
