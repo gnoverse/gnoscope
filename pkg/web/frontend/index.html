@@ -2064,11 +2064,18 @@ function badge(type, text) {
 // the rule checks comes from /api/tags, which reads it out of the rule table:
 // this file never writes its own.
 //
-// One colour per tag, in rule order. The canvas code map reads the same table.
+// One colour per tag, in rule order (tags.Rules; TestTagColorsFollowTheRules
+// in pkg/web holds the two together). The canvas code map reads the same
+// table. Each colour is at least 6:1 against the dark background and kept
+// apart from every other one and from the map's grey "no tag".
 const TAG_COLORS = {
   token: '#e5c07b', nft: '#c678dd', payments: '#98c379', defi: '#56b6c2',
-  governance: '#e06c75', social: '#61afef', 'access-control': '#d19a66',
-  events: '#a3be8c', render: '#8fbcbb', library: '#b48ead', 'test-only': '#7f848e',
+  governance: '#e06c75', governed: '#d59090', voting: '#e481bc', claims: '#a9df68',
+  social: '#61afef', identity: '#a29aea', 'access-control': '#d19a66', pausable: '#df8568',
+  upgradable: '#68dfbb', events: '#a3be8c', 'time-based': '#d9df68', crypto: '#bcc5e6',
+  math: '#e6c7bc', 'cross-realm': '#68df91', render: '#8fbcbb', ui: '#e9b3ef',
+  interactive: '#68df68', routing: '#b8eacf', library: '#b48ead', 'self-contained': '#efefb3',
+  'test-only': '#7f848e',
 };
 const TAG_ORDER = Object.keys(TAG_COLORS);
 function tagColor(tag) { return TAG_COLORS[tag] || '#888888'; }
