@@ -95,6 +95,12 @@ type addressIdentity struct {
 	// Delegates is how many keys this address has granted, the other direction.
 	Delegates int `json:"delegates,omitempty"`
 
+	// Genesis is what the gnoland-1 genesis sheet says about this address, on
+	// mainnet only and only when the sheet is loaded. It is the one exact answer
+	// to "was this in genesis" that the chain cannot give: Chain.Vesting proves a
+	// yes, and nothing on chain can prove a no.
+	Genesis *genesisAnswer `json:"genesis,omitempty"`
+
 	// Validator is the moniker this address registered on r/gnops/valopers.
 	// Self-declared, which is why it is not a label: anyone may claim any name.
 	Validator string `json:"validator,omitempty"`
@@ -333,6 +339,15 @@ func (a *API) HandleAddressIdentity(w http.ResponseWriter, r *http.Request) {
 	// naming this address as a caller is a transaction it signed.
 	if out.Kind == identityUnknown && out.Transactions > 0 {
 		out.Kind = identitySigner
+	}
+
+	// The genesis sheet is gnoland-1's, so it speaks only for mainnet, and only
+	// to an address that is a bech32 g1 key (a package account hashed from a path
+	// is one too, and is correctly "not in genesis").
+	if network == genesisNetwork {
+		if g := a.genesisLookup(addr); g.Status == genesisFound || g.Status == genesisAbsent {
+			out.Genesis = &g
+		}
 	}
 
 	JSONResponse(w, out)

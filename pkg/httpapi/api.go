@@ -986,6 +986,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/pulse", a.HandlePulse)
 	mux.HandleFunc("GET /api/failures", a.HandleFailures)
 	mux.HandleFunc("GET /api/alerts", a.HandleAlerts)
+	mux.HandleFunc("GET /api/airdrop", a.HandleAirdrop)
 	mux.HandleFunc("GET /api/realms", a.HandleRealms)
 	// These four beat the /api/realm/{path...} wildcard below by Go 1.22 mux
 	// precedence: the more specific pattern wins, and no gno path starts with

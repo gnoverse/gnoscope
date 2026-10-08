@@ -1665,6 +1665,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a href="/directory/people" id="nav-people" title="find people by what they have done on chain"><span class="rail-label">people</span></a>
           <a href="/accounts" id="nav-accounts" title="accounts, balances and the rich list"><span class="rail-label">accounts</span></a>
           <a href="/sessions" id="nav-sessions" title="delegated signing keys: who lets what sign for them"><span class="rail-label">sessions</span></a>
+          <a href="/airdrop" id="nav-airdrop" title="check an address against the gnoland-1 genesis, including a cosmos1 or atone1 address from the airdrops"><span class="rail-label">airdrop</span></a>
           <a href="/directory/teams" id="nav-teams" title="teams and organisations"><span class="rail-label">teams</span></a>
         </div>
       </div>
@@ -1907,6 +1908,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-glossary"><main><div id="glossary-content"></div></main></div>
   <div class="view" id="view-search"><main><div id="search-page-content"></div></main></div>
   <div class="view" id="view-alerts"><main><div id="alerts-content"></div></main></div>
+  <div class="view" id="view-airdrop"><main><div id="airdrop-content"></div></main></div>
   <div class="view" id="view-failed"><main><div id="failed-content"></div></main></div>
   <div class="view" id="view-sanity"><main><div id="sanity-content"></div></main></div>
   <div class="view" id="view-traffic"><main><div id="traffic-content"></div></main></div>
@@ -4667,6 +4669,7 @@ const NAV = [
     { id: 'people', label: 'people', path: '/directory/people' },
     { id: 'accounts', label: 'accounts', path: '/accounts' },
     { id: 'sessions', label: 'sessions', path: '/sessions' },
+    { id: 'airdrop', label: 'airdrop', path: '/airdrop' },
     { id: 'teams', label: 'teams', path: '/directory/teams' },
   ] },
   { id: 'gas', label: 'gas', path: '/gas', own: 'summary', children: [
@@ -4990,6 +4993,7 @@ function route() {
     return route();
   }
   else if (path === '/alerts') { view = 'alerts'; }
+  else if (path === '/airdrop') { view = 'airdrop'; }
   else if (path === '/failed') { view = 'failed'; }
   else if (path === '/sanity') { view = 'sanity'; }
   else if (path === '/watch') { view = 'watch'; }
@@ -5086,6 +5090,7 @@ function route() {
     case 'glossary': loadGlossary(); break;
     case 'search': loadSearchPage(); break;
     case 'alerts': loadAlerts(); break;
+    case 'airdrop': loadAirdrop(); break;
     case 'failed': loadFailed(); break;
     case 'sanity': loadSanity(); break;
     case 'traffic': loadTraffic(); break;
@@ -7499,6 +7504,83 @@ async function loadAlerts() {
     body.textContent = '';
     body.appendChild(el('div', { className: 'dash-msg' }, 'could not load alerts: ' + err.message));
   }
+}
+
+// --- /airdrop: what the gnoland-1 genesis gave an address ---------------------
+//
+// The two airdrops kept each recipient's key bytes and changed only the prefix,
+// so a cosmos1 or atone1 address is the same key as a g1 address. The server
+// converts, then looks the g1 address up in the sheet the genesis was built from
+// (pinned to a commit and a SHA-256). "not loaded" is its own answer: a sheet
+// that has not finished loading says nothing, and must never read as "you got
+// nothing".
+function vestingLine(v, now) {
+  const when = fmtUnixDay(v.start) + ' to ' + fmtUnixDay(v.end);
+  if (v.delayed) {
+    const done = now >= v.end;
+    return fmtGnotAmount(v.ugnot) + ' under a delayed schedule: nothing is released before ' + fmtUnixDay(v.end) +
+      (done ? ', which has passed, so all of it is released.' : ', then all of it at once.');
+  }
+  const frac = Math.min(1, Math.max(0, (now - v.start) / (v.end - v.start)));
+  const locked = Math.round(v.ugnot * (1 - frac));
+  return fmtGnotAmount(v.ugnot) + ' vesting continuously from ' + when + '. by that schedule ' +
+    (frac * 100).toFixed(1) + '% is released and ' + fmtGnotAmount(locked) + ' is still locked.';
+}
+
+async function loadAirdrop() {
+  const container = clear('airdrop-content');
+  container.appendChild(el('h1', {}, 'airdrop checker'));
+  container.appendChild(el('p', { className: 'section-sub' },
+    'what the gnoland-1 genesis gave an address. paste a cosmos1\u2026 or atone1\u2026 address from the airdrops, or a g1\u2026 address: the airdrops kept each key and changed only the prefix.'));
+  const input = el('input', { type: 'text', id: 'airdrop-input', placeholder: 'cosmos1\u2026 / atone1\u2026 / g1\u2026', spellcheck: 'false',
+    style: { width: 'min(520px, 100%)', fontFamily: 'var(--mono)' } });
+  const go = el('button', { className: 'pager-btn', id: 'airdrop-go' }, 'check');
+  const result = el('div', { id: 'airdrop-result', style: { marginTop: '14px' } });
+  container.appendChild(el('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, input, go));
+  container.appendChild(result);
+
+  async function check() {
+    const q = input.value.trim();
+    urlSetParams({ address: q || null });
+    result.textContent = '';
+    if (!q) return;
+    skeletonBlock(result);
+    try {
+      const d = await api('airdrop?address=' + encodeURIComponent(q), 'mainnet');
+      result.textContent = '';
+      const card = el('div', { className: 'section', id: 'airdrop-card' });
+      const badgeFor = { found: badge('ok', 'in genesis'), not_in_genesis: badge('fail', 'not in genesis'),
+        not_loaded: badge('pkg', 'sheet not loaded'), invalid: badge('fail', 'not an address') }[d.status];
+      card.appendChild(el('div', { className: 'section-title' }, 'result ', badgeFor));
+      if (d.address) {
+        const r = el('div', {}, 'address ', addrLink(d.address, 'mainnet'));
+        if (d.converted) r.append(' (re-spelled from ' + d.input + ')');
+        card.appendChild(r);
+      }
+      const now = Math.floor(Date.now() / 1000);
+      if (d.status === 'found') {
+        card.appendChild(el('div', {}, 'allocation: ' + fmtGnotAmount(d.ugnot)));
+        card.appendChild(el('div', { style: { color: 'var(--fg2)' } }, d.vesting
+          ? 'vesting: ' + vestingLine(d.vesting, now) + ' the rest, ' + fmtGnotAmount(d.ugnot - d.vesting.ugnot) + ', was liquid from the first block.'
+          : 'no vesting clause: all of it was liquid from the first block.'));
+      } else if (d.status === 'not_in_genesis') {
+        card.appendChild(el('div', {}, 'this address is not in the genesis sheet. it may still hold GNOT received later; the address page shows the live balance.'));
+      } else if (d.note) {
+        card.appendChild(el('div', { style: { color: 'var(--fg2)' } }, d.note));
+      }
+      card.appendChild(el('div', { className: 'section-sub', style: { marginTop: '10px' } },
+        'read from gnolang/independence-day at ' + d.source.commit.slice(0, 7) + ' (mkgenesis/balances.txt.gz, sha256 ' + d.source.sha256.slice(0, 12) + '\u2026, ' + fmtNum(d.source.rows) + ' accounts). the checksum is verified before anything is loaded.'));
+      result.appendChild(card);
+    } catch (err) {
+      console.error(err);
+      result.textContent = '';
+      result.appendChild(el('div', { className: 'dash-msg' }, 'could not check: ' + err.message));
+    }
+  }
+  go.addEventListener('click', check);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') check(); });
+  const preset = urlParam('address');
+  if (preset) { input.value = preset; check(); }
 }
 
 // --- /failed: what the chain reverted ----------------------------------------
@@ -18495,7 +18577,15 @@ function renderAddressIdentity(container, ident, addr, network, deploys) {
   }
 
   // --- genesis, and what its absence does not mean --------------------------
-  if (ident.chain && ident.chain.vesting) {
+  if (ident.genesis && ident.genesis.status === 'found') {
+    const g = ident.genesis;
+    const r = row('genesis', 'allocated ' + fmtGnotAmount(g.ugnot) + (g.vesting
+      ? ', of which ' + fmtGnotAmount(g.vesting.ugnot) + ' vests ' + (g.vesting.delayed ? 'at once on ' + fmtUnixDay(g.vesting.end) : 'from ' + fmtUnixDay(g.vesting.start) + ' to ' + fmtUnixDay(g.vesting.end))
+      : ', with no vesting') + '. from the genesis sheet. ');
+    r.appendChild(link('airdrop checker \u2192', () => navigate('/airdrop?address=' + encodeURIComponent(ident.address))));
+  } else if (ident.genesis && ident.genesis.status === 'not_in_genesis') {
+    row('genesis', 'not in the genesis sheet: this address was funded after the chain started, or never.');
+  } else if (ident.chain && ident.chain.vesting) {
     const v = ident.chain.vesting;
     const r = row('genesis', 'funded when the chain started: ' +
       (/^\d+ugnot$/.test(v.original) ? fmtBalanceStr(v.original) : fmtCoins(v.original)) +

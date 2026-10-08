@@ -825,6 +825,32 @@ func initSchema(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_valoper_network_height
 			ON valoper_registrations(network, block_height DESC);
 
+		-- The gnoland-1 genesis balances, from the sheet the genesis was built
+		-- from (pkg/genesis). One chain, so no network column. The address is
+		-- its 20 key bytes rather than the 40-character string: 3.26M rows is
+		-- the difference between ~150MB and ~350MB. vest_ugnot is NULL for an
+		-- account with no vesting clause.
+		CREATE TABLE IF NOT EXISTS genesis_balances (
+			addr       BLOB PRIMARY KEY,
+			ugnot      INTEGER NOT NULL,
+			vest_ugnot INTEGER,
+			vest_start INTEGER,
+			vest_end   INTEGER,
+			-- 1 for a delayed schedule: nothing vests until vest_end, instead of
+			-- the continuous release every other account has.
+			vest_delayed INTEGER NOT NULL DEFAULT 0
+		) WITHOUT ROWID;
+
+		-- One row, written only after the last balance landed: its presence is
+		-- what makes genesis_balances trustworthy, because a partial import has
+		-- balances and no marker.
+		CREATE TABLE IF NOT EXISTS genesis_import (
+			source      TEXT PRIMARY KEY,
+			sha256      TEXT NOT NULL,
+			rows        INTEGER NOT NULL,
+			imported_at TEXT NOT NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS transactions (
 			network      TEXT NOT NULL DEFAULT 'gnoland1',
 			tx_hash      TEXT NOT NULL,
