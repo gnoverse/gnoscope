@@ -532,3 +532,46 @@ func TestPulseHotFlowsShareTheListBetweenAssets(t *testing.T) {
 		t.Errorf("ugnot rows = %d, want 7 to fill the rest of the list", nativeRows)
 	}
 }
+
+func TestPulseNewFuncsAreFirstCallsInTheWindow(t *testing.T) {
+	db := NewTestDB(t)
+	c := newPulseClock()
+	realm := "gno.land/r/demo/boards"
+
+	call := func(i int, when, fn string) {
+		t.Helper()
+		if err := db.InsertCall("n", fmt.Sprintf("nf-%d", i), 100+i, 0, when, "g1caller", realm, fn, "", "", true); err != nil {
+			t.Fatalf("InsertCall: %v", err)
+		}
+	}
+	call(0, c.ancient(), "Post")    // Post was first called long ago
+	call(1, c.inWindow(2), "Post")  // so calling it again is not new
+	call(2, c.inWindow(3), "Reply") // Reply is first called in the window
+	call(3, c.inWindow(1), "Reply")
+	call(4, c.inPrev(), "Archive") // Archive was first called in the window before
+
+	p, err := db.GetPulse(c.params("n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.NewFuncs) != 1 || p.NewFuncs[0].Func != "Reply" || p.NewFuncs[0].Calls != 2 {
+		t.Fatalf("new funcs = %+v, want only Reply, with its 2 calls", p.NewFuncs)
+	}
+}
+
+// A network whose history begins inside the window would call every function
+// new. With nothing older to compare against, the list stays empty.
+func TestPulseNewFuncsNeedHistoryBeforeTheWindow(t *testing.T) {
+	db := NewTestDB(t)
+	c := newPulseClock()
+	if err := db.InsertCall("n", "only", 1, 0, c.inWindow(2), "g1caller", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
+		t.Fatal(err)
+	}
+	p, err := db.GetPulse(c.params("n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.NewFuncs) != 0 {
+		t.Fatalf("new funcs = %+v, want none: the index has nothing from before the window", p.NewFuncs)
+	}
+}

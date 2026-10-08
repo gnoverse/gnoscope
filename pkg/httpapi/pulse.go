@@ -129,6 +129,7 @@ type pulseResponse struct {
 	HotFlows  []pulseFlow      `json:"hot_flows"`
 	HotDevs   []store.HotDev   `json:"hot_devs"`
 	HotLibs   []store.HotLib   `json:"hot_libs"`
+	NewFuncs  []store.NewFunc  `json:"new_funcs"`
 }
 
 func (a *API) HandlePulse(w http.ResponseWriter, r *http.Request) {
@@ -198,5 +199,6 @@ func (a *API) HandlePulse(w http.ResponseWriter, r *http.Request) {
 		HotFlows:  flows,
 		HotDevs:   pulse.HotDevs,
 		HotLibs:   pulse.HotLibs,
+		NewFuncs:  pulse.NewFuncs,
 	})
 }

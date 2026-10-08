@@ -140,6 +140,22 @@ type HotDev struct {
 	New       bool   `json:"new"`
 }
 
+// NewFunc is a function called for the first time inside the window: a deploy
+// is the realm existing, this is it being used in a way nobody had yet.
+//
+// "First" means first in this index, so a network whose history starts inside
+// the window would report every function it has ever seen as new. pulseNewFuncs
+// only reports a network that already had calls before the window opened.
+type NewFunc struct {
+	Network    string `json:"network"`
+	Path       string `json:"path"`
+	Func       string `json:"func"`
+	Calls      int    `json:"calls"`
+	Callers    int    `json:"callers"`
+	FirstTime  string `json:"first_time"`
+	FirstBlock int    `json:"first_block"`
+}
+
 // HotLib is one package ranked by how many of the window's *new* packages
 // import it.
 //
@@ -168,6 +184,7 @@ type Pulse struct {
 	HotFlows   []HotFlow   `json:"hot_flows"`
 	HotDevs    []HotDev    `json:"hot_devs"`
 	HotLibs    []HotLib    `json:"hot_libs"`
+	NewFuncs   []NewFunc   `json:"new_funcs"`
 	TokenPaths []string    `json:"-"`
 }
 
@@ -198,6 +215,7 @@ func (d *DB) GetPulse(p PulseParams) (*Pulse, error) {
 		HotFlows:  []HotFlow{},
 		HotDevs:   []HotDev{},
 		HotLibs:   []HotLib{},
+		NewFuncs:  []NewFunc{},
 	}
 
 	var err error
@@ -223,6 +241,9 @@ func (d *DB) GetPulse(p PulseParams) (*Pulse, error) {
 		return nil, err
 	}
 	if out.HotLibs, err = d.pulseHotLibs(nf, p.Since, limit); err != nil {
+		return nil, err
+	}
+	if out.NewFuncs, err = d.pulseNewFuncs(nf, p.Since, limit); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -798,6 +819,37 @@ func (d *DB) PackagePaths(network string) ([]string, error) {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// pulseNewFuncs lists the functions whose first recorded call falls inside the
+// window, newest first. It scans the calls of every function to find each
+// one's earliest call, which is cheap at the size of this table and the first
+// thing to revisit if it stops being.
+func (d *DB) pulseNewFuncs(nf, since string, limit int) ([]NewFunc, error) {
+	rows, err := d.db.Query(`
+		SELECT network, pkg_path, func_name, COUNT(*), COUNT(DISTINCT caller),
+		       MIN(block_time), MIN(block_height)
+		  FROM calls
+		 WHERE `+nf+` AND block_time IS NOT NULL
+		   AND EXISTS (SELECT 1 FROM calls o WHERE o.network = calls.network AND o.block_time < ?)
+		 GROUP BY network, pkg_path, func_name
+		HAVING MIN(block_time) >= ?
+		 ORDER BY MIN(block_height) DESC, pkg_path ASC, func_name ASC
+		 LIMIT ?`, since, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []NewFunc{}
+	for rows.Next() {
+		var f NewFunc
+		if err := rows.Scan(&f.Network, &f.Path, &f.Func, &f.Calls, &f.Callers, &f.FirstTime, &f.FirstBlock); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
 	}
 	return out, rows.Err()
 }
