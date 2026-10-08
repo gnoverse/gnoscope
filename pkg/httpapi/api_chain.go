@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -562,6 +563,20 @@ func (a *API) HandleBlocks(w http.ResponseWriter, r *http.Request) {
 		client := a.clientFor(network)
 		if client == nil {
 			jsonError(w, "network not found", 404)
+			return
+		}
+		// before is the "load more" cursor: the oldest height the page already
+		// holds. Only a single network has one, because a height means nothing
+		// across chains and the merged view pages by time.
+		if before, _ := strconv.Atoi(r.URL.Query().Get("before")); before > 1 {
+			limit = min(limit, 500)
+			blocks, err := client.GetBlocksInRange(r.Context(), max(before-limit, 0), before-1)
+			if err != nil {
+				jsonError(w, err.Error(), 500)
+				return
+			}
+			slices.SortFunc(blocks, func(a, b indexer.Block) int { return b.Height - a.Height })
+			JSONResponse(w, blocks)
 			return
 		}
 		blocks, err := client.GetRecentBlocks(r.Context(), limit)

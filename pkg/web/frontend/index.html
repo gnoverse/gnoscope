@@ -1862,7 +1862,8 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
       <div id="blocks-strip"></div>
     </div>
     <div class="section"><div class="section-title">recent blocks</div>
-    <table><thead><tr><th>height</th><th>time</th><th>txs</th><th>proposer</th><th>hash</th></tr></thead><tbody id="blocks-list"></tbody></table></div>
+    <table><thead><tr><th>height</th><th>time</th><th>txs</th><th>proposer</th><th>hash</th></tr></thead><tbody id="blocks-list"></tbody></table>
+    <div id="blocks-more" style="text-align:center;padding:16px 0 8px"></div></div>
   </main></div>
   <div class="view" id="view-accounts"><main>
     <div id="accounts-stats" class="stats-bar" style="display:none"></div>
@@ -7137,10 +7138,16 @@ async function loadBlocks() {
       statsBar.textContent = '';
       statsBar.style.display = 'flex';
       const latest = (data || []).length ? (data || [])[0].height : 0;
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'latest block'), el('span', { className: 'value' }, fmtNum(latest))));
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'shown'), el('span', { className: 'value' }, fmtNum((data || []).length))));
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'with txs'), el('span', { className: 'value' }, fmtNum(withTxs.length))));
-      statsBar.appendChild(el('div', { className: 'stat' }, el('span', { className: 'label' }, 'proposers'), el('span', { className: 'value' }, fmtNum(proposers.size))));
+      const stat = (label, value, title) => {
+        const d = el('div', { className: 'stat' }, el('span', { className: 'label' }, label), el('span', { className: 'value' }, value));
+        if (title) d.title = title;
+        statsBar.appendChild(d);
+      };
+      stat('latest block', fmtNum(latest));
+      stat('block time', blockTimeLabel(data), 'median gap between consecutive blocks in the window shown');
+      stat('txs in window', fmtNum((data || []).reduce((n, b) => n + (b.num_txs || 0), 0)), 'across the ' + fmtNum((data || []).length) + ' blocks shown');
+      stat('with txs', fmtNum(withTxs.length), 'blocks in the window that carried at least one transaction');
+      stat('proposers', fmtNum(proposers.size));
       // Filter
       filterBar.textContent = '';
       filterBar.style.display = 'flex';
@@ -7156,6 +7163,7 @@ async function loadBlocks() {
       filterBar.appendChild(label);
       renderBlockStrip();
       renderBlockRows();
+      renderBlocksMore();
     });
   } catch (err) {
     console.error(err);
@@ -7307,6 +7315,46 @@ function renderBlockStrip() {
   // Named from what was actually drawn, so a chain with only forty blocks
   // indexed does not get a heading claiming a hundred and twenty.
   document.getElementById('blocks-strip-title').textContent = 'the last ' + drawn + ' blocks, drawn';
+}
+
+// Median, not mean: one stalled block would drag a mean far above what a
+// block normally takes, and the page is asking what a block normally takes.
+function blockTimeLabel(blocks) {
+  const ts = (blocks || []).map(b => Date.parse(b.time)).filter(t => t > 0);
+  if (ts.length < 3) return '-';
+  const gaps = [];
+  for (let i = 0; i + 1 < ts.length; i++) gaps.push(Math.abs(ts[i] - ts[i + 1]) / 1000);
+  gaps.sort((x, y) => x - y);
+  return gaps[Math.floor(gaps.length / 2)].toFixed(1) + ' s';
+}
+
+// "Load more" pages by height, which only means something on one chain, so the
+// merged all-networks view (paged by time) offers no button.
+function renderBlocksMore() {
+  const box = document.getElementById('blocks-more');
+  if (!box) return;
+  box.textContent = '';
+  const net = getNetwork();
+  const rows = _blocksCache || [];
+  if (net === 'all' || !rows.length) return;
+  const oldest = rows.reduce((m, b) => Math.min(m, b.height), Infinity);
+  if (oldest <= 1) return;
+  const btn = el('button', { className: 'pager-btn', style: { minWidth: '200px' } }, 'load 500 older blocks');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; btn.textContent = 'loading...';
+    try {
+      const more = await api('blocks?limit=500&before=' + oldest, net);
+      const seen = new Set(rows.map(b => b.height));
+      for (const b of more || []) if (!seen.has(b.height)) rows.push(b);
+      renderBlockStrip();
+      renderBlockRows();
+      renderBlocksMore();
+    } catch (err) {
+      console.error(err);
+      btn.disabled = false; btn.textContent = 'failed, try again';
+    }
+  });
+  box.appendChild(btn);
 }
 
 function renderBlockRows() {
