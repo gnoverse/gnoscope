@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -503,5 +504,39 @@ func TestTxLookupAcceptsEitherHashEncoding(t *testing.T) {
 	mustJSON(t, body, &got)
 	if str(got["hash"]) != b64Hash {
 		t.Errorf("resolved to hash %q, want the stored base64 form %q", str(got["hash"]), b64Hash)
+	}
+}
+
+// The "load more" cursor on /api/blocks: older than `before`, newest first, and
+// never the block `before` names, or the page would repeat its own last row.
+func TestBlocksBeforeCursor(t *testing.T) {
+	api, _, _ := newIndexerAPI(t)
+
+	_, body := serve(t, api, "/api/blocks?network=alpha&limit=5")
+	var newest []struct {
+		Height int `json:"height"`
+	}
+	if err := json.Unmarshal(body, &newest); err != nil || len(newest) < 3 {
+		t.Fatalf("seed page: %v, %d rows", err, len(newest))
+	}
+	cursor := newest[len(newest)-1].Height
+
+	_, body = serve(t, api, "/api/blocks?network=alpha&limit=5&before="+strconv.Itoa(cursor))
+	var older []struct {
+		Height int `json:"height"`
+	}
+	if err := json.Unmarshal(body, &older); err != nil {
+		t.Fatal(err)
+	}
+	if len(older) == 0 {
+		t.Fatal("before returned nothing, but older blocks exist")
+	}
+	for i, b := range older {
+		if b.Height >= cursor {
+			t.Errorf("row %d is height %d, not older than the cursor %d", i, b.Height, cursor)
+		}
+		if i > 0 && b.Height >= older[i-1].Height {
+			t.Errorf("rows are not newest first at %d: %d after %d", i, b.Height, older[i-1].Height)
+		}
 	}
 }
