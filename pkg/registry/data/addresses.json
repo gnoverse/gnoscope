@@ -120,6 +120,24 @@
       "kind": "curated",
       "why": "the 19,994,000 GNOT Validator Services Treasury (Constitution §122), named in gnolang/independence-day's README",
       "checked": "2026-09-28"
+    },
+    "g1ct00m8t88chjcfaysafhsk9fdz43qyr9d2tccd": {
+      "label": "@kucoin_2",
+      "kind": "curated",
+      "why": "an exchange wallet: gnoscan.io (Onbloc) labels it \"KuCoin #2\" in its holders list. The exchange attribution is Onbloc's claim; this explorer did not verify it",
+      "checked": "2026-10-08"
+    },
+    "g1arpgqtq9q3emx6mfhuz7xuwd6qptcwynedzlk2": {
+      "label": "@kucoin_3",
+      "kind": "curated",
+      "why": "an exchange wallet: gnoscan.io (Onbloc) labels it \"KuCoin #3\" in its holders list. The exchange attribution is Onbloc's claim; this explorer did not verify it",
+      "checked": "2026-10-08"
+    },
+    "g15zetuthld0er5jrm3xtx3u4ucssjvd3ylmvce3": {
+      "label": "@kraken_1",
+      "kind": "curated",
+      "why": "an exchange wallet: gnoscan.io (Onbloc) labels it \"Kraken #1\" in its holders list. The exchange attribution is Onbloc's claim; this explorer did not verify it",
+      "checked": "2026-10-08"
     }
   }
 }
