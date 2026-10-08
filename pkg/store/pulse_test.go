@@ -58,6 +58,16 @@ func TestPulseCountsOnlyTheWindow(t *testing.T) {
 		t.Fatalf("InsertBankSend: %v", err)
 	}
 
+	// Every call and the send above is its own transaction here.
+	for i, when := range []string{c.inWindow(1), c.inWindow(2), c.inWindow(3), c.inPrev(), c.inPrev()} {
+		if err := db.UpsertTransaction("n", fmt.Sprintf("call-%d", i), 100+i, when, 1, 1, 1, true); err != nil {
+			t.Fatalf("UpsertTransaction: %v", err)
+		}
+	}
+	if err := db.UpsertTransaction("n", "send-now", 200, c.inWindow(1), 1, 1, 1, true); err != nil {
+		t.Fatalf("UpsertTransaction: %v", err)
+	}
+
 	p, err := db.GetPulse(c.params("n"))
 	if err != nil {
 		t.Fatalf("GetPulse: %v", err)
@@ -68,6 +78,7 @@ func TestPulseCountsOnlyTheWindow(t *testing.T) {
 		want int
 	}{
 		{"calls in window", p.Window.Calls, 3},
+		{"messages in window", p.Window.Messages, 4},
 		{"calls in previous window", p.Prev.Calls, 2},
 		{"sends in window", p.Window.Sends, 1},
 		{"txs in window", p.Window.Txs, 4},
@@ -573,5 +584,30 @@ func TestPulseNewFuncsNeedHistoryBeforeTheWindow(t *testing.T) {
 	}
 	if len(p.NewFuncs) != 0 {
 		t.Fatalf("new funcs = %+v, want none: the index has nothing from before the window", p.NewFuncs)
+	}
+}
+
+// One transaction carrying two calls is one transaction and two messages. The
+// pulse used to report the message count as "txs", so it disagreed with the
+// sanity page's count of the same window.
+func TestPulseTxsAreTransactionsNotMessages(t *testing.T) {
+	db := NewTestDB(t)
+	c := newPulseClock()
+	when := c.inWindow(1)
+
+	if err := db.UpsertTransaction("n", "multicall", 100, when, 1, 1, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := db.InsertCall("n", "multicall", 100, i, when, "g1caller", "gno.land/r/demo/boards", "Post", "", "", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := db.GetPulse(c.params("n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Window.Txs != 1 || p.Window.Messages != 2 {
+		t.Fatalf("txs=%d messages=%d, want 1 transaction carrying 2 messages", p.Window.Txs, p.Window.Messages)
 	}
 }

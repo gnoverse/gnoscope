@@ -44,7 +44,13 @@ type PulseParams struct {
 // the current window and the one before it, so the frontend can subtract
 // without knowing which fields are comparable.
 type PulseCounts struct {
+	// Txs is transactions the chain recorded, read from the transactions table,
+	// which is the figure /api/sanity/overview and the block page also report.
+	// Messages is the sum of the four message kinds below. They differ: one
+	// transaction can carry several messages, and a message of a kind this
+	// explorer does not break out is in Txs and in none of the four.
 	Txs            int   `json:"txs"`
+	Messages       int   `json:"messages"`
 	Calls          int   `json:"calls"`
 	FailedCalls    int   `json:"failed_calls"`
 	Deploys        int   `json:"deploys"`
@@ -284,7 +290,10 @@ func (d *DB) pulseCounts(nf, since, until string) (PulseCounts, error) {
 	if err := one(`SELECT COUNT(*) FROM token_transfers`, "block_time", &c.TokenTransfers); err != nil {
 		return c, err
 	}
-	c.Txs = c.Calls + c.Deploys + c.MsgRuns + c.Sends
+	c.Messages = c.Calls + c.Deploys + c.MsgRuns + c.Sends
+	if err := one(`SELECT COUNT(*) FROM transactions`, "block_time", &c.Txs); err != nil {
+		return c, err
+	}
 
 	// A package is new when its *first* submission lands in the window. Reading
 	// packages.block_time instead would have counted a redeploy as a new
