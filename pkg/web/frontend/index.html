@@ -9869,7 +9869,12 @@ async function loadValidators() {
   const container = clear('validators-content');
   skeletonRows(container, 3, 5);
   try {
-    await apiSWR(['blocks?limit=100', 'validators', 'validators/live'], ([blocks, valopers, liveSet], swrMeta) => {
+    await apiSWR(['blocks?limit=100', 'validators', 'validators/live',
+      // Optional: it reads one block per row from the node, so a slow or
+      // unreachable node must not take the table with it.
+      { path: 'validators/uptime?blocks=100', fallback: null }], ([blocks, valopers, liveSet, uptime], swrMeta) => {
+      if (uptime && !uptime.read) uptime = null;
+      const uptimeByAddr = new Map(((uptime && uptime.validators) || []).map(u => [u.address, u]));
       const liveByAddr = new Map((liveSet || []).map(v => [v.address, v]));
       _valopersCache = valopers;
       _valsetCache = liveSet;
@@ -9920,7 +9925,9 @@ async function loadValidators() {
       const hasLiveness = members.some(m => m.missed_100 != null);
       const th = (label, title) => { const t = el('th', {}, label); if (title) t.title = title; return t; };
       const heads = [th('validator'), th('voting power', 'from this network\u2019s own validator set'),
-        th('blocks', 'proposed in the last ' + total + ' blocks'), th('last ' + SPARK_BLOCKS + ' blocks'),
+        th('blocks', 'proposed in the last ' + total + ' blocks'),
+        th('uptime', uptime ? 'blocks signed of the last ' + uptime.read + ', read from each block\u2019s commit. a validator that joined inside the window counts the earlier blocks as missed' : 'not read: the node did not answer'),
+        th('last ' + SPARK_BLOCKS + ' blocks'),
         th('seated by', 'the GovDAO proposal that last changed this validator\u2019s membership')];
       if (hasLiveness) heads.push(th('missed (100)', 'blocks missed in the last 100, from gnockpit'),
         th('missed (24h)', 'blocks missed in the last 24h, from gnockpit'),
@@ -9946,6 +9953,7 @@ async function loadValidators() {
             ? fmtNum(vp) + (totalPower ? ' (' + (vp / totalPower * 100).toFixed(1) + '%)' : '')
             : '\u2013'),
           el('td', {}, fmtNum(count)),
+          uptimeCell(uptimeByAddr.get(addr)),
           el('td', {}, livenessSpark(recent, addr)),
           el('td', {}, prop ? proposalRefEl(prop) : el('span', { style: { color: 'var(--fg2)' } }, '\u2013')),
         ];
@@ -9983,6 +9991,17 @@ async function loadValidators() {
     console.error(err);
     failBlock(clear('validators-content'), err, loadValidators);
   }
+}
+
+// uptimeCell draws one validator's signing record. A validator that signed
+// everything says so quietly; one that missed blocks says how many, in red, since
+// that is the figure someone opens this page to find.
+function uptimeCell(u) {
+  if (!u || !(u.signed + u.missed)) return el('td', { style: { color: 'var(--fg2)' } }, '\u2013');
+  const pct = (u.uptime * 100).toFixed(u.uptime === 1 ? 0 : 1) + '%';
+  const td = el('td', { title: fmtNum(u.signed) + ' signed, ' + fmtNum(u.missed) + ' missed' }, pct);
+  if (u.missed) td.appendChild(el('span', { className: 'trend-down', style: { marginLeft: '6px', fontSize: '11px' } }, '-' + fmtNum(u.missed)));
+  return td;
 }
 
 // renderValoperRows groups registrations by validator — the address a
