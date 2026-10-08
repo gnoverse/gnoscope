@@ -75,3 +75,27 @@ func TestAlertsEndpointStatesItsRulesAndFiresOnEvidence(t *testing.T) {
 		t.Fatalf("large-transfer = %+v, want firing on exactly the one successful send over the threshold", big)
 	}
 }
+
+func TestValidatorUptimeAlert(t *testing.T) {
+	ok := ValidatorUptime{Address: "g1good", Name: "good", Signed: 100, Uptime: 1}
+	slow := ValidatorUptime{Address: "g1slowaddress0000", Signed: 90, Missed: 10, Uptime: 0.9}
+	edge := ValidatorUptime{Address: "g1edge", Name: "edge", Signed: 95, Missed: 5, Uptime: 0.95}
+
+	got := evalValidatorUptime(validatorUptimeResponse{Requested: 100, Read: 100, Validators: []ValidatorUptime{ok, edge}})
+	if got.Firing || got.Unread != "" {
+		t.Errorf("exactly the threshold is not below it: %+v", got)
+	}
+	got = evalValidatorUptime(validatorUptimeResponse{Requested: 100, Read: 100, Validators: []ValidatorUptime{slow, ok}})
+	if !got.Firing || len(got.Evidence) != 1 || got.Evidence[0].Href != "/address/g1slowaddress0000?tab=validator" {
+		t.Errorf("a validator at 90%% = %+v, want firing on exactly it", got)
+	}
+	// Nobody read is not nobody missing: it is "not read".
+	got = evalValidatorUptime(validatorUptimeResponse{Requested: 100, Read: 0, Note: "no verified RPC"})
+	if got.Firing || got.Unread != "no verified RPC" {
+		t.Errorf("no block read = %+v, want unread with the node's reason", got)
+	}
+	got = evalValidatorUptime(validatorUptimeResponse{Requested: 100, Read: 30, Validators: []ValidatorUptime{slow}})
+	if got.Firing || got.Unread == "" {
+		t.Errorf("30 of 100 read = %+v, want unread rather than a verdict on a thin window", got)
+	}
+}
