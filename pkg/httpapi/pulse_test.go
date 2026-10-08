@@ -211,3 +211,49 @@ func TestHomeWindowsMatchTheServer(t *testing.T) {
 		t.Errorf("the frontend's HOME_WINDOW_DEFAULT is not %q", defaultPulseWindow)
 	}
 }
+
+// The failures endpoint's JSON keeps the window's totals under "current". They
+// once shared the key "window" with the window's own bounds, and the embedding
+// struct silently won: the page got bounds and no counts.
+func TestFailuresEndpoint(t *testing.T) {
+	api, db := newTestAPI(t)
+
+	when := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+	if err := db.InsertCall("alpha", "ok-1", 11, 0, when, "g1human", "gno.land/r/alpha/pool", "Swap", "", "", true); err != nil {
+		t.Fatalf("InsertCall: %v", err)
+	}
+	if err := db.InsertCall("alpha", "bad-1", 12, 0, when, "g1human", "gno.land/r/alpha/pool", "Swap", "", "", false); err != nil {
+		t.Fatalf("InsertCall: %v", err)
+	}
+
+	rec, body := get(t, api.HandleFailures, "/api/failures?network=alpha&window=24h")
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, body %s", rec.Code, body)
+	}
+	var resp struct {
+		Window  pulseWindowMeta `json:"window"`
+		Current struct {
+			Calls  int `json:"calls"`
+			Failed int `json:"failed"`
+		} `json:"current"`
+		Realms []struct {
+			Path   string `json:"path"`
+			Failed int    `json:"failed"`
+		} `json:"realms"`
+		Recent []struct {
+			TxHash string `json:"tx_hash"`
+		} `json:"recent"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, body)
+	}
+	if resp.Window.Key != "24h" || len(resp.Window.Options) == 0 {
+		t.Errorf("window = %+v, want the 24h bounds and options", resp.Window)
+	}
+	if resp.Current.Calls != 2 || resp.Current.Failed != 1 {
+		t.Errorf("current = %+v, want 2 calls and 1 failed", resp.Current)
+	}
+	if len(resp.Realms) != 1 || resp.Realms[0].Failed != 1 || len(resp.Recent) != 1 || resp.Recent[0].TxHash != "bad-1" {
+		t.Errorf("realms/recent = %+v / %+v", resp.Realms, resp.Recent)
+	}
+}

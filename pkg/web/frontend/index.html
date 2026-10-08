@@ -1643,6 +1643,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a href="/txs" id="nav-txs" title="transactions"><span class="rail-label">txs</span></a>
           <a href="/events" id="nav-events" title="events"><span class="rail-label">events</span></a>
           <a href="/validators" id="nav-validators" title="who is producing blocks, and the valopers registry"><span class="rail-label">validators</span></a>
+          <a href="/failed" id="nav-failed" title="what the chain reverted, and whether it is more than usual"><span class="rail-label">failed</span></a>
           <a href="/sanity" id="nav-sanity" title="is the chain healthy, and is our sync keeping up"><span class="rail-label">sanity</span></a>
         </div>
       </div>
@@ -1895,6 +1896,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-teams"><main><div id="teams-content"></div></main></div>
   <div class="view" id="view-glossary"><main><div id="glossary-content"></div></main></div>
   <div class="view" id="view-search"><main><div id="search-page-content"></div></main></div>
+  <div class="view" id="view-failed"><main><div id="failed-content"></div></main></div>
   <div class="view" id="view-sanity"><main><div id="sanity-content"></div></main></div>
   <div class="view" id="view-traffic"><main><div id="traffic-content"></div></main></div>
   <div class="view" id="view-contracts"><main><div id="contracts-content"></div></main></div>
@@ -4635,6 +4637,7 @@ const NAV = [
     { id: 'txs', label: 'txs', path: '/txs' },
     { id: 'events', label: 'events', path: '/events' },
     { id: 'validators', label: 'validators', path: '/validators' },
+    { id: 'failed', label: 'failed', path: '/failed' },
     { id: 'sanity', label: 'sanity', path: '/sanity' },
   ] },
   { id: 'defi', label: 'defi', path: '/defi', own: 'overview', children: [
@@ -4925,6 +4928,7 @@ function route() {
     history.replaceState(null, '', url);
     return route();
   }
+  else if (path === '/failed') { view = 'failed'; }
   else if (path === '/sanity') { view = 'sanity'; }
   else if (path === '/watch') { view = 'watch'; }
   else if (path.startsWith('/block/')) { view = 'block-detail'; data = parseInt(path.slice(7)); }
@@ -5018,6 +5022,7 @@ function route() {
     case 'teams': loadTeams(); break;
     case 'glossary': loadGlossary(); break;
     case 'search': loadSearchPage(); break;
+    case 'failed': loadFailed(); break;
     case 'sanity': loadSanity(); break;
     case 'traffic': loadTraffic(); break;
     case 'block-detail': loadBlockDetail(data); break;
@@ -7375,6 +7380,105 @@ function renderBlockRows() {
   }
   if (count === 0) {
     tbody.appendChild(el('tr', {}, el('td', { colspan: '5', style: { color: 'var(--fg2)', textAlign: 'center', padding: '20px' } }, 'no blocks matching filter')));
+  }
+}
+
+// --- /failed: what the chain reverted ----------------------------------------
+//
+// Most reverts are ordinary: an unfunded swap, a bid that lost a race. So the
+// page leads with the count, set against the window before it, and ranks by
+// count rather than by share, because a realm with one call and one revert is
+// 100% and means nothing. It also cannot say WHY a call reverted: the response
+// is in the indexer, not in this database, and a guess would read as a fact.
+async function loadFailed() {
+  const container = clear('failed-content');
+  const win = homeWindow();
+  container.appendChild(el('h1', {}, 'failed calls'));
+  container.appendChild(el('p', { className: 'section-sub' },
+    'calls the chain reverted, against the window before it. a revert is usually ordinary activity, not an incident: ' +
+    'a popular realm fails often because it is called often, so the lists rank by how many, not by what share. ' +
+    'the reason a call reverted is not stored here, so none is shown.'));
+  const picker = el('div', { style: { display: 'flex', gap: '6px', margin: '8px 0 12px' } });
+  container.appendChild(picker);
+  const body = el('div');
+  container.appendChild(body);
+  skeletonBlock(body);
+  try {
+    await apiSWR('failures?window=' + win, (f) => {
+      picker.textContent = '';
+      for (const o of f.window.options || []) {
+        const btn = el('button', { className: 'pager-btn' + (o.key === win ? ' active' : ''),
+          style: { padding: '3px 10px', fontSize: '12px' } }, o.key);
+        btn.title = o.label;
+        btn.addEventListener('click', () => {
+          urlSetParams({ window: o.key === HOME_WINDOW_DEFAULT ? null : o.key });
+          loadFailed();
+        });
+        picker.appendChild(btn);
+      }
+      body.textContent = '';
+      const t = f.current, pv = f.prev;
+      const rate = x => x.calls ? (100 * x.failed / x.calls).toFixed(1) + '%' : '-';
+      const bar = el('div', { className: 'stats-bar' });
+      const stat = (label, value, delta, title) => {
+        const d = el('div', { className: 'stat' }, el('span', { className: 'label' }, label), el('span', { className: 'value' }, value));
+        if (delta) d.appendChild(delta);
+        if (title) d.title = title;
+        bar.appendChild(d);
+      };
+      stat('failed', fmtNum(t.failed), trendEl(t.failed, pv.failed, f.has_prev), 'reverted calls in the window, against the window before');
+      stat('calls', fmtNum(t.calls), trendEl(t.calls, pv.calls, f.has_prev));
+      stat('failure rate', rate(t), null, 'failed / calls. the previous window: ' + rate(pv));
+      body.appendChild(bar);
+
+      const section = (title, sub) => {
+        const s = el('div', { className: 'section' }, el('div', { className: 'section-title' }, title));
+        if (sub) s.appendChild(el('div', { className: 'section-sub' }, sub));
+        body.appendChild(s);
+        return s;
+      };
+      const table = (parent, heads) => {
+        const tb = el('tbody');
+        parent.appendChild(el('table', {}, el('thead', {}, el('tr', {}, ...heads.map(h => el('th', {}, h)))), tb));
+        return tb;
+      };
+
+      let tb = table(section('realms', 'ranked by reverted calls'), ['realm', 'failed', 'of calls', 'rate', 'callers hit', 'last failure']);
+      for (const r of f.realms) {
+        tb.appendChild(netRow(r.network,
+          el('td', {}, realmPathEl(r.path, r.network)),
+          el('td', {}, el('span', { className: 'trend-down' }, fmtNum(r.failed))),
+          el('td', {}, fmtNum(r.calls)),
+          el('td', {}, rate(r)),
+          el('td', {}, fmtNum(r.failed_callers)),
+          el('td', {}, timeEl(r.last_failed_time))));
+      }
+      if (!f.realms.length) emptyRow(tb, 6, 'nothing reverted in this window');
+
+      tb = table(section('functions', 'the same ranking, one level down'), ['function', 'failed', 'of calls', 'rate']);
+      for (const x of f.funcs) {
+        tb.appendChild(netRow(x.network,
+          el('td', {}, realmPathEl(x.path, x.network), document.createTextNode(' · ' + x.func)),
+          el('td', {}, el('span', { className: 'trend-down' }, fmtNum(x.failed))),
+          el('td', {}, fmtNum(x.calls)),
+          el('td', {}, rate(x))));
+      }
+      if (!f.funcs.length) emptyRow(tb, 4, 'nothing reverted in this window');
+
+      tb = table(section('latest reverts'), ['tx', 'time', 'caller', 'call']);
+      for (const c of f.recent) {
+        tb.appendChild(netRow(c.network,
+          el('td', {}, txLink(c.tx_hash, c.block_height, c.network)),
+          el('td', {}, timeEl(c.block_time)),
+          el('td', {}, addrLink(c.caller, c.network)),
+          el('td', {}, realmPathEl(c.path, c.network), document.createTextNode(' · ' + c.func))));
+      }
+      if (!f.recent.length) emptyRow(tb, 4, 'nothing reverted in this window');
+    });
+  } catch (err) {
+    console.error(err);
+    body.textContent = '';
+    body.appendChild(el('div', { className: 'dash-msg' }, 'could not load failures: ' + err.message));
   }
 }
 
