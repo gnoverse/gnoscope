@@ -1773,6 +1773,13 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
         <table><thead><tr><th>realm</th><th>calls</th><th>vs before</th><th>callers</th><th>failed</th><th>last call</th></tr></thead><tbody id="hot-realms"></tbody></table>
       </div>
       <div class="section">
+        <div class="section-title">new functions</div>
+        <div class="section-sub">functions called for the first time in the window. a deploy is a realm
+          existing; this is it being used in a way nobody had yet. "first" is the first call this explorer
+          recorded, and the list stays empty when nothing older exists to compare against.</div>
+        <table><thead><tr><th>function</th><th>calls</th><th>callers</th><th>first call</th></tr></thead><tbody id="new-funcs"></tbody></table>
+      </div>
+      <div class="section">
         <div class="section-title">hot assets</div>
         <div class="section-sub">every asset that moved in the window. ugnot is counted from bank
           sends and everything else from GRC20 transfer events, which is why it is marked: two
@@ -5936,6 +5943,7 @@ function renderHomeWindow(pulse, current) {
 async function loadHome() {
   const win = homeWindow();
   skeletonRows(clear('hot-realms'), 6, 5);
+  skeletonRows(clear('new-funcs'), 4, 3);
   skeletonRows(clear('hot-tokens'), 6, 4);
   skeletonRows(clear('hot-flows'), 6, 4);
   skeletonRows(clear('hot-devs'), 5, 3);
@@ -6009,6 +6017,16 @@ async function loadHome() {
         ));
       }
       if (!(pulse?.hot_realms || []).length) emptyRow(realmBody, 6, 'no calls in this window');
+
+      const funcBody = clear('new-funcs');
+      for (const f of (pulse?.new_funcs || [])) {
+        funcBody.appendChild(netRow(f.network,
+          el('td', {}, realmPathEl(f.path, f.network), document.createTextNode(' \u00b7 ' + f.func)),
+          el('td', {}, fmtNum(f.calls)),
+          el('td', {}, fmtNum(f.callers)),
+          el('td', {}, blockWithAge(f.first_block, f.first_time, f.network))));
+      }
+      if (!(pulse?.new_funcs || []).length) emptyRow(funcBody, 4, 'no function was called for the first time in this window');
 
       const tokenBody = clear('hot-tokens');
       for (const t of (pulse?.hot_tokens || [])) {
@@ -6148,6 +6166,7 @@ async function loadHome() {
       if (cell) { cell.textContent = '—'; cell.style.color = 'var(--fg2)'; }
     }
     failRows(clear('hot-realms'), 6, err, loadHome);
+    failRows(clear('new-funcs'), 4, err, loadHome);
     failRows(clear('hot-tokens'), 6, err, loadHome);
     failRows(clear('hot-flows'), 6, err, loadHome);
     failRows(clear('hot-devs'), 5, err, loadHome);
