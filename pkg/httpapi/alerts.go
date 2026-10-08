@@ -20,7 +20,13 @@ const (
 	alertFailureMinFailed = 10 // failed calls in the last hour
 	alertFailureFactor    = 2.0
 	alertTransferGNOT     = 1_000_000
-	ugnotPerGNOT          = 1_000_000
+	// A validator below alertUptimeBelow of the last alertUptimeBlocks blocks.
+	// It needs at least alertUptimeMinRead of them actually read: a window the
+	// node mostly would not serve says nothing about anyone's signing.
+	alertUptimeBelow   = 0.95
+	alertUptimeBlocks  = 100
+	alertUptimeMinRead = 50
+	ugnotPerGNOT       = 1_000_000
 )
 
 // AlertEvidence is one line backing a firing alert.
@@ -81,6 +87,39 @@ func evalFailureSpike(hour, before store.FailureTotals) Alert {
 	return al
 }
 
+// evalValidatorUptime fires when any validator signed under alertUptimeBelow of
+// the blocks read. An unreadable window is "not read", never "quiet".
+func evalValidatorUptime(u validatorUptimeResponse) Alert {
+	al := Alert{
+		ID:    "validator-uptime",
+		Title: "a validator is missing blocks",
+		Rule: fmt.Sprintf("a validator in the set signed fewer than %.0f%% of the last %d blocks (at least %d must be readable)",
+			100*alertUptimeBelow, alertUptimeBlocks, alertUptimeMinRead),
+	}
+	if u.Read < alertUptimeMinRead {
+		al.Unread = fmt.Sprintf("only %d of %d blocks could be read", u.Read, u.Requested)
+		if u.Note != "" && u.Read == 0 {
+			al.Unread = u.Note
+		}
+		return al
+	}
+	for _, v := range u.Validators {
+		if v.Uptime >= alertUptimeBelow {
+			continue
+		}
+		al.Firing = true
+		who := v.Name
+		if who == "" {
+			who = shortAddr(v.Address)
+		}
+		al.Evidence = append(al.Evidence, AlertEvidence{
+			Text: fmt.Sprintf("%s signed %d of %d blocks (%.0f%%)", who, v.Signed, v.Signed+v.Missed, 100*v.Uptime),
+			Href: "/address/" + v.Address + "?tab=validator",
+		})
+	}
+	return al
+}
+
 func (a *API) HandleAlerts(w http.ResponseWriter, r *http.Request) {
 	network := a.singleNetwork(r)
 	if network == "" {
@@ -123,6 +162,10 @@ func (a *API) HandleAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out.Alerts = append(out.Alerts, big)
+
+	// The first read of a window costs a block fetch per block, then it is held
+	// for 30 seconds, so this is the one rule that can make a cold alerts request slow.
+	out.Alerts = append(out.Alerts, evalValidatorUptime(a.validatorUptime(r.Context(), network, alertUptimeBlocks)))
 
 	JSONResponse(w, out)
 }

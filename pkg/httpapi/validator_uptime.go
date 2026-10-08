@@ -141,25 +141,29 @@ func (a *API) HandleValidatorUptime(w http.ResponseWriter, r *http.Request) {
 		n = uptimeDefaultBlocks
 	}
 	n = min(n, uptimeMaxBlocks)
+	JSONResponse(w, a.validatorUptime(r.Context(), network, n))
+}
 
-	// Nothing to read is an answer, not a failure: the page draws a dash for
-	// it, and a 5xx here would be logged by the browser as an error on every
-	// load of /validators for a network whose node is not reachable.
-	unread := func(why string) {
-		JSONResponse(w, validatorUptimeResponse{Network: network, Requested: n, Validators: []ValidatorUptime{}, Note: why})
+// validatorUptime reads the uptime of a network's validators over its last n
+// blocks. Shared by the endpoint and by the alert rule that watches it.
+//
+// Nothing to read is an answer, not a failure: the page draws a dash for it,
+// and a 5xx would be logged by the browser as an error on every load of
+// /validators for a network whose node is not reachable.
+func (a *API) validatorUptime(ctx context.Context, network string, n int) validatorUptimeResponse {
+	unread := func(why string) validatorUptimeResponse {
+		return validatorUptimeResponse{Network: network, Requested: n, Validators: []ValidatorUptime{}, Note: why}
 	}
 	rpcURL := a.rpcURLFor(network)
 	if rpcURL == "" {
-		unread("no verified RPC for this network, so no block commits were read")
-		return
+		return unread("no verified RPC for this network, so no block commits were read")
 	}
-	vs := a.FetchValset(r.Context(), network)
+	vs := a.FetchValset(ctx, network)
 	if len(vs.Members) == 0 || vs.Height == 0 {
-		unread("the validator set could not be read, so no block commits were read")
-		return
+		return unread("the validator set could not be read, so no block commits were read")
 	}
 
-	resp := uptimeCache.get(r.Context(), network+"|"+strconv.Itoa(n), func(ctx context.Context) (validatorUptimeResponse, bool) {
+	return uptimeCache.get(ctx, network+"|"+strconv.Itoa(n), func(ctx context.Context) (validatorUptimeResponse, bool) {
 		to := vs.Height
 		from := max(to-int64(n)+1, 2)
 
@@ -194,5 +198,4 @@ func (a *API) HandleValidatorUptime(w http.ResponseWriter, r *http.Request) {
 		// holding for the full TTL.
 		return out, len(read)*2 >= len(sets)
 	})
-	JSONResponse(w, resp)
 }
