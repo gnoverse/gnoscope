@@ -463,6 +463,8 @@ tr { white-space: nowrap; }
 .pagenav a { padding: 3px 11px; border-radius: 999px; font-size: 12px; color: var(--fg2);
   border: 1px solid var(--border); background: var(--bg2); white-space: nowrap; }
 .pagenav a:hover { color: var(--fg); border-color: var(--fg2); text-decoration: none; }
+.page-lead { margin: 2px 0 10px; color: var(--fg2); font-size: 13px; }
+html.embed .page-lead { display: none; }
 .pagenav a.active { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 html.embed .pagenav { display: none; }
 
@@ -4725,6 +4727,55 @@ function mountPageNav(view) {
   if (bar) main.insertBefore(bar, main.firstChild);
 }
 
+// PAGE_LEADS: one sentence saying what each page is for, under the section strip.
+//
+// A reader landing on a deep link has no rail context, and "who is on this
+// chain" is not obvious from a table of addresses. The sentences are the rail's
+// own tooltips where one existed (they were already written by someone who knew
+// the page), so there is one description of a page rather than two to drift.
+// Pages that open with their own introduction are left out: a second sentence
+// above a paragraph that already says it is noise.
+const PAGE_LEADS = {
+  accounts: 'accounts ranked by what they did and by what they hold.',
+  blocks: 'every block as it arrives, drawn and listed, with who proposed it.',
+  coins: 'native ugnot: transfers, volume, and who moves it.',
+  defi: 'the money side: the native coin, grc20 tokens, nft collections and who holds them.',
+  directory: 'who is on this chain: people, accounts, sessions and teams.',
+  discover: 'what is new on this chain, in plain words, and whether it is worth sharing.',
+  events: 'the events realms emitted, newest first.',
+  gas: 'gas used on chain: the summary, by realm, by user, and the most expensive transactions.',
+  'gas-realms': 'which realms use the most gas.',
+  'gas-users': 'which addresses use the most gas.',
+  'gas-txs': 'the transactions that used the most gas.',
+  govdao: 'govdao: its proposals, who votes, and what it can be asked to execute.',
+  'govdao-proposals': 'every govdao proposal.',
+  'govdao-voters': 'who votes, and who does not.',
+  'govdao-options': 'what govdao can be asked to execute.',
+  holders: 'who holds what, across every asset, ranked by value.',
+  nfts: 'grc721 collections. They ride the grc20 event without an amount, so a holding is a count.',
+  packages: 'every package deployed on this chain.',
+  people: 'find people by what they have done on chain.',
+  realms: 'every realm deployed on this chain.',
+  sessions: 'delegated signing keys: who lets what sign for them.',
+  traffic: 'what readers of this explorer actually open.',
+  txs: 'transactions, newest first.',
+  validators: 'who is producing blocks, and the valopers registry.',
+};
+
+// mountPageLead sits under the section strip and above whatever the loader
+// builds, for the same reason mountPageNav does: no loader has to know it.
+function mountPageLead(view) {
+  const main = document.querySelector('#view-' + view + ' main');
+  if (!main) return;
+  const old = main.querySelector(':scope > .page-lead');
+  if (old) old.remove();
+  const text = PAGE_LEADS[view];
+  if (!text) return;
+  const p = el('p', { className: 'page-lead' }, text);
+  const nav = main.querySelector(':scope > .pagenav');
+  main.insertBefore(p, nav ? nav.nextSibling : main.firstChild);
+}
+
 // --- URL state: the filters a reader set, in the link they copy ----------
 //
 // A filter is part of what the reader is looking at, so it belongs in the URL
@@ -4960,6 +5011,7 @@ function route() {
     if (parent) parent.classList.add('in-section');
   }
   mountPageNav(view);
+  mountPageLead(view);
 
   const subbar = document.getElementById('sanity-subbar');
   if (subbar) {
