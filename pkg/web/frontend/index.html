@@ -7146,7 +7146,7 @@ async function loadBlocks() {
       stat('latest block', fmtNum(latest));
       stat('block time', blockTimeLabel(data), 'median gap between consecutive blocks in the window shown');
       stat('txs in window', fmtNum((data || []).reduce((n, b) => n + (b.num_txs || 0), 0)), 'across the ' + fmtNum((data || []).length) + ' blocks shown');
-      stat('empty', (data || []).length ? Math.round(100 * (1 - withTxs.length / data.length)) + '%' : '-', 'share of blocks that carried no transaction');
+      stat('with txs', fmtNum(withTxs.length), 'blocks in the window that carried at least one transaction');
       stat('proposers', fmtNum(proposers.size));
       // Filter
       filterBar.textContent = '';
