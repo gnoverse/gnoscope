@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/analyzer"
 	"github.com/gnoverse/gnoscope/pkg/config"
 	"github.com/gnoverse/gnoscope/pkg/discover"
+	"github.com/gnoverse/gnoscope/pkg/genesis"
 	"github.com/gnoverse/gnoscope/pkg/ghlab"
 	"github.com/gnoverse/gnoscope/pkg/httpapi"
 	"github.com/gnoverse/gnoscope/pkg/indexer"
@@ -62,6 +64,7 @@ func run() error {
 		dbPath        = flag.String("db", "gnoscope.db", "SQLite database path")
 		clearanceFlag = flag.String("clearance", "", "JSON file naming which namespaces are ours, which belong to other teams, and which must not be narrated (Discover verdicts). Empty means recommend nothing that is not chain-wide")
 		syncOnStart   = flag.Bool("sync", true, "sync data from indexer on start")
+		genesisSheet  = flag.Bool("genesis-sheet", true, "load the pinned gnoland-1 genesis balances sheet (~160MB) for mainnet, so an address can be checked against it")
 		// Block backfill is the one sync phase that can pull hundreds of
 		// megabytes per network (~130 bytes/block, ~430MB at mainnet's 3.3M
 		// blocks), so it is the one phase an operator must be able to bound.
@@ -321,6 +324,33 @@ func run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// The gnoland-1 genesis sheet (pkg/genesis): the one exact answer to "was this
+	// address in genesis", which the node cannot give. Downloaded once, verified
+	// against a pinned SHA-256, loaded in the background; until it lands the API
+	// says "not loaded" rather than "not in genesis". It adds ~160MB to the
+	// database, so it is skipped when the disk is tight.
+	if *genesisSheet {
+		for _, n := range cfg.Networks {
+			if n.ID != "mainnet" {
+				continue
+			}
+			go func() {
+				if free, err := freeDiskBytes(filepath.Dir(*dbPath)); err == nil && free < genesisMinFreeBytes {
+					log.Printf("genesis sheet: skipped, %d MB free is under the %d MB it needs headroom for",
+						free>>20, genesisMinFreeBytes>>20)
+					return
+				}
+				start := time.Now()
+				if err := genesis.EnsureImported(ctx, db, &http.Client{}); err != nil {
+					log.Printf("genesis sheet: %v", err)
+					return
+				}
+				log.Printf("genesis sheet: ready (%s)", time.Since(start).Round(time.Second))
+			}()
+			break
+		}
+	}
 
 	// The code tags (pkg/tags): caught up once the dependency edges are
 	// re-extracted, then on their own timer. A package stored by the syncer
