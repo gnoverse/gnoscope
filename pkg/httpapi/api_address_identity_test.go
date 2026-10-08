@@ -280,3 +280,32 @@ func TestLabelsIncludePackageAccounts(t *testing.T) {
 		t.Error("a derived label with no stated evidence is not checkable")
 	}
 }
+
+// The chain's one delayed-vesting account (mainnet, checked 2026-10-08): the
+// schedule has no start_time and says so only in "type". Read as a continuous
+// one it is a schedule that began in 1970.
+const acctDelayed = `{
+  "BaseAccount": {
+    "address": "g18c0grhdx96lw2u5t9qchl390n5weu9znkwf5vm",
+    "coins": "3837075547ugnot",
+    "public_key": null,
+    "account_number": "2273141",
+    "sequence": "0",
+    "vesting": {"original_vesting": "1841860465ugnot", "end_time": "1820534400", "type": "delayed"}
+  },
+  "attributes": "1"
+}`
+
+func TestDecodeAccountMarksADelayedSchedule(t *testing.T) {
+	got, err := decodeAccount(acctDelayed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Vesting == nil || !got.Vesting.Delayed || got.Vesting.StartTime != 0 || got.Vesting.EndTime != 1820534400 {
+		t.Fatalf("vesting = %+v, want a delayed schedule ending 1820534400 with no start", got.Vesting)
+	}
+	cont, err := decodeAccount(acctSigner)
+	if err != nil || cont.Vesting == nil || cont.Vesting.Delayed {
+		t.Errorf("a continuous schedule = %+v, %v: must not read as delayed", cont.Vesting, err)
+	}
+}
