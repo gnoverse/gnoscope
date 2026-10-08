@@ -18587,9 +18587,12 @@ function renderAddressIdentity(container, ident, addr, network, deploys) {
     row('genesis', 'not in the genesis sheet: this address was funded after the chain started, or never.');
   } else if (ident.chain && ident.chain.vesting) {
     const v = ident.chain.vesting;
+    // A delayed schedule has no start (the chain omits it, which reads as 1970)
+    // and releases nothing until its end.
     const r = row('genesis', 'funded when the chain started: ' +
       (/^\d+ugnot$/.test(v.original) ? fmtBalanceStr(v.original) : fmtCoins(v.original)) +
-      ' vesting from ' + fmtUnixDay(v.start_time) + ' to ' + fmtUnixDay(v.end_time));
+      (v.delayed ? ' vesting all at once on ' + fmtUnixDay(v.end_time) + ' (a delayed schedule: nothing is released before then)'
+        : ' vesting from ' + fmtUnixDay(v.start_time) + ' to ' + fmtUnixDay(v.end_time)));
     r.append(' ');
     r.appendChild(glossaryLink('vesting →'));
   } else if (ident.chain && ident.chain.exists) {

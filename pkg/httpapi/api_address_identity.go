@@ -214,6 +214,10 @@ type identityVesting struct {
 	Original  string `json:"original"`
 	StartTime int64  `json:"start_time"`
 	EndTime   int64  `json:"end_time"`
+	// Delayed is a schedule that releases nothing before EndTime. The chain
+	// leaves start_time out for it (so StartTime is 0, which is 1970, not a
+	// date), and only says so in a "type" field every other account lacks.
+	Delayed bool `json:"delayed,omitempty"`
 }
 
 // HandleAddressIdentity serves GET /api/address/{addr}/identity.
@@ -416,6 +420,7 @@ func decodeAccount(raw string) (*identityChain, error) {
 			Original:  v.OriginalVesting,
 			StartTime: atoi64(v.StartTime),
 			EndTime:   atoi64(v.EndTime),
+			Delayed:   v.Type == "delayed",
 		}
 	}
 	return out, nil
@@ -433,5 +438,6 @@ type accountJSON struct {
 		OriginalVesting string `json:"original_vesting"`
 		StartTime       string `json:"start_time"`
 		EndTime         string `json:"end_time"`
+		Type            string `json:"type"`
 	} `json:"vesting"`
 }
