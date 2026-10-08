@@ -611,3 +611,31 @@ func TestPulseTxsAreTransactionsNotMessages(t *testing.T) {
 		t.Fatalf("txs=%d messages=%d, want 1 transaction carrying 2 messages", p.Window.Txs, p.Window.Messages)
 	}
 }
+
+func TestLargeSendsAreSuccessfulOverTheThresholdBiggestFirst(t *testing.T) {
+	db := NewTestDB(t)
+	c := newPulseClock()
+	for i, s := range []struct {
+		hash   string
+		amount string
+		when   string
+		ok     bool
+	}{
+		{"big", "9000000ugnot", c.inWindow(1), true},
+		{"bigger", "30000000ugnot", c.inWindow(2), true},
+		{"small", "10ugnot", c.inWindow(1), true},
+		{"failed", "99000000ugnot", c.inWindow(1), false},
+		{"old", "99000000ugnot", c.ancient(), true},
+	} {
+		if err := db.InsertBankSend("n", s.hash, 100+i, s.when, "g1a", "g1b", s.amount, s.ok); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := db.LargeSends("n", c.since.Format("2006-01-02T15:04:05Z07:00"), 5_000_000, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].TxHash != "bigger" || got[1].TxHash != "big" {
+		t.Fatalf("got %+v, want bigger then big: no failed, no small, no old send", got)
+	}
+}

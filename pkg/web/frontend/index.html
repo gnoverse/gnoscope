@@ -1643,6 +1643,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a href="/txs" id="nav-txs" title="transactions"><span class="rail-label">txs</span></a>
           <a href="/events" id="nav-events" title="events"><span class="rail-label">events</span></a>
           <a href="/validators" id="nav-validators" title="who is producing blocks, and the valopers registry"><span class="rail-label">validators</span></a>
+          <a href="/alerts" id="nav-alerts" title="conditions worth a look right now, each stated as a rule with its thresholds"><span class="rail-label">alerts</span></a>
           <a href="/failed" id="nav-failed" title="what the chain reverted, and whether it is more than usual"><span class="rail-label">failed</span></a>
           <a href="/sanity" id="nav-sanity" title="is the chain healthy, and is our sync keeping up"><span class="rail-label">sanity</span></a>
         </div>
@@ -1903,6 +1904,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-teams"><main><div id="teams-content"></div></main></div>
   <div class="view" id="view-glossary"><main><div id="glossary-content"></div></main></div>
   <div class="view" id="view-search"><main><div id="search-page-content"></div></main></div>
+  <div class="view" id="view-alerts"><main><div id="alerts-content"></div></main></div>
   <div class="view" id="view-failed"><main><div id="failed-content"></div></main></div>
   <div class="view" id="view-sanity"><main><div id="sanity-content"></div></main></div>
   <div class="view" id="view-traffic"><main><div id="traffic-content"></div></main></div>
@@ -4644,6 +4646,7 @@ const NAV = [
     { id: 'txs', label: 'txs', path: '/txs' },
     { id: 'events', label: 'events', path: '/events' },
     { id: 'validators', label: 'validators', path: '/validators' },
+    { id: 'alerts', label: 'alerts', path: '/alerts' },
     { id: 'failed', label: 'failed', path: '/failed' },
     { id: 'sanity', label: 'sanity', path: '/sanity' },
   ] },
@@ -4935,6 +4938,7 @@ function route() {
     history.replaceState(null, '', url);
     return route();
   }
+  else if (path === '/alerts') { view = 'alerts'; }
   else if (path === '/failed') { view = 'failed'; }
   else if (path === '/sanity') { view = 'sanity'; }
   else if (path === '/watch') { view = 'watch'; }
@@ -5029,6 +5033,7 @@ function route() {
     case 'teams': loadTeams(); break;
     case 'glossary': loadGlossary(); break;
     case 'search': loadSearchPage(); break;
+    case 'alerts': loadAlerts(); break;
     case 'failed': loadFailed(); break;
     case 'sanity': loadSanity(); break;
     case 'traffic': loadTraffic(); break;
@@ -7399,6 +7404,48 @@ function renderBlockRows() {
   }
   if (count === 0) {
     tbody.appendChild(el('tr', {}, el('td', { colspan: '5', style: { color: 'var(--fg2)', textAlign: 'center', padding: '20px' } }, 'no blocks matching filter')));
+  }
+}
+
+// --- /alerts: conditions worth a look, as rules ------------------------------
+//
+// Each rule is printed in words with its thresholds, because an alert whose rule
+// cannot be read is an assertion. A rule that could not be evaluated says so
+// instead of reading as quiet: "nothing is wrong" and "we could not look" are
+// different answers. There is no subscription, since there are no accounts to
+// push to; the page is the interface.
+async function loadAlerts() {
+  const container = clear('alerts-content');
+  container.appendChild(el('h1', {}, 'alerts'));
+  container.appendChild(el('p', { className: 'section-sub' },
+    'conditions worth a look right now. each is a rule with its thresholds stated, and says whether it is firing, and on what. nothing is sent to anyone: this page is the alert.'));
+  const body = el('div');
+  container.appendChild(body);
+  skeletonBlock(body);
+  try {
+    await apiSWR('alerts', (data) => {
+      body.textContent = '';
+      const firing = (data.alerts || []).filter(a => a.firing).length;
+      body.appendChild(el('div', { className: 'stats-bar' },
+        el('div', { className: 'stat' }, el('span', { className: 'label' }, 'firing'), el('span', { className: 'value' }, String(firing))),
+        el('div', { className: 'stat' }, el('span', { className: 'label' }, 'rules'), el('span', { className: 'value' }, String((data.alerts || []).length))),
+        el('div', { className: 'stat' }, el('span', { className: 'label' }, 'checked'), el('span', { className: 'value' }, timeEl(data.checked)))));
+      for (const a of data.alerts || []) {
+        const verdict = a.unread ? badge('pkg', 'not read') : (a.firing ? badge('fail', 'firing') : badge('ok', 'quiet'));
+        const card = el('div', { className: 'section', id: 'alert-' + a.id },
+          el('div', { className: 'section-title' }, a.title + ' ', verdict),
+          el('div', { className: 'section-sub' }, 'rule: ' + (a.rule || '')));
+        if (a.unread) card.appendChild(el('p', { style: { color: 'var(--fg2)' } }, a.unread));
+        for (const e of a.evidence || []) {
+          card.appendChild(el('div', {}, e.href ? link(e.text, () => navigate(e.href)) : e.text));
+        }
+        body.appendChild(card);
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    body.textContent = '';
+    body.appendChild(el('div', { className: 'dash-msg' }, 'could not load alerts: ' + err.message));
   }
 }
 
