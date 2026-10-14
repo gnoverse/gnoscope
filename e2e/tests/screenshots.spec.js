@@ -47,6 +47,10 @@ const PAGES = [
   // no numbers, off-chain apps only) and a chain picked (the ranked grid).
   ['apps', '/apps'],
   ['apps-network', '/apps?network=alpha'],
+  // And one category page, because the categories are navigation now: this is
+  // the shot that shows the section strip, the rail child lit, and a grid cut
+  // down to one kind of thing.
+  ['apps-category', '/apps/content?network=alpha'],
   ['transactions', '/txs'],
   ['blocks', '/blocks'],
   ['accounts', '/accounts'],
