@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnoverse/gnoscope/pkg/registry"
 	"github.com/gnoverse/gnoscope/pkg/tags"
 )
 
@@ -354,6 +355,47 @@ func TestTagColorsFollowTheRules(t *testing.T) {
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("TAG_COLORS has\n  %v\ntags.Rules has\n  %v", got, want)
+	}
+}
+
+// The apps section's rail children are the app categories, and they are the
+// only rail entries that are not a view of their own: every one of them
+// renders #view-apps filtered by the last path segment. So the set has to be
+// exactly registry.Categories, in that order.
+//
+// Drift here is silent in the way TestRailMatchesNavTable describes and one
+// step worse. A category in apps.json with no rail entry is a bucket nothing
+// links to, reachable only by typing its URL; a rail entry with no category
+// behind it is a link to a page that says "nothing here yet" forever. Neither
+// throws, and neither shows up in a test that only checks the page renders.
+//
+// Checked against the rail alone: TestRailMatchesNavTable already pins the
+// rail and the NAV table to each other, so one of them is enough. The other
+// direction, apps.json using only these, is validateApps in pkg/registry.
+func TestNavAppsMatchesCategories(t *testing.T) {
+	index, err := Index()
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	rail := between(t, string(index), "<nav>", "</nav>")
+
+	re := regexp.MustCompile(`href="/apps/([a-z]+)" id="nav-apps-([a-z]+)"`)
+	var got []string
+	for _, m := range re.FindAllStringSubmatch(rail, -1) {
+		if m[1] != m[2] {
+			t.Errorf("rail entry for /apps/%s has id nav-apps-%s: the path and the id must name the same category", m[1], m[2])
+		}
+		got = append(got, m[1])
+	}
+
+	if len(got) != len(registry.Categories) {
+		t.Fatalf("the rail has %d app categories and registry.Categories has %d:\nrail:     %v\nregistry: %v",
+			len(got), len(registry.Categories), got, registry.Categories)
+	}
+	for i := range got {
+		if got[i] != registry.Categories[i] {
+			t.Errorf("category %d: the rail says %q, registry.Categories says %q", i, got[i], registry.Categories[i])
+		}
 	}
 }
 

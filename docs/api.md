@@ -200,6 +200,23 @@ fact.
 
 ### The app hub: three layers, and which one wins
 
+**It is its own section, and the categories are its navigation.** `/apps` was a
+child of `contracts` until Ryan Lee, the first person using this daily from
+outside the project, pointed out the obvious: `contracts` is the map, the realm
+list and the package list, which are three developer tools, and the app
+directory is the one page here written for somebody who does not read gno. The
+categories were a chip strip on the page, which meant the taxonomy did not exist
+until you had already landed. Both are fixed: `apps` is a top-level rail entry
+and each category is a path, `/apps/games`, `/apps/social` and the rest.
+
+The vocabulary is `registry.Categories` in
+[`pkg/registry/categories.go`](../pkg/registry/categories.go), and it is the
+single list three things are checked against: `apps.json` is validated by it,
+the rail is pinned to it by `TestNavAppsMatchesCategories`, and the tie-break
+order in `apps_category.go` is asserted to be a permutation of it. Adding a
+category means editing that file and the rail, and the tests fail until both are
+done. `?cat=` still works, so links sent before this still land.
+
 `/apps` used to be a curated list of ten entries against two hundred and ten
 realms, whose only contribution workflow was to stare at a JSON file. It now
 assembles itself from three layers.

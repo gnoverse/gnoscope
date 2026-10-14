@@ -148,6 +148,7 @@ func TestAppValidationRejects(t *testing.T) {
 		{"not a path", mutate(func(a *App) { a.Path = "example.com/x" }), "not a gno.land path"},
 		{"no name", mutate(func(a *App) { a.Name = " " }), "has no name"},
 		{"no category", mutate(func(a *App) { a.Category = "" }), "has no category"},
+		{"a category nothing links to", mutate(func(a *App) { a.Category = "defy" }), `category "defy"`},
 		{"no description", mutate(func(a *App) { a.Description = "" }), "has no description"},
 		{"a malformed date", mutate(func(a *App) { a.Checked = "yesterday" }), "want YYYY-MM-DD"},
 		{"a date that is not one", mutate(func(a *App) { a.Checked = "2026-13-45" }), "not a date"},

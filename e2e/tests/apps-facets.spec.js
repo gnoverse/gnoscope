@@ -4,7 +4,8 @@ import { settle, unexpected, watch } from './helpers.js';
 
 // The facets: three questions the category chips could not answer.
 //
-// A category says what kind of thing an app is, and there are four of them. The
+// A category says what kind of thing an app is, and it is the section strip
+// above this page rather than a chip in it (see apps-nav.spec.js). The
 // questions people actually arrive with are about where an entry came from and
 // what it is: did a human write this or did the chain propose it, is there a
 // realm behind it, is there a front end. Each is a URL parameter, so any

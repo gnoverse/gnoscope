@@ -1,6 +1,10 @@
 package httpapi
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnoverse/gnoscope/pkg/registry"
+)
 
 func TestCategoryFromImports(t *testing.T) {
 	// wbubble's real import list, read from /api/realm on mainnet 2026-09-29.
@@ -35,7 +39,9 @@ func TestCategoryFromWords(t *testing.T) {
 		{"and neither does its unversioned twin", "gno.land/r/g1n4pl/gnomi/pad", "gnomi/pad", "", catContent},
 		{"a game by its name", "gno.land/r/g1leu8/bubblerumble5", "bubblerumble5", "", catGames},
 		{"a mint is defi", "gno.land/r/g1wx60/trialmint/stable", "trialmint/stable", "", catDefi},
-		{"a feed is content", "gno.land/r/samcrew/memba_feed_v1", "memba_feed_v1", "", catContent},
+		{"a feed is social", "gno.land/r/samcrew/memba_feed_v1", "memba_feed_v1", "", catSocial},
+		{"a forum is social, even spelled as a version", "gno.land/r/gnoland/boards2/v0", "Boards2", "", catSocial},
+		{"a blog is content: nobody has to answer it", "gno.land/r/moul/blog", "moul's blog", "", catContent},
 		{"a faucet is plumbing", "gno.land/r/moul/faucet/v0", "faucet", "", catInfra},
 		{"an off-chain wallet, named only", "", "Adena Wallet", "Friendly wallet that simplifies sending tokens.", catInfra},
 		{"nothing to go on", "gno.land/r/g1n4pl/hearth/v1", "hearth", "", ""},
@@ -141,5 +147,32 @@ func TestCategoryImportsProveHandlingNotGovernance(t *testing.T) {
 	// ...and the words then answer it correctly.
 	if cat, _ := categoryFromWords("gno.land/r/sys/namereg/v0", "sys/namereg", ""); cat != catInfra {
 		t.Errorf("namereg by name = %q, want %q", cat, catInfra)
+	}
+}
+
+// categoryPriority breaks ties; registry.Categories is the vocabulary. They
+// answer different questions, so they are in different orders on purpose, and
+// a category in one and not the other is the failure that comment invites: a
+// new category would silently get rank len(categoryPriority) and lose every
+// tie, or a retired one would keep winning them.
+func TestCategoryPriorityIsThePermutationOfTheVocabulary(t *testing.T) {
+	want := map[string]bool{}
+	for _, c := range registry.Categories {
+		want[c] = true
+	}
+	seen := map[string]bool{}
+	for _, c := range categoryPriority {
+		if !want[c] {
+			t.Errorf("categoryPriority has %q, which is not in registry.Categories", c)
+		}
+		if seen[c] {
+			t.Errorf("categoryPriority lists %q twice", c)
+		}
+		seen[c] = true
+	}
+	for _, c := range registry.Categories {
+		if !seen[c] {
+			t.Errorf("registry.Categories has %q and categoryPriority does not, so it loses every tie", c)
+		}
 	}
 }

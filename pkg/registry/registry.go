@@ -299,6 +299,12 @@ func validateApps(apps []App) error {
 			return fmt.Errorf("apps.json: %s has no name", a.Path)
 		case strings.TrimSpace(a.Category) == "":
 			return fmt.Errorf("apps.json: %s has no category", a.Path)
+		case !ValidCategory(a.Category):
+			// Checked against the vocabulary rather than accepted as typed. The
+			// categories are rail entries now, so a misspelling is not a chip
+			// with one card in it any more: it is an entry nothing links to.
+			return fmt.Errorf("apps.json: %s has category %q, which is not one of %v",
+				a.Path, a.Category, Categories)
 		case strings.TrimSpace(a.Description) == "":
 			// A directory entry that does not say what the thing does is a link
 			// list, which the realm list already is.

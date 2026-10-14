@@ -7,8 +7,8 @@ in the [glossary](glossary.md); this page is how the labels are computed.
 
 ## Not the /apps category
 
-`pkg/httpapi/apps_category.go` picks one of five buckets per app on /apps and
-falls back to words in the path when the code says nothing. Tags are kept
+`pkg/httpapi/apps_category.go` picks one of the six `registry.Categories` per
+app on /apps and falls back to words in the path when the code says nothing. Tags are kept
 apart from it on purpose, and differ in three ways:
 
 - **Several at once.** A gnoswap realm is `defi`, `access-control` and

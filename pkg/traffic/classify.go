@@ -395,6 +395,10 @@ var pageKinds = []struct{ prefix, kind string }{
 	{"/search", "search"},
 	{"/watch", "watchlist"},
 	{"/glossary", "glossary"},
+	// /apps and /apps/<category> are the same page, and the fallback below
+	// only reaches the first of them: a category would otherwise land in
+	// "other" alongside the detail pages nothing groups.
+	{"/apps", "listing"},
 }
 
 // PageKind names the shape of a page. "/" is the landing page, which is worth

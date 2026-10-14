@@ -1171,7 +1171,9 @@ html:not(.has-shots) .shot-cell { display: none; }
 .app-card-head { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; }
 .app-name { font-weight: bold; font-size: 13px; }
 .app-cat { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg2);
-           border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+           border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; white-space: nowrap;
+           text-decoration: none; }
+.app-cat:hover { color: var(--fg); border-color: var(--fg2); }
 /* A guessed category is drawn as a guess. Most cards have one now that it is
    inferred rather than curated, and a chip that looked identical either way
    would quietly upgrade a heuristic into somebody's assertion. */
@@ -1581,6 +1583,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
 <symbol id="i-collapse" viewBox="0 0 16 16"><path d="M9.6 3.4 5 8l4.6 4.6"/><path d="M13.2 2.4v11.2"/></symbol>
 <symbol id="i-flask" viewBox="0 0 16 16"><path d="M6.4 1.8v4.3L2.6 12a1.4 1.4 0 0 0 1.2 2.2h8.4a1.4 1.4 0 0 0 1.2-2.2L9.6 6.1V1.8"/><path d="M5.4 1.8h5.2"/><path d="M4.4 9.4h7.2"/></symbol>
 <symbol id="i-compass" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="m10.6 5.4-1.4 3.8-3.8 1.4 1.4-3.8z"/></symbol>
+<symbol id="i-grid" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></symbol>
 <!-- Tab icons. Same 16x16 stroke grid as the rail's, referenced from the
      script below through the icon() helper rather than from markup, which is
      why TestFrontendSpriteHasNoOrphansOrDanglingRefs reads those calls too. -->
@@ -1621,12 +1624,28 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
            asserted to carry a .nav-kids, the same shape glossary and watch
            already use at the bottom of this rail. -->
       <a href="/discover" id="nav-discover" title="what is new on this chain, in plain words, and whether it is worth sharing"><svg aria-hidden="true"><use href="#i-compass"/></svg><span class="rail-label">discover</span></a>
+      <!-- apps is its own section rather than a child of contracts. It is the
+           one page here aimed at somebody who does not read gno, and under
+           contracts it sat behind the map, the realm list and the package
+           list, which are all developer tools. Its children are the
+           categories, so the taxonomy is visible from the rail instead of
+           only from a filter row on the page itself. -->
       <div class="nav-group">
-        <a href="/contracts" id="nav-contracts" title="contracts map, realms, packages, apps"><svg aria-hidden="true"><use href="#i-bubbles"/></svg><span class="rail-label">contracts</span></a>
+        <a href="/apps" id="nav-apps" title="what is built on gno.land, by what it is for"><svg aria-hidden="true"><use href="#i-grid"/></svg><span class="rail-label">apps</span></a>
+        <div class="nav-kids">
+          <a href="/apps/games" id="nav-apps-games" title="play it"><span class="rail-label">games</span></a>
+          <a href="/apps/social" id="nav-apps-social" title="boards, forums and profiles: people answering each other"><span class="rail-label">social</span></a>
+          <a href="/apps/defi" id="nav-apps-defi" title="apps that move value, as opposed to the assets they move"><span class="rail-label">defi</span></a>
+          <a href="/apps/content" id="nav-apps-content" title="blogs, pages and anything else published on chain"><span class="rail-label">content</span></a>
+          <a href="/apps/governance" id="nav-apps-governance" title="who decides, and how"><span class="rail-label">governance</span></a>
+          <a href="/apps/infrastructure" id="nav-apps-infrastructure" title="the plumbing other realms are built on"><span class="rail-label">infrastructure</span></a>
+        </div>
+      </div>
+      <div class="nav-group">
+        <a href="/contracts" id="nav-contracts" title="contracts map, realms, packages"><svg aria-hidden="true"><use href="#i-bubbles"/></svg><span class="rail-label">contracts</span></a>
         <div class="nav-kids">
           <a href="/realms" id="nav-realms" title="realms"><span class="rail-label">realms</span></a>
           <a href="/packages" id="nav-packages" title="packages"><span class="rail-label">packages</span></a>
-          <a href="/apps" id="nav-apps" title="apps"><span class="rail-label">apps</span></a>
         </div>
       </div>
       <div class="nav-group">
@@ -4631,10 +4650,21 @@ const NAV = [
     { id: 'traffic', label: 'traffic', path: '/traffic' },
   ] },
   { id: 'discover', label: 'discover', path: '/discover' },
+  // The children here are registry.Categories, in that order, and
+  // TestNavAppsMatchesCategories fails if the two drift. They are the one set
+  // of rail entries that is not a view of its own: every one of them renders
+  // #view-apps, filtered. See route().
+  { id: 'apps', label: 'apps', path: '/apps', own: 'all', children: [
+    { id: 'apps-games', label: 'games', path: '/apps/games' },
+    { id: 'apps-social', label: 'social', path: '/apps/social' },
+    { id: 'apps-defi', label: 'defi', path: '/apps/defi' },
+    { id: 'apps-content', label: 'content', path: '/apps/content' },
+    { id: 'apps-governance', label: 'governance', path: '/apps/governance' },
+    { id: 'apps-infrastructure', label: 'infrastructure', path: '/apps/infrastructure' },
+  ] },
   { id: 'contracts', label: 'contracts', path: '/contracts', own: 'map', children: [
     { id: 'realms', label: 'realms', path: '/realms' },
     { id: 'packages', label: 'packages', path: '/packages' },
-    { id: 'apps', label: 'apps', path: '/apps' },
   ] },
   // The code map and its timeline sit under developer, but keep the /code
   // URLs they shipped with: a section is a grouping in the rail, not a URL
@@ -4706,12 +4736,16 @@ for (const s of NAV) {
 // pageNav builds the section strip for a view, or returns null when the view
 // is not in a section (every detail page). route() mounts it; no loader has
 // to know it exists.
-function pageNav(view) {
-  const section = NAV_SECTION[view];
+// `activeId` is the rail entry to light up when it is not the view itself:
+// /apps/games and /apps are one view with six children, so the strip cannot
+// read the active pill off the view id the way every other section can.
+function pageNav(view, activeId) {
+  const section = NAV_SECTION[activeId || view];
   if (!section) return null;
+  const active = activeId || view;
   const bar = el('div', { className: 'pagenav' });
   const add = (id, label, path) => {
-    const a = el('a', { href: path, className: id === view ? 'active' : '' }, label);
+    const a = el('a', { href: path, className: id === active ? 'active' : '' }, label);
     a.addEventListener('click', (e) => { e.preventDefault(); navigate(path); });
     bar.appendChild(a);
   };
@@ -4724,12 +4758,12 @@ function pageNav(view) {
 // whatever that view's loader builds. Doing it here rather than in each
 // loader is what keeps it on the eight views whose markup is static HTML and
 // whose loaders only ever clear a nested div.
-function mountPageNav(view) {
+function mountPageNav(view, activeId) {
   const main = document.querySelector('#view-' + view + ' main');
   if (!main) return;
   const existing = main.querySelector(':scope > .pagenav');
   if (existing) existing.remove();
-  const bar = pageNav(view);
+  const bar = pageNav(view, activeId);
   if (bar) main.insertBefore(bar, main.firstChild);
 }
 
@@ -4897,12 +4931,21 @@ function route() {
     if (sel && sel.value !== urlNetwork) sel.value = urlNetwork;
   }
 
-  let view = 'home', data = null;
+  let view = 'home', data = null, navId = null;
   if (path === '/' || path === '') { view = 'home'; }
   else if (path === '/realms') { view = 'realms'; }
   else if (path === '/packages') { view = 'packages'; }
   else if (path === '/contracts') { view = 'contracts'; }
   else if (path === '/apps') { view = 'apps'; }
+  // A category is a path, not a query parameter, because it is a rail entry:
+  // six views that differ by one filter would be six copies of the same
+  // markup and the same loader. navId is what the rail and the strip light
+  // up; the view stays `apps`. ?cat= still works, so every link sent before
+  // this still lands on the right page.
+  else if (path.startsWith('/apps/')) {
+    view = 'apps';
+    navId = 'apps-' + decodeURIComponent(path.slice(6));
+  }
   else if (path === '/developer' || path === '/developer/search') { view = 'developer'; }
   else if (path.startsWith('/stdlib/')) { view = 'stdlib'; data = path.slice(8); }
   else if (path === '/developer/api') { view = 'devapi'; }
@@ -5008,17 +5051,17 @@ function route() {
 
   const ve = document.getElementById('view-' + view);
   if (ve) ve.classList.add('active');
-  const nav = document.getElementById('nav-' + view);
+  const nav = document.getElementById('nav-' + (navId || view));
   if (nav) nav.classList.add('active');
   // A child page lights its parent too. Muted while the rail is wide (the
   // child row already carries the accent), and the only thing left to show
   // where you are once the rail is collapsed and the children are hidden.
-  const section = NAV_SECTION[view];
-  if (section && section.id !== view) {
+  const section = NAV_SECTION[navId || view];
+  if (section && section.id !== (navId || view)) {
     const parent = document.getElementById('nav-' + section.id);
     if (parent) parent.classList.add('in-section');
   }
-  mountPageNav(view);
+  mountPageNav(view, navId);
   mountPageLead(view);
 
   const subbar = document.getElementById('sanity-subbar');
@@ -12819,7 +12862,12 @@ function appCard(card, network) {
   const head = el('div', { className: 'app-card-head' });
   head.appendChild(el('span', { className: 'app-name' }, card.name));
   if (card.category) {
-    const cat = el('span', { className: 'app-cat' }, card.category);
+    // A link now that a category is a page. It was a label back when the only
+    // way to filter by one was a chip at the top of the list, which meant
+    // reading a card, scrolling up, and finding the chip that matched it.
+    const cat = el('a', { className: 'app-cat', href: '/apps/' + encodeURIComponent(card.category) },
+      card.category);
+    cat.addEventListener('click', (e) => { e.preventDefault(); navigate(cat.getAttribute('href')); });
     if (card.category_from === 'inferred') {
       cat.classList.add('app-cat-guessed');
       cat.title = 'guessed by this explorer, not filed by a human: ' +
@@ -12938,10 +12986,10 @@ function nameOrPath(card) {
 
 // The facets, beyond the category.
 //
-// A category answers "what kind of thing is this" and there are four of them,
-// so it is the only filter this page had and it could not answer the questions
-// people actually arrive with. These are three different axes, and each is a
-// real question somebody asked out loud:
+// A category answers "what kind of thing is this", and it is navigation now
+// (the section strip above this page). It was the only filter this page had,
+// and it could not answer the questions people actually arrive with. These are
+// different axes, and each is a real question somebody asked out loud:
 //
 //	where it came from   is this a realm the chain proposed, or something a
 //	                     human vouched for, here or on the community list
@@ -12976,6 +13024,17 @@ const APP_FACETS = [
   },
 ];
 
+// appsCategory is which category this page is showing, or '' for all of them.
+//
+// The path is the truth: /apps/games is a rail entry. ?cat=games is what the
+// chips used before the categories were navigation, and it is still read so
+// that links already sent keep landing on the right page.
+function appsCategory() {
+  const p = window.location.pathname;
+  if (p.startsWith('/apps/')) return decodeURIComponent(p.slice(6));
+  return urlParam('cat') || '';
+}
+
 // appsFacetFilter reads the URL and returns a predicate over cards.
 function appsFacetFilter() {
   const picked = [];
@@ -12991,7 +13050,7 @@ function renderApps(container, data) {
   container.textContent = '';
   const apps = data.apps || [];
   const network = data.network || '';
-  const category = urlParam('cat') || '';
+  const category = appsCategory();
 
   const intro = el('div', { className: 'section-sub' });
   if (network) {
@@ -13004,13 +13063,11 @@ function renderApps(container, data) {
   }
   container.appendChild(intro);
 
+  // No category strip here: the section strip above this page is built from
+  // NAV and already is one. Two rows of category chips on the same page, one
+  // of them navigating and one of them rewriting a query parameter, is how a
+  // reader ends up with /apps/games?cat=social.
   const bar = el('div', { className: 'dash-bar' });
-  const cats = [''].concat(data.categories || []);
-  if (cats.length > 1) {
-    bar.appendChild(el('span', { className: 'dash-grp' },
-      appsChips(cats, category, (v) => { urlSetParam('cat', v); renderApps(container, data); },
-        (v) => v || 'all')));
-  }
   if (network) {
     bar.appendChild(el('span', { className: 'dash-grp' },
       el('span', { className: 'label' }, 'window'),
@@ -13055,8 +13112,14 @@ function renderApps(container, data) {
   const keep = appsFacetFilter();
   const shown = apps.filter(a => (!category || a.category === category) && keep(a));
   if (!shown.length) {
+    // A category with nothing in it is a different answer from a filter that
+    // matched nothing, and the rail can reach all six whether or not this
+    // chain has one of each.
+    const known = (data.categories || []).indexOf(category) >= 0;
     container.appendChild(el('p', { className: 'dim', style: { fontSize: '12px' } },
-      network ? 'nothing matches these filters' : 'nothing in this category'));
+      category && !known
+        ? 'nothing here yet' + (network ? ' on ' + network : '')
+        : 'nothing matches these filters'));
   } else {
     const grid = el('div', { className: 'app-grid' });
     shown.forEach(c => grid.appendChild(appCard(c, network)));
