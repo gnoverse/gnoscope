@@ -6828,7 +6828,10 @@ function renderTxStats(statsBar, stats) {
   statsBar.style.display = 'flex';
   const cell = (label, value) => statsBar.appendChild(el('div', { className: 'stat' },
     el('span', { className: 'label' }, label), el('span', { className: 'value' }, fmtNum(value || 0))));
-  cell('total', stats.total_txs);
+  // Both, because they differ. "total" used to be the sum of the four cells
+  // beside it, which is a message count wearing a transaction's label.
+  cell('txs', stats.total_txs);
+  cell('messages', stats.total_messages);
   cell('calls', stats.total_calls);
   cell('deploys', stats.total_deploys);
   cell('runs', stats.total_msg_runs);
