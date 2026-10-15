@@ -734,6 +734,11 @@ func rankApps(cards []*AppCard) {
 	})
 }
 
+// categoriesOf is the categories actually present, in reader order.
+//
+// registry.Categories order rather than alphabetical: these are navigation now,
+// and a strip that prints them a-z puts infrastructure above social for no
+// reason a reader can see.
 func categoriesOf(apps []AppCard) []string {
 	seen := map[string]bool{}
 	out := []string{}
@@ -743,6 +748,12 @@ func categoriesOf(apps []AppCard) []string {
 			out = append(out, a.Category)
 		}
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool {
+		ri, rj := registry.CategoryRank(out[i]), registry.CategoryRank(out[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i] < out[j]
+	})
 	return out
 }

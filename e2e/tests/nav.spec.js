@@ -43,7 +43,11 @@ test('every page in a section carries the section strip', async ({ page }) => {
     ['/gas', 'summary', ['by realm', 'by user', 'top txs', 'storage']],
     ['/storage', 'storage', ['summary', 'by realm']],
     ['/govdao', 'overview', ['proposals', 'voters', 'options', 'params']],
-    ['/packages', 'packages', ['map', 'realms', 'apps']],
+    ['/packages', 'packages', ['map', 'realms']],
+    // apps left the contracts section and took the categories with it, so
+    // /packages must no longer offer it and /apps must offer all six.
+    ['/apps', 'all', ['games', 'social', 'defi', 'content', 'governance', 'infrastructure']],
+    ['/apps/social', 'social', ['all', 'games', 'defi', 'content']],
     ['/txs', 'txs', ['blocks', 'events', 'validators', 'sanity']],
     ['/validators', 'validators', ['blocks', 'txs', 'events', 'sanity']],
     ['/sanity', 'sanity', ['blocks', 'txs', 'events', 'validators']],

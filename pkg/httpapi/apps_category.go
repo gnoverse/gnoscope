@@ -3,6 +3,8 @@ package httpapi
 import (
 	"sort"
 	"strings"
+
+	"github.com/gnoverse/gnoscope/pkg/registry"
 )
 
 // Guessing a category, and saying that it is a guess.
@@ -23,19 +25,22 @@ import (
 // registry.KindInferred states for curated data. A chip a reader cannot check
 // is a claim this page has no business making.
 
-// Categories, in the order a tie is broken. Deliberately the existing five:
-// inventing a sixth to hold the awkward cases would move the judgement from
-// "which of these is it" to "how many buckets are there", which is a product
-// question and not one a heuristic gets to answer.
+// The categories are registry.Categories; these are the short names this file
+// matches against. The order below is the order a tie is broken in, which is
+// not the order a reader browses them in: defi first because importing a token
+// standard is the hardest evidence here, infrastructure last because its words
+// ("registry", "status", "dashboard") are the ones every other kind of realm
+// also happens to use.
 const (
-	catDefi    = "defi"
-	catGames   = "games"
-	catGov     = "governance"
-	catContent = "content"
-	catInfra   = "infrastructure"
+	catDefi    = registry.CategoryDefi
+	catGames   = registry.CategoryGames
+	catGov     = registry.CategoryGovernance
+	catSocial  = registry.CategorySocial
+	catContent = registry.CategoryContent
+	catInfra   = registry.CategoryInfrastructure
 )
 
-var categoryPriority = []string{catDefi, catGames, catGov, catContent, catInfra}
+var categoryPriority = []string{catDefi, catGames, catGov, catSocial, catContent, catInfra}
 
 // categoryImports maps an import path fragment to what importing it proves.
 //
@@ -81,10 +86,19 @@ var categoryWords = map[string][]string{
 		"dao", "govern", "governance", "proposal", "vote", "voting", "ballot",
 		"council", "election", "quorum",
 	},
+	// social and content split on who the other end is. A board, a thread and a
+	// comment exist because somebody is answering somebody; a blog, a wiki page
+	// and a gallery exist whether or not anybody replies. They were one bucket
+	// until Ryan Lee, using this daily, asked for social by name: with the
+	// forum and the personal blog in the same chip, "show me what people are
+	// talking on" had no answer.
+	catSocial: {
+		"social", "forum", "board", "boards", "thread", "comment", "reply",
+		"feed", "chat", "message", "profile", "follow",
+	},
 	catContent: {
-		"blog", "board", "forum", "post", "feed", "comment", "review", "wiki",
-		"note", "pad", "home", "profile", "page", "article", "memo", "journal",
-		"social", "thread", "gallery",
+		"blog", "post", "review", "wiki", "note", "pad", "home", "page",
+		"article", "memo", "journal", "gallery",
 	},
 	catInfra: {
 		"registry", "namereg", "valoper", "validator", "users", "username",
@@ -211,8 +225,12 @@ const categorySubstringMin = 4
 // purpose: the substring rule is what catches `gnoswap` and `trialmint`, and
 // every exception to it is a word this guesser can no longer see inside a
 // compound.
+//
+// `boards` is here for the same reason as `board`, and it exists at all so the
+// forum still matches: tokenize cuts `boards2` into `boards2` and the stem
+// `boards`, and `board` exact never sees either.
 var categoryExactOnly = map[string]bool{
-	"board": true, "post": true, "note": true,
+	"board": true, "boards": true, "post": true, "note": true,
 	"name": true, "bond": true, "page": true, "home": true,
 }
 

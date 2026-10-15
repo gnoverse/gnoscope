@@ -9,7 +9,7 @@
     {
       "path": "gno.land/r/gnoland/boards2/v0",
       "name": "Boards2",
-      "category": "content",
+      "category": "social",
       "description": "The discussion forum: threads, reposts and replies, grouped into boards that are each self governed. A board is either invite only or open, and an open board asks a poster to hold a minimum GNOT balance (3000 by default) instead of an invite.",
       "checked": "2026-09-21"
     },
@@ -100,7 +100,7 @@
     {
       "path": "gno.land/r/moul/home",
       "name": "moul's home",
-      "category": "content",
+      "category": "social",
       "description": "A profile page that is a realm. gnoweb builds /u/moul by calling Render on the realm at exactly r/<username>/home and embedding the result, so the page is whatever this realm decides to print.",
       "url": "https://gno.land/u/moul"
     },

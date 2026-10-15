@@ -210,6 +210,7 @@ func TestPageKind(t *testing.T) {
 		{"/", "home"},
 		{"/realms", "listing"},
 		{"/apps", "listing"},
+		{"/apps/games", "listing"},
 		{"/txs", "listing"},
 		{"/realm/gno.land/r/moul/home", "realm detail"},
 		{"/gnohub/r/sys/cla/-/blob/x.gno", "source browser"},

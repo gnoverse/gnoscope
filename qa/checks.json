@@ -21,6 +21,7 @@
     { "id": "packages",         "path": "/packages" },
     { "id": "contracts",        "path": "/contracts",         "budgetMs": 6000 },
     { "id": "apps",             "path": "/apps" },
+    { "id": "apps-social",      "path": "/apps/social",       "proof": ".app-grid .app-card" },
     { "id": "txs",              "path": "/txs",               "proof": "#txs-list tr" },
     { "id": "blocks",           "path": "/blocks" },
     { "id": "accounts",         "path": "/accounts",          "budgetMs": 9000 },
