@@ -1006,6 +1006,10 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	// at the endpoint by hand.
 	mux.HandleFunc("GET "+traffic.PageViewPath, a.HandlePageView)
 	mux.HandleFunc("POST "+traffic.PageViewPath, a.HandlePageView)
+	// POST only: this one carries a body, and a GET with a body is a request
+	// shape nothing should be taught to send.
+	mux.HandleFunc("POST "+traffic.EventPath, a.HandleEvent)
+	mux.HandleFunc("GET /api/traffic/engagement", a.HandleEngagement)
 	mux.HandleFunc("GET /api/traffic/health", a.HandleTrafficHealth)
 	// The lab's off-chain section. No ?network= on any of these: GitHub is
 	// one place. See lab_github.go.

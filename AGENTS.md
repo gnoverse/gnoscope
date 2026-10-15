@@ -70,6 +70,14 @@ Break these and things go wrong in ways that are hard to see:
   the explorer renders on-chain content, all of which is attacker-controlled.
   This is also why the optimistic-UI cache stores payloads and not rendered
   markup: a revived `innerHTML` would be the one place this stopped being true.
+- **An engagement label is read from structure, never from content.** The
+  beacon in `installTracking` names what was clicked from `data-track`,
+  `data-tab`, a rail link's id, a button's id, or an outbound link's hostname,
+  and labels nothing otherwise. Same reason as "the frontend builds DOM, never
+  HTML strings" one bullet up: this explorer renders on-chain text, all of it
+  attacker-controlled, and `/traffic` is public, so a label taken from an
+  element's text would publish that text in a ranked list. Unlabelled is a
+  correct answer; `element.textContent` is not.
 - **A generated explanation may not add a fact.** Discover's layers 2 and 3 are
   written from a closed `facts` map and `pkg/discover` fails the build if they
   say anything that map does not contain: an ungrounded number, a name from

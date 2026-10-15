@@ -124,6 +124,22 @@ finished rendering, so:
   was not enough — a slow-drifting layout produces two equal-looking samples
   while still moving, which passed alone and failed in the full run.
 
+⛔ **Playwright does not see a `navigator.sendBeacon` sent on the way out.**
+Both beacons here (`/api/traffic/pageview` and `/api/traffic/event`) fire from a
+page the browser is already tearing down, and `page.on('request')` never
+reports them: the first version of `engagement.spec.js` collected zero requests
+while the server was recording every event, which is a test that cannot fail
+for the reason it claims to check. Assert through the endpoint that reads the
+data back instead, which also exercises the whole path. If you must read a
+body, note that `postData()` is null for a `Blob` and the bytes are in
+`postDataBuffer()`.
+
+**Which client class this harness lands in is a property of the machine.** CI's
+bundled Chromium reports `HeadlessChrome` and is therefore classified a
+crawler; a headed run is a browser. Anything asserting on `/traffic` or
+`/api/traffic*` passes `who=all`, through the URL rather than by clicking, or
+it passes locally and fails in CI.
+
 If a new page calls an endpoint this harness cannot answer, add it to
 `EXPECTED_FAILURES` in `tests/helpers.js` **with the reason**. Every entry there
 is a claim that a failure is the harness's fault rather than the page's.

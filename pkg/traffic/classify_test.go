@@ -65,6 +65,11 @@ func TestKind(t *testing.T) {
 		{"/", "/realm/gno.land/r/moul/home", "document"},
 		// The beacon is the only thing that produces a page view.
 		{PageViewPath, PageViewPath, "page"},
+		// The engagement beacon is not a page view and not an api call. Its
+		// payload is in the events table and its request row describes
+		// nothing a reader did, so it has its own kind and query.where()
+		// excludes it the way it excludes a scanner probe.
+		{EventPath, EventPath, "beacon"},
 	}
 	for _, tc := range tests {
 		if got := Kind(tc.route, tc.path, "/mcp"); got != tc.want {

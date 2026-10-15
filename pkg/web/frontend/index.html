@@ -4890,6 +4890,9 @@ function reportPageView() {
   // changing the path. That is one page view, not two.
   if (path === _lastPageView) return;
   _lastPageView = path;
+  // The visit below is the behaviour half of the same event: this call says a
+  // page was opened, visitStart begins measuring what happens on it.
+  visitStart(path);
   const q = new URLSearchParams({ path });
   const net = getNetwork();
   if (net) q.set('network', net);
@@ -4911,6 +4914,242 @@ function reportPageView() {
   // full. Losing a view here is acceptable; blocking a reader is not.
   fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
 }
+
+// --- engagement: what a reader did, not only which page they opened ---------
+//
+// reportPageView above answers "which pages". This answers the rest of the
+// question anyone improving the app actually has: did they read it or bounce
+// off it, how far down did they get, which control did they touch, what did
+// they type into the search box, what broke in their browser, and where did
+// they go next.
+//
+// None of it is visible to the server. A page view is one request; staying on
+// a page for four minutes, scrolling to the bottom and opening two tabs is
+// zero requests, and a reader who leaves in two seconds looks identical to one
+// who reads for ten minutes.
+//
+// Three rules this block keeps:
+//
+//   - Never in front of a reader. Everything is passive, queued, and sent with
+//     sendBeacon on the way out. Nothing here awaits, and nothing here throws
+//     into app code: a bug in instrumentation must not break the explorer.
+//   - Labels come from structure, never from content. This app renders
+//     on-chain text, all of which is attacker-controlled; a label read off an
+//     element's text would put that text in the dashboard. Labels are
+//     data-track attributes, element ids, and hostnames.
+//   - The server decides identity. Nothing here sends, stores or reads an id.
+const TRACK_PATH = '/api/traffic/event';
+// 15 seconds, not immediate: a reader who opens four tabs in a row should cost
+// one request, not four. Everything still queued when the page goes away is
+// flushed by the pagehide handler, which is the path that actually matters.
+const TRACK_FLUSH_MS = 15000;
+// A search is recorded once it settles, not per keystroke. Typing "gnoswap"
+// with a slow hand is one search, and the debounce in the popup handler fires
+// several times on the way there.
+const TRACK_SEARCH_SETTLE_MS = 2000;
+// Matches maxEventBatch in pkg/httpapi/api_traffic_events.go. Two caps, one
+// number: the server enforces it against anybody, this one keeps us from
+// being truncated by our own rule.
+const TRACK_BATCH = 32;
+
+let _trackQueue = [];
+let _trackTimer = null;
+let _visit = null;
+let _visitPrev = '';
+let _searchSettle = null;
+
+// trackPush queues one event. Capped, because a page left open with a loop in
+// it would otherwise grow this array without bound; the server caps the batch
+// again on arrival, and both caps exist because either one alone is a promise
+// made by the side that cannot keep it.
+function trackPush(e) {
+  if (_trackQueue.length >= 64) return;
+  _trackQueue.push(e);
+  if (!_trackTimer) _trackTimer = setTimeout(() => trackFlush(), TRACK_FLUSH_MS);
+}
+
+// trackFlush hands the queue to the browser and forgets about it.
+//
+// sendBeacon for the same reason reportPageView uses it: this is called from
+// pagehide, the one moment a browser is entitled to cancel anything in flight.
+// A Blob with an explicit type, because sendBeacon with a bare string sends
+// text/plain, and a JSON body deserves to say so.
+function trackFlush() {
+  if (_trackTimer) { clearTimeout(_trackTimer); _trackTimer = null; }
+  if (!_trackQueue.length) return;
+  const queue = _trackQueue;
+  _trackQueue = [];
+  // Chunked at the server's own batch cap. The server truncates a longer
+  // batch, which is the right thing for it to do to a stranger and the wrong
+  // thing to let happen to ourselves: a flush of 40 queued events would lose
+  // 8 of them on arrival with nothing anywhere saying so.
+  for (let i = 0; i < queue.length; i += TRACK_BATCH) {
+    const body = JSON.stringify({ e: queue.slice(i, i + TRACK_BATCH) });
+    try {
+      const blob = new Blob([body], { type: 'application/json' });
+      if (navigator.sendBeacon && navigator.sendBeacon(TRACK_PATH, blob)) continue;
+      fetch(TRACK_PATH, { method: 'POST', body, keepalive: true, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+    } catch (_) { /* instrumentation never breaks the page */ }
+  }
+}
+
+// scrollPct is how much of the page has been seen, as a percentage of its
+// height.
+//
+// Measured against the window, which is what scrolls on every view but two:
+// /code and /cartography put their own scroll container inside a fixed-height
+// layout, so their documents never overflow and this reports 100. That is the
+// honest answer for them rather than a wrong one: the page as a whole was
+// entirely on screen, and how far somebody scrolled inside a file tree is a
+// different question from how far they read down a page.
+function scrollPct() {
+  const doc = document.documentElement;
+  const h = Math.max(doc.scrollHeight, document.body ? document.body.scrollHeight : 0);
+  if (h <= window.innerHeight + 4) return 100;
+  const seen = (window.scrollY || doc.scrollTop || 0) + window.innerHeight;
+  return Math.max(0, Math.min(100, Math.round(seen / h * 100)));
+}
+
+// visitStart closes the previous visit and opens one for path.
+//
+// Called from reportPageView, after its own dedupe: a tab switch inside a
+// realm page replaces the URL without leaving the page, and counting that as
+// leaving would report every realm visit as several short ones.
+function visitStart(path) {
+  visitEnd();
+  _visit = { path, from: _visitPrev, since: Date.now(), scroll: scrollPct(), actions: 0 };
+  _visitPrev = path;
+}
+
+// visitEnd emits the leave event: the row carrying dwell, scroll and how much
+// was touched. Idempotent, because it is called from navigation, from
+// pagehide and from a tab going to the background, and a tab that is hidden
+// and shown again must not report the visit twice.
+function visitEnd() {
+  if (!_visit) return;
+  const v = _visit;
+  _visit = null;
+  trackPush({
+    k: 'leave', p: v.path, f: v.from,
+    d: Date.now() - v.since,
+    s: Math.max(v.scroll, scrollPct()),
+    c: v.actions,
+    n: getNetwork() || '',
+  });
+}
+
+// trackAction records one deliberate interaction, and counts it against the
+// current visit so a leave event can say whether anything happened at all.
+function trackAction(label) {
+  // Counted whether or not it has a name, and reported only when it has one.
+  // The count is what separates a bounce from a short visit that went
+  // somewhere, and most of what a reader clicks is a row in a table: an
+  // in-app link, deliberately unlabelled, because its text is on-chain.
+  if (_visit) _visit.actions++;
+  if (!label) return;
+  trackPush({ k: 'action', p: _visit ? _visit.path : location.pathname, a: label, n: getNetwork() || '' });
+}
+
+// actionLabel names what was clicked, from structure alone.
+//
+// The order is deliberate: an explicit data-track wins, then the handful of
+// app-owned patterns, then nothing. Returning nothing is a perfectly good
+// answer; a label invented from an element's text would be on-chain content,
+// which is the one thing that must not reach the dashboard.
+function actionLabel(target) {
+  const marked = target.closest('[data-track]');
+  if (marked) return marked.getAttribute('data-track').slice(0, 64);
+  const tab = target.closest('[data-tab]');
+  if (tab) return 'tab:' + tab.getAttribute('data-tab').slice(0, 48);
+  const nav = target.closest('nav a[id^="nav-"]');
+  if (nav) return 'nav:' + nav.id.slice(4);
+  const a = target.closest('a[href]');
+  if (a) {
+    // An outbound link is named by where it goes, never by what it says. A
+    // hostname is bounded and is the thing worth knowing: which of gnoweb,
+    // GitHub and the faucet readers actually leave for.
+    try {
+      const u = new URL(a.getAttribute('href'), location.href);
+      if (u.origin !== location.origin) return 'out:' + u.hostname;
+    } catch (_) { /* a relative href that will not parse is an in-app link */ }
+    return '';
+  }
+  const btn = target.closest('button');
+  if (btn && btn.id) return 'button:' + btn.id.slice(0, 48);
+  return '';
+}
+
+// trackSearch records what somebody looked for and whether it found anything.
+//
+// Settled rather than immediate: the popup searches on a 200ms debounce, so a
+// slow typist would otherwise file "gno", "gnosw" and "gnoswap" as three
+// searches. The term is the only free text this app sends, is clipped by the
+// server, and is never joined to anything but a hash that expires at midnight.
+function trackSearch(term, n) {
+  if (!term || term.length < 2) return;
+  clearTimeout(_searchSettle);
+  _searchSettle = setTimeout(() => {
+    trackPush({ k: 'search', p: location.pathname, v: term.slice(0, 80), r: n | 0, a: 'popup' });
+  }, TRACK_SEARCH_SETTLE_MS);
+}
+
+// trackSearchNow is the same thing when the reader has told us they are done:
+// they pressed enter, or they picked a result.
+function trackSearchNow(term, n) {
+  if (!term || term.length < 2) return;
+  clearTimeout(_searchSettle);
+  trackPush({ k: 'search', p: location.pathname, v: term.slice(0, 80), r: n | 0, a: 'enter' });
+}
+
+(function installTracking() {
+  // Passive, and reading only. A scroll listener that does layout work on
+  // every event is the classic way to make a page feel heavy; this one reads
+  // two numbers the browser already has and keeps the maximum.
+  window.addEventListener('scroll', () => {
+    if (!_visit) return;
+    const p = scrollPct();
+    if (p > _visit.scroll) _visit.scroll = p;
+  }, { passive: true });
+
+  // Capture phase, so an interaction is recorded even when the handler that
+  // owns it calls stopPropagation. Several do.
+  document.addEventListener('click', ev => {
+    try {
+      const t = ev.target instanceof Element ? ev.target : null;
+      if (t) trackAction(actionLabel(t));
+    } catch (_) { /* never break a click */ }
+  }, { capture: true, passive: true });
+
+  // pagehide, not unload: unload is not fired at all on mobile Safari and
+  // blocks the back-forward cache everywhere else. visibilitychange covers the
+  // case pagehide misses, which is the tab that is switched away from and
+  // never comes back.
+  window.addEventListener('pagehide', () => { visitEnd(); trackFlush(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'hidden') {
+      // Coming back is a new visit to the same page, so dwell stays the time
+      // somebody was actually looking at it rather than the time their laptop
+      // was shut.
+      if (!_visit) visitStart(location.pathname);
+      return;
+    }
+    visitEnd();
+    trackFlush();
+  });
+
+  // A reader sees a broken page and does not file an issue about it. This is
+  // the only way anyone finds out. The message only: a stack would carry line
+  // numbers from a bundle nobody can map, at ten times the size.
+  window.addEventListener('error', ev => {
+    const msg = (ev && ev.message) ? String(ev.message) : '';
+    if (msg) trackPush({ k: 'error', p: location.pathname, v: msg.slice(0, 80), a: 'error' });
+  });
+  window.addEventListener('unhandledrejection', ev => {
+    const r = ev && ev.reason;
+    const msg = r ? String(r.message || r) : '';
+    if (msg) trackPush({ k: 'error', p: location.pathname, v: msg.slice(0, 80), a: 'rejection' });
+  });
+})();
 
 function route() {
   _watchTarget = null;
@@ -13441,12 +13680,155 @@ async function loadTraffic(fromURL) {
 
   if (rep.slowest && rep.slowest.length) container.appendChild(trafficSlowestSection(rep.slowest));
 
+  // Appended asynchronously, and deliberately not awaited: the request log is
+  // the page, and a second endpoint must not hold it up. A container is passed
+  // rather than a return value so the sections land in order even though this
+  // resolves after the note below is drawn.
+  const engageInto = el('div');
+  container.appendChild(engageInto);
+  trafficEngagementSection(engageInto);
+
   container.appendChild(el('div', { className: 'section-sub', style: { marginTop: '24px' } },
-    'recorded by this server, from requests it served. no address and no user-agent string is kept: '
+    'recorded by this server, from requests it served and from what the page reports about itself. '
+    + 'no address and no user-agent string is kept: '
     + 'the visitor id is a keyed hash whose key is regenerated daily and never written down. every '
     + 'class of client is stored and reachable from the who filter; the cache warmer is the one '
     + 'exception and is never counted in any view, because it is this server replaying paths '
-    + 'against itself.'));
+    + 'against itself. the engagement figures come from a beacon the page sends on its way out, '
+    + 'carrying how long a visit lasted, how far it scrolled and which named controls it touched; '
+    + 'a control is named by the markup that owns it, never by the text it displays, because that '
+    + 'text is on-chain content.'));
+}
+
+
+// --- the engagement half of /traffic ----------------------------------------
+//
+// Everything above this point is the request log: which pages were served, to
+// whom, how fast. Everything below is what happened once a page was open, from
+// the beacon in the instrumentation block near reportPageView.
+//
+// They are drawn as one page and must be read as two measurements. A crawler
+// produces request rows and no events at all, so an empty engagement section
+// beside a busy request log is not a bug: it means the traffic was machines.
+
+// fmtDur prints a duration the way somebody reading a dashboard thinks about
+// one. Milliseconds below ten seconds (the difference between 2s and 9s is the
+// difference between a bounce and a look), whole seconds up to a minute, then
+// minutes.
+function fmtDur(ms) {
+  if (!ms) return '0s';
+  if (ms < 10000) return (ms / 1000).toFixed(1) + 's';
+  if (ms < 60000) return Math.round(ms / 1000) + 's';
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return s ? m + 'm ' + s + 's' : m + 'm';
+}
+
+// trafficDistribution draws a bucketed shape, in bucket order.
+//
+// Not sorted by size, on purpose: the order is the information. A dwell
+// distribution sorted by frequency cannot be read as a distribution at all.
+function trafficDistribution(title, sub, rows) {
+  const wrap = el('div', { className: 'section' });
+  wrap.appendChild(el('div', { className: 'section-title' }, title));
+  if (sub) wrap.appendChild(el('div', { className: 'section-sub' }, sub));
+  const total = rows.reduce((n, r) => n + r.hits, 0) || 1;
+  const strip = el('div', { style: { display: 'flex', alignItems: 'flex-end', gap: '6px', height: '110px', marginTop: '12px' } });
+  const max = rows.reduce((m, r) => Math.max(m, r.hits), 0) || 1;
+  for (const r of rows) {
+    const share = (r.hits / total * 100);
+    const col = el('div', { style: { flex: '1 1 0', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' } });
+    col.appendChild(el('div', { className: 'dim', style: { fontSize: '11px', textAlign: 'center', marginBottom: '3px' } }, share.toFixed(0) + '%'));
+    col.appendChild(el('div', {
+      style: {
+        height: Math.max(2, r.hits / max * 70) + '%',
+        background: 'var(--accent, #4dabf7)', opacity: '0.5', borderRadius: '3px 3px 0 0',
+      },
+      title: r.label + ': ' + fmtNum(r.hits) + ' visits, ' + share.toFixed(0) + '%',
+    }));
+    col.appendChild(el('div', { className: 'dim', style: { fontSize: '11px', textAlign: 'center', marginTop: '4px' } }, r.label));
+    strip.appendChild(col);
+  }
+  wrap.appendChild(strip);
+  return wrap;
+}
+
+async function trafficEngagementSection(container) {
+  let eng;
+  try {
+    const qs = new URLSearchParams({ window: _trafficWindow, who: _trafficWho });
+    if (_trafficHost) qs.set('host', _trafficHost);
+    eng = await api('traffic/engagement?' + qs.toString(), 'all');
+  } catch (e) {
+    return; // The request log above is still worth reading on its own.
+  }
+
+  const head = el('div', { className: 'section', style: { marginTop: '28px' } });
+  head.appendChild(el('div', { className: 'section-title' }, 'engagement'));
+  head.appendChild(el('div', { className: 'section-sub' },
+    'what happened on the page, reported by the page itself: how long a reader stayed, how far down '
+    + 'they got, what they touched. browsers only by construction, since a crawler runs no javascript, '
+    + 'so these counts are smaller than the page views above and are not a subset of them.'));
+  container.appendChild(head);
+
+  if (eng.empty && !(eng.actions || []).length && !(eng.searches || []).length) {
+    head.appendChild(el('div', { className: 'section-sub', style: { marginTop: '8px' } },
+      'nothing recorded in this window. a visit is reported when a reader leaves a page, so a fresh '
+      + 'deployment stays empty until somebody has been and gone.'));
+    return;
+  }
+
+  const cards = el('div', { className: 'stats-bar' });
+  const stat = (label, value, title) => {
+    const c = el('div', { className: 'stat' }, el('span', { className: 'label' }, label), el('span', { className: 'value' }, value));
+    if (title) c.setAttribute('title', title);
+    return c;
+  };
+  cards.appendChild(stat('visits', fmtNum(eng.visits), 'pages opened and then left. a page still open right now is not counted yet.'));
+  cards.appendChild(stat('readers', fmtNum(eng.readers), 'distinct clients within a day, same keyed hash as above'));
+  cards.appendChild(stat('median stay', fmtDur(eng.median_dwell_ms), 'half of visits were shorter than this. a median, not a mean: one tab left open for an hour moves a mean by minutes.'));
+  cards.appendChild(stat('p90 stay', fmtDur(eng.p90_dwell_ms), 'the long tail: one visit in ten lasted at least this'));
+  cards.appendChild(stat('median scroll', eng.median_scroll_pct + '%', 'how far down the page the median visit got'));
+  cards.appendChild(stat('bounce', (eng.bounce_rate * 100).toFixed(0) + '%', 'opened, under ten seconds, nothing touched'));
+  cards.appendChild(stat('engaged', (eng.engaged_rate * 100).toFixed(0) + '%', 'thirty seconds or more, or half the page scrolled, or something clicked'));
+  container.appendChild(cards);
+
+  const dists = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' } });
+  if ((eng.dwell_buckets || []).length) {
+    dists.appendChild(trafficDistribution('how long they stayed',
+      'the shape the median hides: a page that is half bounce and half long read has a median that describes nobody',
+      eng.dwell_buckets));
+  }
+  if ((eng.scroll_buckets || []).length) {
+    dists.appendChild(trafficDistribution('how far they scrolled',
+      'a page whose median reader never leaves the top quarter has its answer in the wrong place',
+      eng.scroll_buckets));
+  }
+  if (dists.children.length) container.appendChild(dists);
+
+  const dur = r => fmtDur(r.hits) + (r.visitors ? ' · ' + fmtNum(r.visitors) + ' vis' : '');
+  const pct = r => r.hits + '%' + (r.visitors ? ' · ' + fmtNum(r.visitors) + ' vis' : '');
+  const engPanels = [
+    ['where they stay', 'median stay per page, over pages with at least 3 visits in the window', eng.sticky_pages, p => p, dur],
+    ['where they leave fast', 'the same list from the other end. a page opened often and left in seconds is a page failing somebody', eng.skimmed_pages, p => p, dur],
+    ['stay by kind of page', 'the comparison that survives one realm being popular', eng.dwell_by_kind, null, dur],
+    ['scroll by kind of page', 'average depth reached, 0 to 100', eng.scroll_by_kind, null, pct],
+    ['entry pages', 'where a visit started: no previous page in the same visit', eng.entries, p => p, null],
+    ['exit pages', 'the last page of a reader’s day. a session cannot be followed past midnight utc, because the id does not survive it', eng.exits, p => p, null],
+    ['paths taken', 'from → to, built from each visit’s previous page rather than from a session table', eng.edges, null, null],
+    ['what they clicked', 'named controls only, from the markup rather than from an element’s text: this explorer renders on-chain content and none of it belongs in a label', eng.actions, null, null],
+    ['what they searched for', 'recorded once a query settles, not per keystroke', eng.searches, null, null],
+    ['searches that found nothing', 'a feature request with a name on it', eng.zero_searches, null, null],
+    ['errors in somebody’s browser', 'nobody reports these. the message only, clipped', eng.errors, null, null],
+  ];
+  const grid = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px', marginTop: '18px' } });
+  let any = false;
+  for (const [title, sub, rows, href, fmt] of engPanels) {
+    if (!rows || !rows.length) continue;
+    any = true;
+    grid.appendChild(trafficBarPanel(title, sub, rows, p => p, href, fmt));
+  }
+  if (any) container.appendChild(grid);
 }
 
 // fmtBytesish keeps the unit readable without pulling in a formatter. Traffic
@@ -13496,7 +13878,11 @@ function trafficSeriesSection(rep) {
 // trafficBarPanel is one ranked list. The bar is a width, not a chart: it makes
 // the shape of a distribution readable at a glance without a library, and the
 // exact number is still printed beside it because a bar cannot be read off.
-function trafficBarPanel(title, sub, rows, label, href) {
+// fmt is optional and formats the right-hand figure. It exists because the
+// engagement panels rank by a duration rather than by a count, and a median of
+// 84,000 printed as "84,000" reads as a very popular page rather than as a
+// minute and a half.
+function trafficBarPanel(title, sub, rows, label, href, fmt) {
   const wrap = el('div', { className: 'section' });
   wrap.appendChild(el('div', { className: 'section-title' }, title));
   if (sub) wrap.appendChild(el('div', { className: 'section-sub' }, sub));
@@ -13524,11 +13910,12 @@ function trafficBarPanel(title, sub, rows, label, href) {
     } else {
       name = el('span', { style: nameStyle }, r.label);
     }
+    const shown = fmt ? fmt(r) : (r.visitors ? fmtNum(r.hits) + ' · ' + fmtNum(r.visitors) + ' vis' : fmtNum(r.hits));
     const count = el('span', { className: 'dim', style: { position: 'relative', flex: '0 0 auto', marginLeft: '10px', fontVariantNumeric: 'tabular-nums' } },
-      r.visitors ? fmtNum(r.hits) + ' · ' + fmtNum(r.visitors) + ' vis' : fmtNum(r.hits));
+      shown);
     const row = el('div', {
       style: { position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 6px', fontSize: '13px' },
-      title: r.label + ': ' + fmtNum(r.hits) + ' hits' + (r.visitors ? ', ' + fmtNum(r.visitors) + ' visitors' : ''),
+      title: r.label + ': ' + shown,
     }, bar, name, count);
     list.appendChild(row);
   }
@@ -23224,6 +23611,11 @@ document.getElementById('search-input').addEventListener('input', function() {
         }
       }
 
+      // What was typed and how much it found. A term that finds nothing is a
+      // feature request with a name on it, which is why the count is recorded
+      // and not just the term.
+      trackSearch(q.trim(), groups.reduce((n, g) => n + g.rows.length, 0) + direct.length);
+
       if (!direct.length && !groups.length) {
         results.appendChild(el('div', { style: { padding: '10px 12px' } }, 'no results'));
         return;
@@ -23257,6 +23649,7 @@ document.getElementById('search-input').addEventListener('keydown', function(ev)
   _searchGen++;
   closeSearchPopup();
   const direct = directDestinations(q);
+  trackSearchNow(q, direct.length);
   navigate(direct.length === 1 ? direct[0].href : searchPagePath(q));
 });
 

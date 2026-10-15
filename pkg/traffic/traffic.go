@@ -97,6 +97,7 @@ type Store struct {
 
 	mu      sync.Mutex
 	buf     []Record
+	evbuf   []Event
 	dropped int64
 	written int64
 }
@@ -114,11 +115,16 @@ func Open(path string, retentionDays int) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := initEventSchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{
 		db:            db,
 		salt:          newSaltRotator(),
 		retentionDays: retentionDays,
 		buf:           make([]Record, 0, 1024),
+		evbuf:         make([]Event, 0, 256),
 	}, nil
 }
 
@@ -300,13 +306,21 @@ func (s *Store) Flush() {
 	s.mu.Lock()
 	batch := s.buf
 	s.buf = make([]Record, 0, 1024)
+	evbatch := s.evbuf
+	s.evbuf = make([]Event, 0, 256)
 	s.mu.Unlock()
-	if len(batch) == 0 {
+	if len(batch) == 0 && len(evbatch) == 0 {
 		return
 	}
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// Events first, so a dashboard read that flushes before answering cannot
+	// see the request row for a beacon without the behaviour it carried.
+	s.flushEvents(evbatch)
+	if len(batch) == 0 {
+		return
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -366,7 +380,19 @@ func (s *Store) Prune(now time.Time) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	// Events share the retention, and are deleted in the same call rather than
+	// on their own timer: a retention that holds for one table and not the
+	// other is the kind of promise that is kept for 29 days and broken on the
+	// 30th, with nothing reporting it.
+	ne, err := s.pruneEvents(cutoff)
+	if err != nil {
+		return n, err
+	}
+	return n + ne, nil
 }
 
 // Run flushes and prunes until ctx is done, then flushes once more.
@@ -421,7 +447,7 @@ func (s *Store) Stats() Stats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Stats{
-		Buffered:      len(s.buf),
+		Buffered:      len(s.buf) + len(s.evbuf),
 		Written:       s.written,
 		Dropped:       s.dropped,
 		RetentionDays: s.retentionDays,

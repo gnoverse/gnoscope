@@ -259,6 +259,13 @@ func (q Query) where() (string, []any) {
 	if q.Kind != "probe" {
 		cond = append(cond, "kind <> 'probe'")
 	}
+	// The engagement beacon is this app reporting on itself. Its payload is in
+	// the events table and its request row describes nothing a reader did, so
+	// leaving it in would add one row per page left to every "all requests"
+	// figure on the page. Reachable the same way probes are, by asking for it.
+	if q.Kind != "beacon" {
+		cond = append(cond, "kind <> 'beacon'")
+	}
 	return strings.Join(cond, " AND "), args
 }
 

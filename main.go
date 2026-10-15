@@ -140,7 +140,7 @@ func run() error {
 		// behaviour inside every backup of the index and tie a retention delete
 		// to its write lock.
 		trafficDB = flag.String("traffic-db", "",
-			"SQLite path for the request log, e.g. gnoscope-traffic.db (empty = record nothing)")
+			"SQLite path for the request log and engagement events, e.g. gnoscope-traffic.db (empty = record nothing)")
 		trafficRetention = flag.Int("traffic-retention-days", 30,
 			"how many days of request rows to keep; 0 keeps them forever")
 
@@ -181,7 +181,7 @@ func run() error {
 		if *trafficRetention > 0 {
 			retention = fmt.Sprintf("%d days", *trafficRetention)
 		}
-		log.Printf("traffic: recording requests to %s (retention %s); /api/traffic is public and aggregate-only",
+		log.Printf("traffic: recording requests and engagement to %s (retention %s); /api/traffic is public and aggregate-only",
 			*trafficDB, retention)
 	}
 	defer db.Close()

@@ -480,7 +480,11 @@ func cacheable(r *http.Request) bool {
 		// which is the same shape as the /api/views bug below and would make
 		// page views undercount by exactly the amount people share pages.
 		return false
-	case "/api/traffic", "/api/traffic/health":
+	case traffic.EventPath:
+		// A write, and a POST, so nothing would cache it anyway. Named here
+		// so the list says so rather than leaving it to the method check.
+		return false
+	case "/api/traffic", "/api/traffic/health", "/api/traffic/engagement":
 		// Third time in this file, so the comment above was not enough and
 		// this one is longer.
 		//

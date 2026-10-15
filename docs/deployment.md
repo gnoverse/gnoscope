@@ -16,7 +16,7 @@ One static binary and one SQLite file. No runtime dependencies.
 | `-block-history-days` | `90` | days of block history to backfill. `0` backfills the full chain; a negative value stores no blocks at all |
 | `-analytics-script` | — | URL of an analytics script to load in the frontend. Empty serves no third-party script at all |
 | `-gnoshot` | — | base URL of a [gnoshot](https://github.com/gnoverse/gnoshot) capture service. Empty draws no realm screenshots at all |
-| `-traffic-db` | — | SQLite path for the request log, e.g. `gnoscope-traffic.db`. Empty records nothing |
+| `-traffic-db` | — | SQLite path for the request log and the engagement events, e.g. `gnoscope-traffic.db`. Empty records nothing |
 | `-traffic-retention-days` | `30` | days of request rows to keep. `0` keeps them forever |
 
 ## Configuration
@@ -240,6 +240,64 @@ trouble not to keep.
 
 Self-declared crawlers are stored but excluded from the default view, because a
 crawler is real load and is not a reader. `bots=1` brings them back.
+
+### Engagement: what happened on the page
+
+The request log says a page was served. It cannot say whether anybody read it.
+Staying on a page for four minutes, scrolling to the bottom and opening two
+tabs is zero requests, and a reader who leaves after two seconds is
+indistinguishable from one who reads for ten minutes.
+
+A second beacon, `POST /api/traffic/event`, carries what only the browser can
+see. It is part of the same `-traffic-db`: no extra flag, no extra file, and
+the same retention, because a retention that holds for one table and not the
+other is a promise kept for 29 days and broken on the 30th.
+
+Four kinds of event, and no others reach disk:
+
+| kind | when | carries |
+|---|---|---|
+| `leave` | the reader navigates away, hides the tab or closes it | how long the visit lasted, how far down the page it got, how many interactions it contained, and the page it came from |
+| `action` | a named control is clicked | the label |
+| `search` | a query settles, 2s after the last keystroke or on enter | the term and how many results it found |
+| `error` | an uncaught exception or rejection in the reader's browser | the message, clipped |
+
+**Labels come from structure, never from content.** This explorer renders
+on-chain text, all of which is attacker-controlled, so a label read off an
+element's text would put that text in a public dashboard. `actionLabel` reads
+`data-track`, `data-tab`, a rail link's id, a button's id, and for an outbound
+link the destination **hostname**. Anything else is unlabelled, which is a
+perfectly good answer.
+
+**Nothing identifies anybody.** The page sends behaviour; the visitor id is
+derived on arrival from the connection and the same key-of-the-day as the
+request log, so a client that puts an id in the body is ignored. Nothing here
+is exposed per-row.
+
+This is the one endpoint on the server anybody can write to, so every bound is
+enforced on arrival rather than trusted: the body is read through a
+`MaxBytesReader` at 16 KB, the batch is capped at 32 events, a dwell past four
+hours is clamped, a scroll outside 0-100 is clamped, labels and terms are
+clipped, and an unknown kind is dropped. A malformed body is answered `204`
+like any other: instrumentation is behind a reader, never in front of one.
+
+`GET /api/traffic/engagement?window=&host=&who=&limit=` reads it back, in
+aggregates only, and the `/traffic` page draws it under **engagement**: median
+and p90 time on page, median scroll, a bounce rate (under ten seconds, nothing
+touched) and an engaged rate (30s, or half the page, or one interaction), the
+distribution behind both medians, where readers stay and where they leave fast,
+entry and exit pages, the from → to edges between them, what was clicked, what
+was searched for, which searches found nothing, and what threw in somebody's
+browser.
+
+Two things to know before reading these numbers:
+
+- **A crawler produces request rows and no events at all**, because it runs no
+  JavaScript. An empty engagement section beside a busy request log means the
+  traffic was machines. The counts here are not a subset of the page views
+  above and must not be divided into them.
+- **A visit exists when it ends.** A page open right now is not counted yet, so
+  the newest window always understates slightly.
 
 `GET /api/traffic/health` reports the writer itself. **`dropped` climbing is the
 one number worth alerting on**: the buffer is capped at 50,000 unflushed rows,
