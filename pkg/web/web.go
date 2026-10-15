@@ -39,6 +39,14 @@ type Options struct {
 	// and then growing a column, which is worse than either outcome on its
 	// own.
 	Shots bool
+
+	// DefaultNetwork is the chain a visitor with no stored choice lands on.
+	//
+	// Injected for the same reason as Shots: the page asks for data before
+	// /api/networks could answer, so a default resolved from that fetch
+	// arrives after the first load has already picked a chain. Empty leaves
+	// the frontend's own fallback in place.
+	DefaultNetwork string
 }
 
 // Handler serves the frontend: a static file when the path names one, and
@@ -303,14 +311,15 @@ func withAnalytics(index []byte, src string) ([]byte, error) {
 func withFeatures(index []byte, opts Options) ([]byte, error) {
 	// Nothing to say when every flag is off, and saying nothing keeps the
 	// default build byte-identical to the embedded file.
-	if !opts.Shots {
+	if !opts.Shots && opts.DefaultNetwork == "" {
 		return index, nil
 	}
 	i := bytes.Index(index, []byte("</head>"))
 	if i < 0 {
 		return nil, fmt.Errorf("features: no </head> in index.html")
 	}
-	tag := "<script>window.FEATURES={shots:" + strconv.FormatBool(opts.Shots) + "};</script>\n"
+	tag := "<script>window.FEATURES={shots:" + strconv.FormatBool(opts.Shots) +
+		",defaultNetwork:" + strconv.Quote(opts.DefaultNetwork) + "};</script>\n"
 	out := make([]byte, 0, len(index)+len(tag))
 	out = append(out, index[:i]...)
 	out = append(out, tag...)

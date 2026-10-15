@@ -85,7 +85,11 @@ test('the transactions tab pages the window it was given', async ({ page }) => {
   // Every network on purpose. The fixture splits this caller across two chains
   // and neither half alone is longer than one page, so a per-network view would
   // pass this test whether or not anything was paged at all.
-  await page.goto(`/address/${BUSY_CALLER}?tab=transactions`);
+  //
+  // Spelled out in the URL rather than left to the default, which is now one
+  // chain: this test read 37 rows against its own comment the day that
+  // changed.
+  await page.goto(`/address/${BUSY_CALLER}?tab=transactions&network=all`);
   await settle(page);
 
   const api = await (await page.request.get(`/api/address/${BUSY_CALLER}`)).json();
@@ -117,7 +121,8 @@ test('the transactions tab pages the window it was given', async ({ page }) => {
 // assertion aimed at either one would pass on a page where only the other still
 // worked. This one fails if the filter stops filtering, whichever gave way.
 test('a filter typed on one page survives turning to the next', async ({ page }) => {
-  await page.goto(`/address/${BUSY_CALLER}?tab=transactions`);
+  // Both chains, for the reason above: one page of rows is the premise.
+  await page.goto(`/address/${BUSY_CALLER}?tab=transactions&network=all`);
   await settle(page);
 
   const txPane = pane(page, 'transactions');
@@ -312,7 +317,7 @@ test('the native ledger table is one server page, and pages', async ({ page }) =
 // refuse it the same way, or the same question answers differently depending
 // which page asked it.
 test('defi refuses the all-networks view instead of adding two chains up', async ({ page }) => {
-  await page.goto(`/address/${GRC20_FUNDER}?tab=defi`);
+  await page.goto(`/address/${GRC20_FUNDER}?tab=defi&network=all`);
   await settle(page);
   await expect(pane(page, 'defi')).toContainText('denominated per chain');
 });

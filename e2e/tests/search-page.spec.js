@@ -60,7 +60,10 @@ test('the popup shows a few rows per group and links to the rest', async ({ page
 
 test('enter opens the full results, and the strip narrows and widens them', async ({ page }) => {
   const seen = watch(page);
-  await page.goto('/');
+  // Every chain: the fixture spreads "hub" across both, and the four groups
+  // this asserts are only all non-empty in the blended view. Named rather than
+  // inherited, since the default is one chain now.
+  await page.goto('/?network=all');
   const input = await type(page, 'hub');
   await expect(page.locator('#search-results .search-result').first()).toBeVisible({ timeout: 15_000 });
   await input.press('Enter');
@@ -112,7 +115,9 @@ test('one user registered on two chains is one row naming both', async ({ page }
       ],
     },
   }));
-  await page.goto('/');
+  // The blended view, named rather than inherited: the default is one chain
+  // now, and this test is about what two chains' answers collapse into.
+  await page.goto('/?network=all');
   await type(page, 'twin');
   const rows = page.locator('#search-results .search-result', { hasText: '@twin' });
   await expect(rows.first()).toBeVisible({ timeout: 15_000 });
