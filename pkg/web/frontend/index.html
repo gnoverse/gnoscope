@@ -13689,11 +13689,15 @@ async function loadTraffic(fromURL) {
   trafficEngagementSection(engageInto);
 
   container.appendChild(el('div', { className: 'section-sub', style: { marginTop: '24px' } },
-    'recorded by this server, from requests it served. no address and no user-agent string is kept: '
+    'recorded by this server, from requests it served and from what the page reports about itself. '
+    + 'no address and no user-agent string is kept: '
     + 'the visitor id is a keyed hash whose key is regenerated daily and never written down. every '
     + 'class of client is stored and reachable from the who filter; the cache warmer is the one '
     + 'exception and is never counted in any view, because it is this server replaying paths '
-    + 'against itself.'));
+    + 'against itself. the engagement figures come from a beacon the page sends on its way out, '
+    + 'carrying how long a visit lasted, how far it scrolled and which named controls it touched; '
+    + 'a control is named by the markup that owns it, never by the text it displays, because that '
+    + 'text is on-chain content.'));
 }
 
 
