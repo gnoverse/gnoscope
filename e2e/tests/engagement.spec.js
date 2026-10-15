@@ -38,21 +38,31 @@ test.describe('engagement beacon', () => {
     const seen = watch(page);
 
     await open(page, '/realms');
-    // Long enough that a dwell of zero would be a bug rather than a fast
-    // machine, and short enough not to slow the suite.
-    await page.waitForTimeout(1200);
+    // Past five seconds, so this visit lands in a dwell bucket the rest of the
+    // suite does not fill: every other spec navigates in well under a second.
+    //
+    // Asserting on a percentile instead was the first version, and it failed
+    // in the full run while passing alone: the traffic database is shared by
+    // all 649 tests, so p90 is a statistic about the suite's browsing and came
+    // back at 844ms. A test in a shared fixture may only assert on evidence it
+    // put there itself. The percentile arithmetic is pinned where it can be:
+    // TestEngagementReadsVisits in pkg/traffic.
+    await page.waitForTimeout(5500);
     // Leaving the page is what emits the visit: the event carries how long it
     // lasted, so it cannot exist before it ends.
     await open(page, '/packages');
 
     const eng = await recorded(page);
     expect(eng.visits, 'a completed visit').toBeGreaterThan(0);
-    expect(eng.p90_dwell_ms, 'the longest visits are the ones this test made').toBeGreaterThan(900);
+    const bucket = (eng.dwell_buckets || []).find(b => b.label === '5-15s');
+    expect(bucket, 'the 5-15s bucket this visit belongs in').toBeTruthy();
+    expect(bucket.hits).toBeGreaterThan(0);
     expect(eng.median_scroll_pct).toBeGreaterThanOrEqual(0);
     expect(eng.median_scroll_pct).toBeLessThanOrEqual(100);
     // A visit nobody touched, under ten seconds, is a bounce. This one is,
     // which pins that the rate is computed rather than left at zero.
     expect(eng.bounce_rate).toBeGreaterThan(0);
+    expect(eng.engaged_rate).toBeLessThanOrEqual(1);
 
     expect(unexpected(seen.jsErrors), 'js errors').toEqual([]);
   });
@@ -75,9 +85,15 @@ test.describe('engagement beacon', () => {
     }
   });
 
-  test('a search is recorded once it settles, with its result count', async ({ page }) => {
+  test('a search is recorded once it settles, and a term that finds nothing says so', async ({ page }) => {
+    // A term no other spec can produce, for the same reason the dwell test
+    // uses a bucket of its own: the traffic database is shared by the whole
+    // suite, and an assertion about "how many rows say gno" is an assertion
+    // about what every other file happened to type.
+    const term = 'zzzz-no-such-realm';
+
     await open(page, '/realms');
-    await page.locator('#search-input').fill('gno');
+    await page.locator('#search-input').fill(term);
     // Past the popup's 200ms debounce and the 2s settle, so one search is
     // recorded rather than one per keystroke.
     await page.waitForTimeout(2600);
@@ -85,12 +101,15 @@ test.describe('engagement beacon', () => {
 
     const eng = await recorded(page);
     const terms = (eng.searches || []).map(s => s.label);
-    expect(terms, 'the settled term').toContain('gno');
-    // Typing g, gn, gno would file three searches. The settle exists so it
+    expect(terms, 'the settled term').toContain(term);
+    // Typing z, zz, zzz would file three searches. The settle exists so it
     // files one, and fill() types the whole string at once, so the prefixes
     // never reach the popup at all: what this pins is that one keystroke burst
     // is one row.
-    expect(terms.filter(t => t === 'gno').length).toBe(1);
+    expect(terms.filter(t => t === term).length).toBe(1);
+    // The count is recorded, not just the term, which is what makes the panel
+    // a list of missing features rather than a list of words.
+    expect((eng.zero_searches || []).map(s => s.label), 'a term that found nothing').toContain(term);
   });
 
   test('/traffic draws the engagement section from what the suite did', async ({ page }) => {
