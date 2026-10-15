@@ -1,0 +1,121 @@
+import { expect, test } from '@playwright/test';
+
+import { settle, unexpected, watch } from './helpers.js';
+
+// The engagement beacon, asserted on what the server actually recorded.
+//
+// Every failure mode of this instrumentation is silent by design: it is
+// fire-and-forget, it never awaits, and it swallows its own errors so a bug in
+// analytics cannot break the explorer. Nothing on the page ever says the
+// beacon stopped working, so something has to check that it still does.
+//
+// Asserted through /api/traffic/engagement rather than by intercepting the
+// POST. The beacon is sent with navigator.sendBeacon from a page the browser
+// is in the middle of tearing down, and Playwright's request events do not see
+// it: the first version of this file collected zero requests while the server
+// was recording every event, which is a test that cannot fail for the reason
+// it claims to check. The endpoint is the honest oracle, and it exercises the
+// whole path.
+
+async function open(page, path) {
+  await page.goto(path);
+  await settle(page);
+}
+
+// recorded reads back what the server stored. who=all because which client
+// class this harness lands in is a property of the machine: CI's bundled
+// Chromium reports HeadlessChrome and is classified a crawler, a headed run is
+// a browser, and neither is the feature under test.
+async function recorded(page) {
+  return page.evaluate(async () => {
+    const r = await fetch('/api/traffic/engagement?window=24h&who=all&limit=100');
+    return r.json();
+  });
+}
+
+test.describe('engagement beacon', () => {
+  test('a visit reports how long it lasted', async ({ page }) => {
+    const seen = watch(page);
+
+    await open(page, '/realms');
+    // Long enough that a dwell of zero would be a bug rather than a fast
+    // machine, and short enough not to slow the suite.
+    await page.waitForTimeout(1200);
+    // Leaving the page is what emits the visit: the event carries how long it
+    // lasted, so it cannot exist before it ends.
+    await open(page, '/packages');
+
+    const eng = await recorded(page);
+    expect(eng.visits, 'a completed visit').toBeGreaterThan(0);
+    expect(eng.p90_dwell_ms, 'the longest visits are the ones this test made').toBeGreaterThan(900);
+    expect(eng.median_scroll_pct).toBeGreaterThanOrEqual(0);
+    expect(eng.median_scroll_pct).toBeLessThanOrEqual(100);
+    // A visit nobody touched, under ten seconds, is a bounce. This one is,
+    // which pins that the rate is computed rather than left at zero.
+    expect(eng.bounce_rate).toBeGreaterThan(0);
+
+    expect(unexpected(seen.jsErrors), 'js errors').toEqual([]);
+  });
+
+  test('a click is named from structure, never from on-chain text', async ({ page }) => {
+    await open(page, '/realms');
+    await page.locator('nav a#nav-packages').click();
+    await settle(page);
+    // Queued events are flushed when the page goes away.
+    await open(page, '/traffic');
+
+    const eng = await recorded(page);
+    const labels = (eng.actions || []).map(a => a.label);
+    expect(labels, 'the rail click').toContain('nav:packages');
+    // The whole point of deriving labels structurally: this explorer renders
+    // attacker-controlled on-chain text, and a label read off an element would
+    // carry it into the dashboard. Every label is one of the known shapes.
+    for (const l of labels) {
+      expect(l, `label ${l} is not one of the structural shapes`).toMatch(/^(nav|tab|out|button):/);
+    }
+  });
+
+  test('a search is recorded once it settles, with its result count', async ({ page }) => {
+    await open(page, '/realms');
+    await page.locator('#search-input').fill('gno');
+    // Past the popup's 200ms debounce and the 2s settle, so one search is
+    // recorded rather than one per keystroke.
+    await page.waitForTimeout(2600);
+    await open(page, '/packages');
+
+    const eng = await recorded(page);
+    const terms = (eng.searches || []).map(s => s.label);
+    expect(terms, 'the settled term').toContain('gno');
+    // Typing g, gn, gno would file three searches. The settle exists so it
+    // files one, and fill() types the whole string at once, so the prefixes
+    // never reach the popup at all: what this pins is that one keystroke burst
+    // is one row.
+    expect(terms.filter(t => t === 'gno').length).toBe(1);
+  });
+
+  test('/traffic draws the engagement section from what the suite did', async ({ page }) => {
+    const seen = watch(page);
+
+    await open(page, '/realms');
+    await page.waitForTimeout(600);
+    await open(page, '/packages');
+    await page.waitForTimeout(600);
+
+    // who=all through the URL rather than by clicking, for the same reason
+    // recorded() uses it: the harness's client class is a property of the
+    // machine and the default view filters crawlers out.
+    await open(page, '/traffic?who=all');
+    const content = page.locator('#traffic-content');
+    // The section is appended after a second request resolves, so it is the
+    // one part of this page that can be missing without anything saying so.
+    await expect(content.locator('.section-title', { hasText: /^engagement$/i })).toBeVisible();
+    await expect(content).not.toContainText('nothing recorded in this window. a visit is reported');
+
+    const titles = (await content.locator('.section-title').allInnerTexts()).map(t => t.toLowerCase());
+    expect(titles).toContain('how long they stayed');
+    expect(titles).toContain('how far they scrolled');
+
+    expect(unexpected(seen.jsErrors), 'js errors').toEqual([]);
+    expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);
+  });
+});

@@ -81,6 +81,17 @@ var assetExts = []string{
 // every in-app navigation after the first.
 const PageViewPath = "/api/traffic/pageview"
 
+// EventPath is the beacon carrying what the reader did on the page it already
+// reported: how long they stayed, how far they scrolled, what they clicked,
+// what they searched for, what broke.
+//
+// Unlike PageViewPath its request row is not the event. The behaviour goes to
+// the events table and the row left behind is pure instrumentation, so it is
+// classified "beacon" and excluded from every request panel the way a scanner
+// probe is: counted as a request where requests are what is being measured,
+// never mixed into a view of what readers opened.
+const EventPath = "/api/traffic/event"
+
 // Kind buckets a request by what it is for, which is the split every panel on
 // the dashboard is drawn along: a person reading pages, an agent calling tools,
 // and the machinery underneath both.
@@ -94,6 +105,8 @@ func Kind(route, path, mcpPath string) string {
 	switch {
 	case route == PageViewPath:
 		return "page"
+	case route == EventPath:
+		return "beacon"
 	case route == mcpPath || strings.HasPrefix(route, mcpPath+"/"):
 		return "mcp"
 	case strings.HasPrefix(route, "/api/shield/"), strings.HasPrefix(route, "/_badges"):
