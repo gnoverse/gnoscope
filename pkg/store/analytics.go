@@ -246,9 +246,16 @@ func (d *DB) GetGasStats(network string, topN int) (*GasStats, error) {
 // the network has no data yet.
 
 type Stats struct {
-	TotalTxs     int `json:"total_txs"`
-	TotalCalls   int `json:"total_calls"`
-	TotalDeploys int `json:"total_deploys"`
+	// TotalTxs counts transactions, TotalMessages the messages inside them.
+	// They are not the same number and the gap is not small: one transaction
+	// carries one or more messages, so summing the per-kind tables below put
+	// mainnet's headline at 173,250 where the chain holds 151,458 transactions
+	// (2026-10-15). Every other explorer counts transactions, so anyone
+	// comparing two sites saw gnoscope inventing 14% of a chain.
+	TotalTxs      int `json:"total_txs"`
+	TotalMessages int `json:"total_messages"`
+	TotalCalls    int `json:"total_calls"`
+	TotalDeploys  int `json:"total_deploys"`
 	// StorageDeposit is the chain's net storage cost in ugnot and StorageBytes
 	// the data currently held, both net of unlocks. Zero is a real answer on a
 	// chain whose realms have all been refunded; it is not "unknown".
@@ -284,7 +291,13 @@ func (d *DB) GetStats(network string) (*Stats, error) {
 	d.db.QueryRow(`SELECT COUNT(*) FROM packages` + nf + ` AND is_realm = 0`).Scan(&s.TotalPackages)
 	d.db.QueryRow(`SELECT COUNT(*) FROM msg_runs` + nf).Scan(&s.TotalMsgRuns)
 	d.db.QueryRow(`SELECT COUNT(*) FROM bank_sends` + nf).Scan(&s.TotalSends)
-	s.TotalTxs = s.TotalCalls + s.TotalDeploys + s.TotalMsgRuns + s.TotalSends
+	s.TotalMessages = s.TotalCalls + s.TotalDeploys + s.TotalMsgRuns + s.TotalSends
+	// Transactions come from the table keyed (network, tx_hash), which is the
+	// only place one transaction is one row. The sum above cannot answer this:
+	// it counts messages, and it also misses a transaction whose every message
+	// is of a kind with no table here (589 enable_package and 24 session
+	// messages on mainnet, 2026-10-15).
+	d.db.QueryRow(`SELECT COUNT(*) FROM transactions` + nf).Scan(&s.TotalTxs)
 	// Per (caller, network): the same address on two chains is two actors, and
 	// collapsing them undercounts. 19,054 blended against 19,117 on production.
 	d.db.QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT caller, network FROM calls` + nf + `)`).Scan(&s.UniqueCallers)
