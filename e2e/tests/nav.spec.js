@@ -162,9 +162,18 @@ test('switching network writes ?network= and keeps the rest of the URL', async (
   expect(params.get('type')).toBe('deploy');
   expect(params.get('status')).toBe('fail');
 
-  // 'all' is the default and is deleted rather than spelled out, the same rule
-  // every other parameter on the site follows.
+  // The DEFAULT is what gets deleted rather than spelled out, the same rule
+  // every other parameter on the site follows. That used to be 'all', so the
+  // blended view was the one with no parameter; now the default is a single
+  // chain, and 'all' has to be written down or a link to it cannot exist.
   await page.locator('#network-select').selectOption('all');
+  await settle(page);
+  const blended = new URL(page.url()).searchParams;
+  expect(blended.get('network'), 'a blended view that cannot be linked to is not a view').toBe('all');
+  expect(blended.get('type')).toBe('deploy');
+
+  // And the default itself, which is the harness's first configured chain.
+  await page.locator('#network-select').selectOption('alpha');
   await settle(page);
   const after = new URL(page.url()).searchParams;
   expect(after.has('network')).toBe(false);

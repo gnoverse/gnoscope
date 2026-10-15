@@ -3658,7 +3658,14 @@ function onNetworkChange() {
   // network switch resets it.
   const transferGraph = DASHBOARDS.flatMap(s => s.charts).find(c => c.id === 'transfer-graph');
   if (transferGraph && transferGraph.state) transferGraph.state.ego = null;
-  urlSetParam('network', n === 'all' ? '' : n);
+  // The default is what stays out of the URL, and 'all' is no longer it.
+  //
+  // While the default WAS 'all', the absence of the parameter meant "every
+  // chain" and the blended view was shareable by accident. Now that a link
+  // with no network= means one chain to whoever opens it, 'all' has to be
+  // written down or it cannot be linked to at all. The server reads it:
+  // networkParam treats 'all' and '' alike.
+  urlSetParam('network', n === _defaultNetwork ? '' : n);
   renderFooterIndexer();
   renderNetworkSwatch();
   refreshHealthChip();
@@ -12665,10 +12672,15 @@ function appsWindow() {
 // The chain to offer when none is picked. mainnet when it is configured,
 // because that is the one a visitor almost always means; otherwise the first
 // configured chain, so a deployment without mainnet still gets the offer.
+// One rule for "which chain by default", shared with getNetwork's fallback.
+//
+// This used to carry its own copy (mainnet if present, else the first), which
+// is the same rule the server now injects. Two copies of a default is one
+// stale copy waiting to disagree with the header.
 function defaultNetworkName() {
   const names = (_networks || []).map(n => (typeof n === 'string' ? n : n.id || n.name)).filter(Boolean);
   if (!names.length) return '';
-  return names.includes('mainnet') ? 'mainnet' : names[0];
+  return names.includes(_defaultNetwork) ? _defaultNetwork : names[0];
 }
 
 // Goes through the header's own select and its change handler rather than
