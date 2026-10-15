@@ -711,7 +711,7 @@ func run() error {
 		httpapi.MCPPath, httpapi.MCPToolCount(), *mcpPerMinute, *mcpConcurrent)
 
 	// Frontend: SPA handler serves index.html for all non-API routes
-	frontend, err := web.Handler(web.Options{AnalyticsScript: *analyticsScript, Shots: api.ShotsEnabled()})
+	frontend, err := web.Handler(web.Options{AnalyticsScript: *analyticsScript, Shots: api.ShotsEnabled(), DefaultNetwork: api.DefaultNetwork()})
 	if err != nil {
 		return err
 	}

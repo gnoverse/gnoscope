@@ -390,6 +390,10 @@ tr { white-space: nowrap; }
    message-type palette below. */
 .badge-ok { background: rgba(81,207,102,0.15); color: var(--green); }
 .badge-fail { background: rgba(255,107,107,0.15); color: var(--red); }
+/* Not a status: it says the figures beside it are a sum across chains. Amber
+   because green and red are spoken for above, and because a blended total is
+   neither a success nor a failure, it is a number that needs a caveat. */
+.badge-blend { background: rgba(255,193,7,0.15); color: #ffc107; }
 /* Message types, one hue each.
    Deliberately avoiding green and red: those are the status colours, and the
    type and status badges sit two columns apart on the same row. A successful
@@ -3622,7 +3626,26 @@ function linkify(text) {
 }
 
 // --- Network management ---
-function getNetwork() { return localStorage.getItem('gnoscope-network') || 'all'; }
+// A visitor with no stored choice lands on ONE chain, never on the blend.
+//
+// The default was 'all', which sums every configured chain into a single
+// figure: mainnet's 153,227 transactions plus onyx's 5,510 printed as 158,737,
+// a number true of no chain anyone can check. It looked like a gnoscope bug to
+// a reader comparing against another explorer, and the giveaway was that the
+// same page showed two different sets of numbers in two browser profiles: one
+// had picked mainnet once, the other was on the default (reported 2026-10-15).
+//
+// 'all' stays, as something you choose.
+//
+// The value comes from the server, injected into the document beside the other
+// flags the first paint depends on, because it has to be known before the
+// first request for data goes out. Resolving it from /api/networks is too
+// late: that fetch races route(), so the page has already asked for a chain by
+// the time the list lands, and correcting the selector afterwards leaves the
+// header naming one chain while the tiles hold another's numbers. Caught by
+// network-default.spec.js against a deployment that serves no mainnet.
+let _defaultNetwork = (window.FEATURES && window.FEATURES.defaultNetwork) || 'mainnet';
+function getNetwork() { return localStorage.getItem('gnoscope-network') || _defaultNetwork; }
 function setNetwork(n) { localStorage.setItem('gnoscope-network', n); }
 function onNetworkChange() {
   const sel = document.getElementById('network-select');
@@ -3873,6 +3896,13 @@ async function initNetworkSelector() {
   try {
     const nets = await fetch('/api/networks').then(r => r.json());
     _networks = nets || [];
+    // A last-resort correction for a page served without the injected flag
+    // (an old cached document, or a host serving the embedded file directly).
+    // The server's value is the one that arrives in time; this only keeps the
+    // selector from showing a chain this instance does not serve.
+    if (_networks.length && !_networks.some(n => n.id === _defaultNetwork)) {
+      _defaultNetwork = _networks[0].id;
+    }
     const sel = document.getElementById('network-select');
     sel.innerHTML = '';
     const all = document.createElement('option');
@@ -6273,6 +6303,28 @@ function renderHomeWindow(pulse, current) {
   const range = document.getElementById('home-window-range');
   if (range) {
     range.textContent = '';
+    // Blending is never silent. Every tile above is a sum across chains when
+    // this is on, and a sum of mainnet and a testnet is a figure that belongs
+    // to neither: a reader who does not know that reads it as mainnet's and
+    // reports us as wrong, which is exactly what happened.
+    if (getNetwork() === 'all') {
+      const blend = badge('blend', 'summing every chain');
+      blend.style.marginRight = '8px';
+      blend.title = 'every figure on this page is the total across these chains, so it matches no single chain. pick one in the header to compare against another explorer.';
+      range.appendChild(blend);
+      // Named once the list is in hand. networksList waits rather than
+      // samples: _networks fills from a fetch that races the first route(),
+      // so reading it here draws the generic text on a cold load and the
+      // chains' names on every load after it, which is the inconsistency this
+      // badge exists to prevent.
+      networksList().then(nets => {
+        const chains = (nets || []).map(n => n.id);
+        if (chains.length && blend.isConnected) {
+          blend.textContent = 'summing ' + chains.join(' + ');
+          blend.setAttribute('data-hl', 'badge:' + blend.textContent);
+        }
+      });
+    }
     if (pulse?.window?.since) {
       // An absolute start, because that is the boundary a reader checks a
       // figure against, and a ticking age for the close, because that is what

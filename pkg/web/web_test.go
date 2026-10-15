@@ -508,7 +508,10 @@ func TestFeatureFlagIsInjectedOnlyWhenOn(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h(rec, httptest.NewRequest("GET", "/", nil))
 		body := rec.Body.Bytes()
-		want := []byte("window.FEATURES={shots:true}")
+		// A prefix, not the whole literal: the object carries more than one
+		// flag now, and pinning its full text makes every new flag look like a
+		// regression in this test.
+		want := []byte("window.FEATURES={shots:true,")
 		i := bytes.Index(body, want)
 		if i < 0 {
 			t.Fatalf("no %q in the served body", want)
@@ -518,6 +521,43 @@ func TestFeatureFlagIsInjectedOnlyWhenOn(t *testing.T) {
 		// the same as no flag at all.
 		if head := bytes.Index(body, []byte("</head>")); i > head {
 			t.Fatalf("FEATURES at %d is after </head> at %d", i, head)
+		}
+	})
+
+	t.Run("the default network is injected on its own", func(t *testing.T) {
+		// The chain a fresh visitor lands on has to be known before the first
+		// request for data goes out, so it rides the same injection as Shots
+		// rather than being fetched. An instance with no capture service still
+		// gets the block.
+		h, err := Handler(Options{DefaultNetwork: "onyx"})
+		if err != nil {
+			t.Fatalf("Handler: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest("GET", "/", nil))
+		body := rec.Body.Bytes()
+		want := []byte(`defaultNetwork:"onyx"`)
+		i := bytes.Index(body, want)
+		if i < 0 {
+			t.Fatalf("no %q in the served body", want)
+		}
+		if head := bytes.Index(body, []byte("</head>")); i > head {
+			t.Fatalf("the default network at %d is after </head> at %d", i, head)
+		}
+	})
+
+	t.Run("nothing configured injects nothing", func(t *testing.T) {
+		// An instance with no networks and no shots serves the embedded file
+		// byte for byte, so the page keeps its own fallback rather than being
+		// told the default is the empty string.
+		h, err := Handler(Options{})
+		if err != nil {
+			t.Fatalf("Handler: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest("GET", "/", nil))
+		if bytes.Contains(rec.Body.Bytes(), []byte("window.FEATURES={")) {
+			t.Error("FEATURES was injected with nothing to declare")
 		}
 	})
 
