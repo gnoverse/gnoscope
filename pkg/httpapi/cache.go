@@ -120,6 +120,16 @@ var endpointTTL = map[string]time.Duration{
 	// 8.0s cold, and the only endpoint outside govdao that is not already
 	// comfortably inside the default TTL.
 	"/api/allevents": 2 * time.Minute,
+	// ~13s cold after the single-query fix, and it was ~31s before it: two
+	// full-chain indexer queries for every MsgEnablePackage and
+	// MsgRejectPackage the chain holds, which is what the approval-speed stats
+	// are computed from. The ten-times rule puts the floor at 130s.
+	//
+	// The page it serves is visited a few times a day, far outside TTL+grace,
+	// so this does not spare that reader the wait — only a warmer would. What
+	// it spares is the second reader, and every reload while someone is
+	// actually looking at the queue.
+	"/api/inert/history": 5 * time.Minute,
 	// Not slow (tens of milliseconds cold on gnoland1), but its activity
 	// numbers count 30 days of calls, so a recompute every sync pass would
 	// move them by a handful of calls on a window of thousands: nothing a

@@ -491,8 +491,7 @@ func (a *API) HandleInertQueue(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) HandleInertHistory(w http.ResponseWriter, r *http.Request) {
 	network := a.networkParam(r)
-	limit := eventTxLimit(r)
-	enabled, rejected := a.inertLifecycleEvents(r.Context(), network, limit)
+	enabled, rejected := a.inertLifecycleEvents(r.Context(), network)
 
 	queue, _ := FetchInertQueue(r.Context(), network, a.rpcURLFor(network))
 	stats := ComputeInertStats(len(queue), enabled, rejected)
@@ -536,14 +535,23 @@ func (a *API) HandleInertPackage(w http.ResponseWriter, r *http.Request) {
 // looking up the block_time at both the enable's own height and the
 // submission height it names.
 
-func (a *API) inertLifecycleEvents(ctx context.Context, network string, limit int) (enabled, rejected []InertLifecycleEvent) {
+func (a *API) inertLifecycleEvents(ctx context.Context, network string) (enabled, rejected []InertLifecycleEvent) {
 	client := a.clientFor(network)
 	if client == nil {
 		return nil, nil
 	}
 
-	enableTxs, _ := client.GetPackageEnableTransactions(ctx, limit)
-	rejectTxs, _ := client.GetPackageRejectTransactions(ctx, limit)
+	// Concurrently: two independent indexer queries, and the slower one is the
+	// whole wait either way. Sequentially they added up — measured against
+	// mainnet, 4.85s for the enables behind 12.77s for the rejects — for no
+	// reason beyond the order the lines were written in.
+	var enableTxs, rejectTxs []indexer.Transaction
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); enableTxs, _ = client.GetPackageEnableTransactions(ctx) }()
+	go func() { defer wg.Done(); rejectTxs, _ = client.GetPackageRejectTransactions(ctx) }()
+	wg.Wait()
+
 	a.stampBlockTimes(ctx, network, client, enableTxs)
 	a.stampBlockTimes(ctx, network, client, rejectTxs)
 
