@@ -43,16 +43,42 @@ var nsCache = struct {
 	by map[string]nsCacheEntry
 }{by: map[string]nsCacheEntry{}}
 
+// nsResolveConcurrency bounds the fan-out below. Each resolve is one
+// lightweight abci_query the node answers from local state, not a write, so the
+// node is not the reason for a bound; the bound is there so a chain that grows
+// to hundreds of namespaces opens tens of connections rather than hundreds.
+const nsResolveConcurrency = 24
+
+// nsResolveTimeout bounds one resolve. Without it the only deadline is the
+// reader's own context, which means one unresponsive query holds a page open
+// for as long as the reader is willing to wait — and this runs on the boot path
+// of every page, so that is every page.
+//
+// A name that times out is skipped exactly like one that errors: absent from
+// the map, not cached as unregistered.
+const nsResolveTimeout = 5 * time.Second
+
 // NamespaceOwners resolves each name to the account registered for it.
 //
 // Unregistered names are omitted rather than guessed at: a namespace can hold
 // packages without a registration (leon does on mainnet), and inventing an
 // owner for it is exactly the error this exists to avoid.
 //
-// One query per name, which is affordable because the set is small and bounded
-// by what has actually been deployed — twelve on mainnet — and cached. A name
-// that fails to resolve is skipped, not cached as absent, so a transient RPC
-// failure does not pin it as unregistered for the whole TTL.
+// One query per name, fanned out. It used to be a sequential loop, written when
+// the comment here could say the set was "bounded by what has actually been
+// deployed — twelve on mainnet". It is 19 on mainnet and 23 on onyx now, and
+// the loop's cost is the sum of them: measured against rpc.gno.land, an
+// abci_query answers in 130-460 ms when the node is healthy, so 19 of them in a
+// row is 2.5-8.7 s, and far worse when it is not.
+//
+// This endpoint is on the boot path of every page, behind a 10-minute cache, so
+// the first reader of each window pays that whole sum while everyone else pays
+// nothing. On the deployment's own /api/traffic it was the worst offender on
+// the site by a wide margin: 35 of the 39 cache misses over 10s in a week, up
+// to 59.3 s.
+//
+// A name that fails to resolve is skipped, not cached as absent, so a transient
+// RPC failure does not pin it as unregistered for the whole TTL.
 func (a *API) NamespaceOwners(ctx context.Context, network string, names []string) map[string]string {
 	rpcURL := a.rpcURLFor(network)
 	if rpcURL == "" {
@@ -66,15 +92,33 @@ func (a *API) NamespaceOwners(ctx context.Context, network string, names []strin
 	}
 	nsCache.mu.Unlock()
 
+	resolved := make([]string, len(names))
+	sem := make(chan struct{}, nsResolveConcurrency)
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, name string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			callCtx, cancel := context.WithTimeout(ctx, nsResolveTimeout)
+			defer cancel()
+
+			expr := fmt.Sprintf(`%s.ResolveName(%q)`, namespaceRealm, name)
+			out, err := fetchABCIQuery(callCtx, rpcURL, "vm/qeval", expr)
+			if err != nil {
+				return
+			}
+			resolved[i] = nsAddress.FindString(out)
+		}(i, name)
+	}
+	wg.Wait()
+
 	owners := map[string]string{}
-	for _, name := range names {
-		expr := fmt.Sprintf(`%s.ResolveName(%q)`, namespaceRealm, name)
-		out, err := fetchABCIQuery(ctx, rpcURL, "vm/qeval", expr)
-		if err != nil {
-			continue
-		}
-		if m := nsAddress.FindString(out); m != "" {
-			owners[name] = m
+	for i, name := range names {
+		if resolved[i] != "" {
+			owners[name] = resolved[i]
 		}
 	}
 
