@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gnoverse/gnoscope/pkg/store"
@@ -542,9 +543,25 @@ func FetchGovDAOProposal(ctx context.Context, network, rpcURL string, id int) Go
 	key := network + ":" + strconv.Itoa(id)
 	return govDAOProposalCache.get(ctx, key, func(ctx context.Context) (GovDAOProposalDetail, bool) {
 		query := fmt.Sprintf("%s:%d", store.GovDAOPathPrefix, id)
+
+		// The two renders together, because neither reads the other and a
+		// reader was waiting for their sum. Measured against rpc.gno.land on
+		// 2026-10-20, one vm/qrender for a proposal costs 0.57s and its votes
+		// 0.78s; in sequence that is 1.35s of a cold proposal page, which is
+		// keyed on the id and so can never be warmed.
+		var detailMD, votesMD string
+		var detailErr, votesErr error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); detailMD, detailErr = fetchGovDAORender(ctx, rpcURL, query) }()
+		go func() { defer wg.Done(); votesMD, votesErr = fetchGovDAORender(ctx, rpcURL, query+"/votes") }()
+		wg.Wait()
+
+		// Built in the order the fetches used to run, so the Errors list reads
+		// the same way it always did: the detail's complaint before the votes'.
 		detail := GovDAOProposalDetail{ID: id}
-		if detailMD, err := fetchGovDAORender(ctx, rpcURL, query); err != nil {
-			detail.Errors = append(detail.Errors, "detail: "+err.Error())
+		if detailErr != nil {
+			detail.Errors = append(detail.Errors, "detail: "+detailErr.Error())
 		} else if detailMD == "" {
 			detail.Errors = append(detail.Errors, "no such proposal")
 		} else {
@@ -558,8 +575,8 @@ func FetchGovDAOProposal(ctx context.Context, network, rpcURL string, id int) Go
 				detail.Errors = append(detail.Errors, "no such proposal")
 			}
 		}
-		if votesMD, err := fetchGovDAORender(ctx, rpcURL, query+"/votes"); err != nil {
-			detail.Errors = append(detail.Errors, "votes: "+err.Error())
+		if votesErr != nil {
+			detail.Errors = append(detail.Errors, "votes: "+votesErr.Error())
 		} else {
 			detail.Votes = parseGovDAOVotes(votesMD)
 		}
