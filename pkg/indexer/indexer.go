@@ -1817,46 +1817,64 @@ func (c *Client) GetGovDAOProposalCreations(ctx context.Context) ([]Transaction,
 	return result.GetTransactions, nil
 }
 
+// allTransactionsMatching fetches every transaction matching where, in one
+// query, newest first.
+//
+// This is the right shape for a predicate the whole chain holds few of. The
+// widening window above exists to answer "the most recent N", and it earns its
+// keep when N is dense near the tip: it finds them in a narrow window and stops.
+// When the predicate is sparse it is the worst possible way to ask, because each
+// round re-queries from scratch over a window eight times wider, so every round
+// but the last is work the last round does again. Measured against
+// indexer.gno.land on 2026-10-19, mainnet at height 925,618, asking for the 200
+// most recent of each:
+//
+//	MsgRejectPackage  0.54 + 0.30 + 0.48 + 1.36 + 6.10 + 12.77 = 21.55s  (25 rows exist)
+//	MsgEnablePackage  0.37 + 0.33 + 0.28 + 0.84 + 2.99 +  4.85 =  9.66s  (620 rows exist)
+//
+// Neither predicate can reach 200 rows before the bottom, so both walked all six
+// windows to end up running the full-chain query anyway. Asking for it directly
+// costs 12.77s and 4.85s.
+//
+// A chain holding more of these than the indexer will return in one response
+// answers with ErrQueryTooLarge and the rows it kept. The order is DESC, so those
+// are the newest ones, which is what a lifecycle feed wants; callers that prefer
+// a short answer to no answer keep the rows and drop the error.
+func (c *Client) allTransactionsMatching(ctx context.Context, where string) ([]Transaction, error) {
+	var result struct {
+		GetTransactions []Transaction `json:"getTransactions"`
+	}
+	q := fmt.Sprintf(`{
+		getTransactions(
+			where: { %s }
+			order: { heightAndIndex: DESC }
+		) { %s }
+	}`, where, c.lightFields(ctx))
+	err := c.query(ctx, q, nil, &result)
+	return result.GetTransactions, err
+}
+
 // GetPackageEnableTransactions fetches every MsgEnablePackage this chain has
 // seen — the approval half of the "inert" code-submission policy's package
 // lifecycle (see inert.go). Unlike gov/dao's old substring predicate, these
 // fields are typed and marked @filterable in the indexer's own schema, so
 // this is an ordinary indexed lookup, not a scan.
-func (c *Client) GetPackageEnableTransactions(ctx context.Context, need int) ([]Transaction, error) {
-	const where = `messages: { value: { MsgEnablePackage: {} } }`
-	return c.recentTransactionsWindowed(ctx, need, where, func() ([]Transaction, error) {
-		var result struct {
-			GetTransactions []Transaction `json:"getTransactions"`
-		}
-		q := fmt.Sprintf(`{
-		getTransactions(
-			where: { %s }
-			order: { heightAndIndex: DESC }
-		) { %s }
-	}`, where, c.lightFields(ctx))
-		err := c.query(ctx, q, nil, &result)
-		return result.GetTransactions, err
-	})
+//
+// "Every" is the whole point: the stats this feeds — queue depth, median wait,
+// how fast approvals actually happen — are wrong if they describe a window.
+// So it asks once, over the chain, rather than widening towards the same query.
+func (c *Client) GetPackageEnableTransactions(ctx context.Context) ([]Transaction, error) {
+	return c.allTransactionsMatching(ctx, `messages: { value: { MsgEnablePackage: {} } }`)
 }
 
 // GetPackageRejectTransactions fetches every MsgRejectPackage this chain has
 // seen — a parked package an approver, its own creator, or a live package's
 // owner explicitly dropped rather than left to expire.
-func (c *Client) GetPackageRejectTransactions(ctx context.Context, need int) ([]Transaction, error) {
-	const where = `messages: { value: { MsgRejectPackage: {} } }`
-	return c.recentTransactionsWindowed(ctx, need, where, func() ([]Transaction, error) {
-		var result struct {
-			GetTransactions []Transaction `json:"getTransactions"`
-		}
-		q := fmt.Sprintf(`{
-		getTransactions(
-			where: { %s }
-			order: { heightAndIndex: DESC }
-		) { %s }
-	}`, where, c.lightFields(ctx))
-		err := c.query(ctx, q, nil, &result)
-		return result.GetTransactions, err
-	})
+//
+// The sparsest predicate the explorer asks about, and the one the widening
+// window punished hardest: mainnet holds 25 of these in 925,618 blocks.
+func (c *Client) GetPackageRejectTransactions(ctx context.Context) ([]Transaction, error) {
+	return c.allTransactionsMatching(ctx, `messages: { value: { MsgRejectPackage: {} } }`)
 }
 
 // GetPackageLifecycleTransactions fetches every AddPackage, EnablePackage and
