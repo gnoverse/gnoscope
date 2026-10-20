@@ -629,14 +629,46 @@ func (a *API) HandleStorage(w http.ResponseWriter, r *http.Request) {
 	path := "gno.land/" + r.PathValue("path")
 	path = strings.TrimRight(path, "/")
 
-	storageTxs, _ := client.GetStorageEvents(r.Context(), path)
-	gasTxs, _ := client.GetGasUsageForRealm(r.Context(), path)
+	// Concurrently, because they are two independent full-chain queries and
+	// running them in sequence made the reader wait for their sum. Measured
+	// against production on 2026-10-20, /api/storage for one realm answered in
+	// 9.2s cold, and this path is keyed on the realm so no warmer can ever
+	// cover it: whoever opens a realm's storage tab pays it.
+	var storageTxs, gasTxs []indexer.Transaction
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); storageTxs, _ = client.GetStorageEvents(r.Context(), path) }()
+	go func() { defer wg.Done(); gasTxs, _ = client.GetGasUsageForRealm(r.Context(), path) }()
+	wg.Wait()
+
 	// Stamp both sets before building entries: a block height with no time
 	// next to it forces the reader to open the block page to answer "when",
 	// which is the question they actually had. One batched lookup covers
-	// every row here, deduplicated by height inside stampBlockTimes.
-	a.stampBlockTimes(r.Context(), network, client, storageTxs)
-	a.stampBlockTimes(r.Context(), network, client, gasTxs)
+	// every row here — and one lookup covering both lists rather than two
+	// covering one each, since the two sets overlap heavily (a deposit happens
+	// in a transaction that also burned gas) and a second pass would re-ask for
+	// heights the first had already resolved. Resolved through
+	// blockTimesForHeights rather than two stampBlockTimes calls because the
+	// map has to be written back into both slices, which a copy of their rows
+	// could not do.
+	seen := make(map[int]bool, len(storageTxs)+len(gasTxs))
+	heights := make([]int, 0, len(storageTxs)+len(gasTxs))
+	for _, set := range [][]indexer.Transaction{storageTxs, gasTxs} {
+		for _, tx := range set {
+			if !seen[tx.BlockHeight] {
+				seen[tx.BlockHeight] = true
+				heights = append(heights, tx.BlockHeight)
+			}
+		}
+	}
+	if len(heights) > 0 {
+		bt := a.blockTimesForHeights(r.Context(), network, client, heights)
+		for _, set := range [][]indexer.Transaction{storageTxs, gasTxs} {
+			for i := range set {
+				set[i].BlockTime = bt[set[i].BlockHeight]
+			}
+		}
+	}
 
 	// Aggregate storage
 	var totalBytesDeposit, totalBytesUnlock int
