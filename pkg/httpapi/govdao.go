@@ -458,7 +458,22 @@ func unescapeMarkdown(s string) string {
 // pattern: a failed refresh keeps serving the last good value rather than
 // blanking a page over one bad RPC round trip. See memo for what it adds on top
 // of that, namely single-flight and a bounded retry after a failure.
-var govDAOOverviewCache = newMemo[GovDAOOverview](govDAOCacheTTL, govDAOFailureTTL)
+// govDAOOverviewStaleGrace keeps a reader off the overview's critical path.
+//
+// It is the most expensive read on the governance pages: a walk through
+// gov/dao's paged list render, measured at 4 to 5.5s. Worse, a *proposal* page
+// reads it too, to borrow the status its own render does not carry, so an id
+// nobody has opened before paid for it as well. Measured against production on
+// 2026-10-20, one fresh proposal id every 21s against this 30s TTL alternated
+// cleanly: 0.62s, 4.34s, 0.62s, 4.14s, 0.62s, 5.50s. Every other reader was
+// recomputing the list for the one behind them.
+//
+// Ten minutes, the same bargain govDAOTxStaleGrace makes, and the warmer
+// refreshes this target every 25s anyway, so the grace only ever covers a gap
+// the warmer missed.
+const govDAOOverviewStaleGrace = 10 * time.Minute
+
+var govDAOOverviewCache = newStaleWhileRevalidateMemo[GovDAOOverview](govDAOCacheTTL, govDAOFailureTTL, govDAOOverviewStaleGrace)
 
 // govDAOListMaxPages bounds the walk. gov/dao lists five proposals a page, so
 // this is 250 proposals; mainnet had 8 and onyx-1 22 on 2026-10-01.
