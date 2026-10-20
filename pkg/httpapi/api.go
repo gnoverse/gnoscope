@@ -654,10 +654,24 @@ func (a *API) HandleGovDAOProposal(w http.ResponseWriter, r *http.Request) {
 	if runs, err := a.db.GovDAORelatedMsgRuns(network, detail.ExecutorPkgPath); err == nil {
 		detail.RelatedMsgRuns = runs
 	}
-	detail.AuthorAddress = resolveGnoUsernameCached(r.Context(), rpcURL, detail.Author)
+	// The author and every voter resolved together. Each one is its own
+	// vm/qeval round trip to r/sys/users, and in sequence a proposal with
+	// twenty voters was twenty of them end to end, on a page keyed by id that
+	// no warmer covers. resolveGnoUsernameCached is memoized and
+	// single-flights, so two voters under the same name still cost one call.
+	//
+	// Bounded, for the same reason the warmer is: these all land on one node,
+	// and past a handful the queue just moves somewhere we cannot see it.
+	names := make([]func(), 0, len(detail.Votes)+1)
+	names = append(names, func() {
+		detail.AuthorAddress = resolveGnoUsernameCached(r.Context(), rpcURL, detail.Author)
+	})
 	for i := range detail.Votes {
-		detail.Votes[i].VoterAddress = resolveGnoUsernameCached(r.Context(), rpcURL, detail.Votes[i].Voter)
+		names = append(names, func() {
+			detail.Votes[i].VoterAddress = resolveGnoUsernameCached(r.Context(), rpcURL, detail.Votes[i].Voter)
+		})
 	}
+	resolveConcurrently(names, usernameResolveConcurrency)
 	// gov/dao's two renders disagree about status: its list prints
 	// "Status: ACTIVE" for an undecided proposal, while the per-proposal
 	// render prints an accepted/rejected marker only once there is one and
@@ -679,6 +693,31 @@ func (a *API) HandleGovDAOProposal(w http.ResponseWriter, r *http.Request) {
 	// fields filled above.
 	a.AuditGovDAOProposal(r.Context(), network, rpcURL, &detail)
 	JSONResponse(w, detail)
+}
+
+// usernameResolveConcurrency bounds how many name lookups are in flight at
+// once. Matches warmConcurrency, and for the same reason: the work is waiting
+// on one node, a little concurrency shortens the page a lot, and a lot of it
+// moves the queue upstream where we cannot see it.
+const usernameResolveConcurrency = 4
+
+// resolveConcurrently runs fns, at most limit at a time. Each one writes to its
+// own field and none of them can fail: resolveGnoUsernameCached answers an
+// unresolvable name with an empty string, which is the answer, so there is no
+// error to collect.
+func resolveConcurrently(fns []func(), limit int) {
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, fn := range fns {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			fn()
+		}()
+	}
+	wg.Wait()
 }
 
 // govDAORelatedCalls finds MsgCalls into gov/dao naming this proposal ID as
