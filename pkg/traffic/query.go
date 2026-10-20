@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -317,17 +318,47 @@ func (s *Store) Report(q Query) (*Report, error) {
 		return out, nil
 	}
 
-	var err error
-	if t.P50MS, err = s.percentile(w, args, t.Requests, 50); err != nil {
-		return nil, err
-	}
-	if t.P95MS, err = s.percentile(w, args, t.Requests, 95); err != nil {
-		return nil, err
-	}
+	// Everything below reads the same window of the same table and nothing
+	// below reads anything else below, so it is collected as jobs and run a few
+	// at a time rather than one after another. In sequence this was about
+	// twenty round trips to SQLite with the reader held open for their sum:
+	// measured at 6.9s on 400,000 rows, which matches the 7.6s /api/traffic
+	// answered with against production on 2026-10-20. This endpoint is
+	// deliberately uncached, so that sum is paid on every single load.
+	//
+	// Safe to run together because each job writes to its own field of a report
+	// nothing else is reading yet, and because the database is opened in WAL
+	// mode, where readers do not block each other.
+	//
+	// Totals stays above, sequential: the zero-requests early return depends on
+	// it, and so do the percentiles' offsets.
+	var jobs []func() error
 
-	if out.Series, err = s.series(q, w, args); err != nil {
-		return nil, err
-	}
+	jobs = append(jobs,
+		// Both percentiles in one job, because they share a count and the count
+		// has to happen first. Each used to run its own, which is two full
+		// passes over the window to learn the same number twice. It is not
+		// Totals.Requests either: that figure counts streams and this ranking
+		// does not. Kept inside a job rather than hoisted above the fan-out so
+		// the count still overlaps with everything else.
+		func() error {
+			var ranked int64
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM requests WHERE `+w+streamExcluded, args...).Scan(&ranked); err != nil {
+				return fmt.Errorf("ranked count: %w", err)
+			}
+			var err error
+			if t.P50MS, err = s.percentile(w, args, ranked, 50); err != nil {
+				return err
+			}
+			t.P95MS, err = s.percentile(w, args, ranked, 95)
+			return err
+		},
+		func() error {
+			v, err := s.series(q, w, args)
+			out.Series = v
+			return err
+		},
+	)
 
 	// Each breakdown is the same shape with a different label expression, so
 	// they share one helper rather than a dozen near-identical functions.
@@ -350,11 +381,14 @@ func (s *Store) Report(q Query) (*Report, error) {
 		{&out.NotFound, "target", "status = 404 AND target <> ''", false},
 	}
 	for _, p := range panels {
-		got, err := s.topBy(w, args, p.label, p.extra, lim, p.uniq)
-		if err != nil {
-			return nil, err
-		}
-		*p.dst = got
+		jobs = append(jobs, func() error {
+			got, err := s.topBy(w, args, p.label, p.extra, lim, p.uniq)
+			if err != nil {
+				return err
+			}
+			*p.dst = got
+			return nil
+		})
 	}
 
 	// The entity panels are page views regardless of the kind filter: they are
@@ -372,20 +406,28 @@ func (s *Store) Report(q Query) (*Report, error) {
 		{&out.Txs, EntityTx},
 		{&out.Assets, EntityAsset},
 	} {
-		got, err := s.topBy(ew, eargs, "entity",
-			"entity <> '' AND entity_kind = '"+p.kind+"'", lim, true)
-		if err != nil {
-			return nil, err
-		}
-		*p.dst = got
+		jobs = append(jobs, func() error {
+			got, err := s.topBy(ew, eargs, "entity",
+				"entity <> '' AND entity_kind = '"+p.kind+"'", lim, true)
+			if err != nil {
+				return err
+			}
+			*p.dst = got
+			return nil
+		})
 	}
-	if out.PageKinds, err = s.topBy(ew, eargs, "page_kind", "page_kind <> ''", lim, true); err != nil {
-		return nil, err
-	}
-
-	if out.Slowest, err = s.slowest(w, args, lim); err != nil {
-		return nil, err
-	}
+	jobs = append(jobs,
+		func() error {
+			v, err := s.topBy(ew, eargs, "page_kind", "page_kind <> ''", lim, true)
+			out.PageKinds = v
+			return err
+		},
+		func() error {
+			v, err := s.slowest(w, args, lim)
+			out.Slowest = v
+			return err
+		},
+	)
 
 	// Hosts, and the pre-migration bucket, are computed with the host filter
 	// lifted. A panel that only ever showed the host you already selected
@@ -393,14 +435,59 @@ func (s *Store) Report(q Query) (*Report, error) {
 	hq := q
 	hq.Host = ""
 	hw, hargs := hq.where()
-	if out.Hosts, err = s.topBy(hw, hargs, "CASE WHEN host = '' THEN '(not recorded)' ELSE host END", "", lim, true); err != nil {
+	jobs = append(jobs,
+		func() error {
+			v, err := s.topBy(hw, hargs, "CASE WHEN host = '' THEN '(not recorded)' ELSE host END", "", lim, true)
+			out.Hosts = v
+			return err
+		},
+		func() error {
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM requests WHERE `+hw+` AND host = ''`, hargs...).
+				Scan(&out.Unrecorded); err != nil {
+				return fmt.Errorf("unrecorded hosts: %w", err)
+			}
+			return nil
+		},
+	)
+
+	if err := runJobs(jobs, reportConcurrency); err != nil {
 		return nil, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM requests WHERE `+hw+` AND host = ''`, hargs...).
-		Scan(&out.Unrecorded); err != nil {
-		return nil, fmt.Errorf("unrecorded hosts: %w", err)
-	}
 	return out, nil
+}
+
+// reportConcurrency bounds how many of a report's queries are in flight.
+//
+// Bounded rather than all of them at once for the same reason warmConcurrency
+// is: the queries are reads against one SQLite file, a little concurrency
+// shortens the report a lot, and a lot of it just moves the queue one layer
+// down, into the connection pool and the page cache.
+const reportConcurrency = 8
+
+// runJobs runs fns, at most limit at a time, and returns the first error any of
+// them reported. Every job still runs: they write into separate fields of one
+// report, and stopping half way would return a report whose panels disagree
+// about which window they describe.
+func runJobs(fns []func() error, limit int) error {
+	sem := make(chan struct{}, limit)
+	errs := make([]error, len(fns))
+	var wg sync.WaitGroup
+	for i, fn := range fns {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			errs[i] = fn()
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // streamExcluded drops SSE connections from anything measuring duration.
@@ -412,15 +499,12 @@ const streamExcluded = ` AND kind <> 'stream'`
 // percentile reads the nth value by rank rather than computing one, because
 // SQLite has no percentile function and an ORDER BY over an indexed window of
 // this size costs less than carrying an approximation nobody can check.
-func (s *Store) percentile(w string, args []any, _ int64, pct int) (float64, error) {
-	// Counted here rather than reused from Totals.Requests: that figure counts
-	// streams and this ranking does not, and an offset taken past the end of a
-	// shorter set silently returns the maximum instead of the percentile.
-	var n int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM requests WHERE `+w+streamExcluded, args...).Scan(&n); err != nil {
-		return 0, err
-	}
-	if n == 0 {
+// n is how many rows this ranking covers, counted by the caller with
+// streamExcluded applied. Not Totals.Requests: that figure counts streams and
+// this ranking does not, and an offset taken past the end of a shorter set
+// silently returns the maximum instead of the percentile.
+func (s *Store) percentile(w string, args []any, n int64, pct int) (float64, error) {
+	if n <= 0 {
 		return 0, nil
 	}
 	offset := (n * int64(pct)) / 100
