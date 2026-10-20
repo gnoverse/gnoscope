@@ -1281,6 +1281,27 @@ func (c *Client) recentTransactionsWindowed(
 		return nil, err
 	}
 
+	// Each round reads the band the previous rounds have not read, rather than
+	// the whole span from the tip again, and the rows accumulate.
+	//
+	// The widening is the same; the re-reading was the waste. A predicate the
+	// chain holds few of never reaches `need`, so the ladder walks every round
+	// to genesis, and each round re-scanned everything the round before it had
+	// already scanned. Measured against indexer.gno.land on 2026-10-20, mainnet
+	// at height 944,396, the gov/dao filter (48 rows exist, 500 asked for):
+	//
+	//	overlapping  0.15 + 0.31 + 0.35 + 0.49 + 2.77 + 6.16 = 10.2s
+	//	banded       0.84 + 0.16 + 0.37 + 0.42 + 2.60 + 3.75 =  8.1s
+	//
+	// The answer is identical either way: the union of bands 1..k is exactly
+	// the window round k used to query, and each band is DESC, so appending
+	// them in order gives the same DESC list. A caller that stops early gets
+	// the same rows it used to get, having paid for them once.
+	//
+	// `above` is the exclusive upper bound of the next band, starting one past
+	// the tip so the first band is everything down to tip-initialTxWindow.
+	var out []Transaction
+	above := tip + 1
 	for window := initialTxWindow; ; window *= txWindowGrowth {
 		from := tip - window
 		if from < 0 {
@@ -1290,22 +1311,22 @@ func (c *Client) recentTransactionsWindowed(
 			from = 0
 		}
 
-		// `gt` excludes the bound, so a window reaching the bottom of the chain
-		// still misses block 0 — and genesis transactions live there.
+		// `gt` excludes the bound, so a band reaching the bottom of the chain
+		// would still miss block 0 — and genesis transactions live there.
 		//
 		// On a freshly launched chain that is everything: gno.land mainnet went
 		// live with 89 curated packages deployed at genesis, all at height 0, and
 		// the transactions page showed nothing while the stats row counted 96.
 		//
-		// The bottom window therefore carries no lower bound at all. `gte` would
-		// read better but FilterInt does not have it — it offers only exists, eq,
-		// gt and lt — and `gt: -1` is not an escape hatch either: the indexer
-		// answers a negative bound with a null result set rather than everything.
-		// Above the bottom the exclusive bound stays, so successive windows do
-		// not re-read their own edge.
-		heightFilter := fmt.Sprintf("block_height: { gt: %d }", from)
+		// The bottom band therefore carries no lower bound, only its upper one.
+		// `gte` would read better but FilterInt does not have it — it offers only
+		// exists, eq, gt and lt — and `gt: -1` is not an escape hatch either: the
+		// indexer answers a negative bound with a null result set rather than
+		// everything. Every band keeps a height bound, which is the property
+		// TestRealmFiltersAreBounded holds.
+		heightFilter := fmt.Sprintf("block_height: { gt: %d, lt: %d }", from, above)
 		if from == 0 {
-			heightFilter = ""
+			heightFilter = fmt.Sprintf("block_height: { lt: %d }", above)
 		}
 
 		var result struct {
@@ -1322,22 +1343,26 @@ func (c *Client) recentTransactionsWindowed(
 			//
 			// This query is DESC, so the rows the resolver kept before it stopped
 			// are the newest ones — exactly what a "recent" view is asking for.
-			// Widening the window would only reach further past a cap already hit.
+			// Reading further down would only reach past a cap already hit, and
+			// would leave a hole where the rest of this band should have been.
 			//
 			// Mirror of the sync path: transactionsFromHeight walks ASC from a
 			// cursor, where truncation hides older rows and must be paged through.
 			// Here the walk is DESC from the tip, so truncation hides only rows the
 			// caller did not want.
-			if errors.Is(err, ErrQueryTooLarge) && len(result.GetTransactions) >= need {
-				return result.GetTransactions, nil
+			out = append(out, result.GetTransactions...)
+			if errors.Is(err, ErrQueryTooLarge) && len(out) >= need {
+				return out, nil
 			}
 			return nil, err
 		}
+		out = append(out, result.GetTransactions...)
 
 		// Enough rows, or we have already reached genesis and there are no more.
-		if len(result.GetTransactions) >= need || from == 0 {
-			return result.GetTransactions, nil
+		if len(out) >= need || from == 0 {
+			return out, nil
 		}
+		above = from + 1
 	}
 }
 

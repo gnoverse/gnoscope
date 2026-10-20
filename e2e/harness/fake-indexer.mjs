@@ -269,6 +269,25 @@ function askedPath(query) {
   return m ? m[1] : '';
 }
 
+// Height bounds, honoured rather than ignored.
+//
+// The client walks a realm's history in bands — `block_height: { gt: a, lt: b }`
+// — and accumulates what each band returns, so a fake that answers every band
+// with the same rows hands back one copy per band. That is not a test artifact:
+// an indexer that ignored these bounds would do the same thing to a reader, and
+// the events tab would show its five rows three times over.
+const HEIGHT_GT_RE = /block_height: \{[^}]*\bgt: (-?\d+)/;
+const HEIGHT_LT_RE = /block_height: \{[^}]*\blt: (-?\d+)/;
+
+function withinHeightBounds(query, txs) {
+  const gt = HEIGHT_GT_RE.exec(query);
+  const lt = HEIGHT_LT_RE.exec(query);
+  if (!gt && !lt) return txs;
+  const lo = gt ? Number(gt[1]) : -Infinity;
+  const hi = lt ? Number(lt[1]) : Infinity;
+  return txs.filter(t => t.block_height > lo && t.block_height < hi);
+}
+
 // The defi query is the one filtered by address rather than by path, so it has
 // its own extractor. Any of the four TransferEvent clauses will do: they are
 // the same two addresses repeated to/from.
@@ -337,19 +356,19 @@ export function startFakeIndexer() {
       } else if (query.includes('TransferEvent: {')) {
         data = {
           getTransactions: askedTransferAddress(query) === TAB_REALM_ADDRESS
-            ? transferTxs(query) : [],
+            ? withinHeightBounds(query, transferTxs(query)) : [],
         };
       } else if (query.includes('StorageDepositEvent: { pkg_path: { eq:')) {
-        data = { getTransactions: askedPath(query) === TAB_REALM ? storageTxs(TAB_REALM) : [] };
+        data = { getTransactions: askedPath(query) === TAB_REALM ? withinHeightBounds(query, storageTxs(TAB_REALM)) : [] };
       } else if (query.includes('MsgCall: { pkg_path: { eq:')) {
-        data = { getTransactions: askedPath(query) === TAB_REALM ? gasTxs(TAB_REALM) : [] };
+        data = { getTransactions: askedPath(query) === TAB_REALM ? withinHeightBounds(query, gasTxs(TAB_REALM)) : [] };
       } else if (query.includes('GnoEvent: { pkg_path: { eq:')) {
-        data = { getTransactions: askedPath(query) === TAB_REALM ? eventTxs(TAB_REALM) : [] };
+        data = { getTransactions: askedPath(query) === TAB_REALM ? withinHeightBounds(query, eventTxs(TAB_REALM)) : [] };
       } else if (query.includes('MsgEnablePackage: { pkg_path: { eq:')) {
         // One path's lifecycle, not the chain-wide enable/reject feed behind
         // /api/inert/history: that one asks for `MsgEnablePackage: {}` with no
         // path filter, so it still falls through to the empty answer below.
-        data = { getTransactions: askedPath(query) === TAB_REALM ? lifecycleTxs(TAB_REALM) : [] };
+        data = { getTransactions: askedPath(query) === TAB_REALM ? withinHeightBounds(query, lifecycleTxs(TAB_REALM)) : [] };
       } else if (query.includes('getTransactions')) {
         data = { getTransactions: [] };
       } else if (query.includes('getSupply')) {
