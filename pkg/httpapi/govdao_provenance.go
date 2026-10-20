@@ -32,7 +32,13 @@ const creationsCacheTTL = 60 * time.Second
 // govDAOFailureTTL: same kind of upstream, same reason.
 const creationsFailureTTL = 5 * time.Second
 
-var creationsCache = newMemo[[]indexer.Transaction](creationsCacheTTL, creationsFailureTTL)
+// creationsStaleGrace is the same bargain govDAOTxStaleGrace makes, for the
+// same reason: a ProposalCreated event is emitted once per proposal, so this
+// list changes only when governance does, and nobody should wait 4s for a
+// re-read of something that cannot have moved.
+const creationsStaleGrace = 10 * time.Minute
+
+var creationsCache = newStaleWhileRevalidateMemo[[]indexer.Transaction](creationsCacheTTL, creationsFailureTTL, creationsStaleGrace)
 
 // proposalCreations returns every ProposalCreated transaction on the network,
 // cached, newest first. A failed refresh keeps serving the last good list

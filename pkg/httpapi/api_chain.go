@@ -662,9 +662,20 @@ const govDAOTxCacheTTL = 60 * time.Second
 // creationsFailureTTL: same kind of upstream, same reason.
 const govDAOTxFailureTTL = 5 * time.Second
 
+// govDAOTxStaleGrace is how long an expired call list may still be served while
+// its replacement is fetched behind the reader.
+//
+// It needs one because this is the most expensive read in the package and the
+// pages that depend on it are keyed by proposal id, so no warmer covers them.
+// Measured against production on 2026-10-20: a proposal answered in 0.40s while
+// the list was fresh and 13.6s for the reader who happened to arrive after the
+// 60s lapsed and ran the scan themselves. Governance moves on the scale of
+// proposals, so a list a few minutes old is the same list.
+const govDAOTxStaleGrace = 10 * time.Minute
+
 // govDAOTxCache is what makes fetchGovDAOTransactions affordable to call more
 // than once. See that function for why it has to be.
-var govDAOTxCache = newMemo[[]indexer.Transaction](govDAOTxCacheTTL, govDAOTxFailureTTL)
+var govDAOTxCache = newStaleWhileRevalidateMemo[[]indexer.Transaction](govDAOTxCacheTTL, govDAOTxFailureTTL, govDAOTxStaleGrace)
 
 // fetchGovDAOTransactions returns every gov/dao MsgCall, newest first, with
 // block times filled in (see stampBlockTimes) so callers can show a date
