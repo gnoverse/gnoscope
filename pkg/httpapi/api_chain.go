@@ -653,17 +653,56 @@ func (a *API) HandleBlock(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// govDAOTxCacheTTL bounds how stale the gov/dao call list may be. Matches
+// creationsCacheTTL for the same reason: both describe governance activity,
+// which moves on the scale of proposals rather than of blocks.
+const govDAOTxCacheTTL = 60 * time.Second
+
+// govDAOTxFailureTTL bounds retries when the indexer cannot answer. Matches
+// creationsFailureTTL: same kind of upstream, same reason.
+const govDAOTxFailureTTL = 5 * time.Second
+
+// govDAOTxCache is what makes fetchGovDAOTransactions affordable to call more
+// than once. See that function for why it has to be.
+var govDAOTxCache = newMemo[[]indexer.Transaction](govDAOTxCacheTTL, govDAOTxFailureTTL)
+
+// fetchGovDAOTransactions returns every gov/dao MsgCall, newest first, with
+// block times filled in (see stampBlockTimes) so callers can show a date
+// without a second round trip. The bool is whether an indexer client exists
+// for the network at all, distinct from a zero-length result — a network with
+// a client but genuinely no gov/dao activity should not look identical to one
+// this instance cannot reach.
+//
+// Cached, because this is one of the most expensive reads in the package and
+// it was being run several times per request. The filter is a substring match
+// on pkg_path, which no index can answer, and the window it is asked for (500
+// rows) is far more than gov/dao has ever produced (48 on mainnet,
+// 2026-10-20), so recentTransactionsWindowed widens all the way to genesis
+// every time: six sequential queries, measured at 0.15 + 0.31 + 0.35 + 0.49 +
+// 2.77 + 6.16 = 10.2s against the production indexer.
+//
+// That was paid twice on one proposal page — govDAORelatedCalls and
+// AuditGovDAOProposal each called this — and 1+N times on the overview, which
+// runs one AuditGovDAOProposal per proposal concurrently. Measured cold on
+// production before this cache: /api/govdao/proposals/7 took 19s, of which
+// ~2.5s was everything else.
+//
+// memo also single-flights, which is what the overview's concurrent audits
+// need: without it they each started their own copy of the same scan, against
+// the same indexer, at the same moment.
 func (a *API) fetchGovDAOTransactions(ctx context.Context, network string) ([]indexer.Transaction, bool) {
 	client := a.clientFor(network)
 	if client == nil {
 		return nil, false
 	}
-	txs, err := client.GetGovDAOTransactions(ctx, 500)
-	if err != nil {
-		return nil, true
-	}
-	a.stampBlockTimes(ctx, network, client, txs)
-	return txs, true
+	return govDAOTxCache.get(ctx, network, func(ctx context.Context) ([]indexer.Transaction, bool) {
+		txs, err := client.GetGovDAOTransactions(ctx, 500)
+		if err != nil {
+			return nil, false
+		}
+		a.stampBlockTimes(ctx, network, client, txs)
+		return txs, true
+	}), true
 }
 
 func (a *API) HandleBlockTimeHistogram(w http.ResponseWriter, r *http.Request) {

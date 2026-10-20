@@ -719,13 +719,6 @@ func (a *API) govDAORelatedCalls(ctx context.Context, network string, id int) []
 	return out
 }
 
-// fetchGovDAOTransactions fetches every gov/dao MsgCall, with block times
-// filled in (see stampBlockTimes) so callers can show a date without a
-// second round trip. The bool return is whether an indexer client exists for
-// the network at all, distinct from a zero-length result — a network with a
-// client but genuinely no gov/dao activity should not look identical to one
-// this instance cannot reach.
-
 // HandleDeps answers "what does this import" (the default) and "what imports
 // this" (?dir=dependents), as an adjacency map keyed by package path.
 //
