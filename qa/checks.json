@@ -43,6 +43,10 @@
     { "id": "params",           "path": "/params" },
     { "id": "glossary",         "path": "/glossary" },
     { "id": "sanity",           "path": "/sanity" },
+    { "id": "cockpit",          "path": "/cockpit",           "proof": "#cockpit-findings",
+      "comment": "the roll-up. #cockpit-findings exists only once the verdict has been graded, so it is the one selector that proves the page did its job rather than drew its frame." },
+    { "id": "widget",           "path": "/widget",            "proof": ".wg-num b",
+      "comment": "a big number, not .wg: the wrapper is painted before the fetch lands and a skeleton-free empty screen would satisfy anything weaker." },
     { "id": "events",           "path": "/events" },
     { "id": "discover",         "path": "/discover" },
     { "id": "traffic",          "path": "/traffic" },
@@ -114,6 +118,8 @@
     { "id": "api-govdao-overview","path": "/api/govdao/overview", "budgetMs": 4000 },
     { "id": "api-traffic",        "path": "/api/traffic" },
     { "id": "api-sanity",         "path": "/api/sanity/overview" },
+    { "id": "api-cockpit",        "path": "/api/cockpit", "budgetMs": 4000,
+      "comment": "polled every 30s by any wall display left on /widget, so this is the one endpoint here whose cost is paid continuously rather than per visitor. It is warmed, so a slow reading means the warmer is not keeping up." },
 
     {
       "id": "api-inert-package",

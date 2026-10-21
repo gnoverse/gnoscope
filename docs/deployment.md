@@ -16,6 +16,7 @@ One static binary and one SQLite file. No runtime dependencies.
 | `-block-history-days` | `90` | days of block history to backfill. `0` backfills the full chain; a negative value stores no blocks at all |
 | `-analytics-script` | — | URL of an analytics script to load in the frontend. Empty serves no third-party script at all |
 | `-gnoshot` | — | base URL of a [gnoshot](https://github.com/gnoverse/gnoshot) capture service. Empty draws no realm screenshots at all |
+| `-widget-frame-ancestors` | `*` | who may put [`/widget`](./cockpit.md#framing-the-header-that-makes-it-a-widget) in an iframe, as a CSP `frame-ancestors` source list. Falls back to `$GNOSCOPE_WIDGET_FRAME_ANCESTORS`. `none` sends no header |
 | `-traffic-db` | — | SQLite path for the request log and the engagement events, e.g. `gnoscope-traffic.db`. Empty records nothing |
 | `-traffic-retention-days` | `30` | days of request rows to keep. `0` keeps them forever |
 
@@ -530,7 +531,40 @@ GitHub issue with all of it, the network and the page already filled in.
 curl -s localhost:8888/api/version    # which build
 curl -s localhost:8888/api/networks   # which chains
 curl -s localhost:8888/api/stats      # is data actually landing
+curl -s localhost:8888/api/cockpit | jq .verdict   # all of the above, graded
 ```
+
+[`/cockpit`](./cockpit.md) is the same three questions joined and answered in
+one place, with every finding named and carrying the threshold it fired on, and
+[`/widget`](./cockpit.md) is that verdict on one screen for a wall. For a
+scripted check, `verdict.state` is `ok`, `degraded` or `down` and
+`findings[].title` says which thing:
+
+```bash
+test "$(curl -sf localhost:8888/api/cockpit | jq -r .verdict.state)" = ok
+```
+
+### Who may frame /widget
+
+`/widget`, and only `/widget`, sends `Content-Security-Policy: frame-ancestors`.
+The default is `*`: gnoscope.com is a read-only public explorer, so a list of
+permitted origins buys nothing and would publish the names of whoever is
+allowed to frame it. It is sent rather than omitted because an absent directive
+permits framing only by saying nothing, and anything upstream adding an
+`X-Frame-Options` to every response would silently take the widget with it.
+
+To narrow it on one deployment, without a rebuild:
+
+```bash
+gnoscope -widget-frame-ancestors "'self' https://status.example"
+# or, in a unit file or a container
+GNOSCOPE_WIDGET_FRAME_ANCESTORS="'self' https://status.example"
+```
+
+A list is only as good as its least convenient origin: `https://*.example.com`
+does not match a bare LAN address, so a hub opened at `http://10.0.0.1` loses
+the tile while the same hub opened by name keeps it. Write down the tradeoff
+here, beside the value, when you narrow it.
 
 In the logs, per-pass `synced N packages` lines with small counts mean incremental
 sync is working. Large counts on every pass mean it is re-syncing everything, which
