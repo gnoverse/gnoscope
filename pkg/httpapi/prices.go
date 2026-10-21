@@ -35,6 +35,20 @@ import (
 const (
 	poolDiscoveryTTL = 30 * time.Minute
 	priceQuoteTTL    = 90 * time.Second
+	// priceStaleGrace is how far past priceQuoteTTL a quote is still served
+	// while its replacement is computed behind the reader.
+	//
+	// A refresh is dozens of sequential-ish RPC reads and costs what it costs:
+	// measured server-side across 24h of production traffic on 2026-10-21,
+	// /api/prices had a p95 of 9.9s and an average handler time of 9.5s, which
+	// is to say nearly every refresh landed on somebody. /api/holders and the
+	// address defi tab read this too, so they inherited it.
+	//
+	// Five minutes rather than the ten the governance caches use, because a
+	// quote is about a market rather than about a proposal. It is also strictly
+	// tighter than what this already did on failure, which was to serve the
+	// last good result however old it was.
+	priceStaleGrace = 5 * time.Minute
 	// priceReadTimeout bounds one whole refresh. Generous because a cold
 	// refresh is dozens of sequential-ish RPC reads, and because the failure
 	// mode of being too tight is serving no prices at all rather than serving
@@ -108,9 +122,20 @@ func (a *API) HandlePrices(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) pricesFor(ctx context.Context, network string) (*price.Result, error) {
 	assetPrices.mu.Lock()
-	if res, ok := assetPrices.result[network]; ok && time.Since(assetPrices.resultAt[network]) < priceQuoteTTL {
+	held, have := assetPrices.result[network]
+	age := time.Since(assetPrices.resultAt[network])
+	if have && age < priceQuoteTTL {
 		assetPrices.mu.Unlock()
-		return res, nil
+		return held, nil
+	}
+	// Expired, but good and not yet too old: hand it over and replace it behind
+	// this reader. The quote carries computed_at, so a reader who wants to
+	// judge its age can, and the alternative was making them wait ~10s for the
+	// refresh themselves.
+	if have && held != nil && age < priceQuoteTTL+priceStaleGrace {
+		assetPrices.mu.Unlock()
+		a.refreshPricesBehind(network)
+		return held, nil
 	}
 	lock, ok := assetPrices.inflight[network]
 	if !ok {
@@ -142,6 +167,44 @@ func (a *API) pricesFor(ctx context.Context, network string) (*price.Result, err
 	assetPrices.resultAt[network] = time.Now()
 	assetPrices.mu.Unlock()
 	return res, err
+}
+
+// refreshPricesBehind recomputes one network's quotes in the background, on a
+// context of its own because the reader who triggered it already has their
+// answer and may be gone a millisecond later.
+//
+// It claims the same per-network lock the blocking path uses, so a background
+// refresh and a foreground one are never both running, and several stale reads
+// in a row still start one refresh between them. TryLock rather than Lock: a
+// refresh already under way is the thing this wanted, not something to queue
+// behind.
+func (a *API) refreshPricesBehind(network string) {
+	assetPrices.mu.Lock()
+	lock, ok := assetPrices.inflight[network]
+	if !ok {
+		lock = &sync.Mutex{}
+		assetPrices.inflight[network] = lock
+	}
+	assetPrices.mu.Unlock()
+
+	if !lock.TryLock() {
+		return
+	}
+	go func() {
+		defer lock.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), priceReadTimeout)
+		defer cancel()
+		res, _ := a.refreshPrices(ctx, network)
+		if res == nil {
+			// Keep the last good result rather than replacing it with nothing,
+			// which is what the blocking path does too.
+			return
+		}
+		assetPrices.mu.Lock()
+		assetPrices.result[network] = res
+		assetPrices.resultAt[network] = time.Now()
+		assetPrices.mu.Unlock()
+	}()
 }
 
 func (a *API) refreshPrices(ctx context.Context, network string) (*price.Result, error) {
