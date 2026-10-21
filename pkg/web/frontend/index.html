@@ -17,8 +17,23 @@
 // Reading the flag here costs nothing and removes the flash entirely.
 (function () {
   try {
-    if (new URLSearchParams(window.location.search).get('embed') === '1') {
+    // /widget is embed mode by another name, so it reuses the same class and
+    // the same stylesheet rather than growing a second chromeless mode. It is
+    // one screen meant to be recognised, and a rail and a header beside it
+    // would be most of that screen.
+    var widget = window.location.pathname === '/widget';
+    // Recorded, not only applied. navigate() drops the query string, so a
+    // reader clicking a link inside an iframe would grow a header and a rail
+    // at the first click if route() re-derived this from the URL alone.
+    window.EMBED_LOCKED = new URLSearchParams(window.location.search).get('embed') === '1';
+    if (widget || window.EMBED_LOCKED) {
       document.documentElement.classList.add('embed');
+    }
+    // Embed mode drops the page background so a host page decides it. Opened
+    // on its own — a television, a phone in a hallway — there is no host, and
+    // the widget would be grey text on the browser's white. Put it back.
+    if (widget && window.self === window.top) {
+      document.documentElement.classList.add('widget-standalone');
     }
   } catch (e) { /* a malformed query string is not a reason to fail to render */ }
   // Carry settings across the 2026-09-28 rename.
@@ -1541,12 +1556,55 @@ footer a:hover { color: var(--accent); }
 .storage-bar > i { display: block; height: 100%; background: var(--accent); }
 
 html.embed header, html.embed footer, html.embed #sanity-subbar,
-html.embed .rail { display: none !important; }
+html.embed #rename-notice, html.embed .rail { display: none !important; }
+/* The rename notice is chrome too, and the one piece of it with a dismiss
+   button. On a wall display nobody is there to press it, so it would sit
+   across the top of the screen for as long as the notice lives. */
 /* The rail is chrome too, and an iframe that kept 172px of it would be
    showing a page-in-a-page, which is the thing embed mode exists to avoid. */
 html.embed body { padding-left: 0; }
 html.embed body { background: transparent; }
 html.embed .container { padding-top: 0; padding-bottom: 0; max-width: none; }
+/* See the head script: /widget wears embed mode, and on its own it has no host
+   page to inherit a background from. */
+html.widget-standalone body { background: var(--bg); }
+
+/* /cockpit: the roll-up, read at a desk.
+   A verdict, then what is wrong, then the numbers behind both. The order is
+   the point and is why this is not a grid of tiles: nine counters above the
+   thing that is actually broken is how a status page gets read as decoration. */
+.ckpt-verdict { display: flex; align-items: center; gap: 10px; padding: 10px 0 14px; }
+.ckpt-dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 12px; }
+.ckpt-headline { font-size: 21px; font-weight: bold; }
+.ckpt-asof { color: var(--fg2); font-size: 12px; margin-left: auto; }
+.ckpt-finding { display: flex; gap: 12px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--border); }
+.ckpt-sev { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; flex: 0 0 46px; }
+.ckpt-ftext { min-width: 0; }
+.ckpt-ftitle { font-weight: bold; }
+.ckpt-fdetail { color: var(--fg2); font-size: 12px; }
+.ckpt-clear { color: var(--fg2); font-size: 12px; padding: 9px 0; border-top: 1px solid var(--border); }
+.ckpt-links { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; padding: 14px 0 4px; border-top: 1px solid var(--border); }
+#cockpit-findings { margin-bottom: 28px; }
+
+/* /widget: one screen, recognised rather than read.
+   Sized in viewport units throughout, because the two devices this has to work
+   on are a phone held at arm's length and a television seen from across a
+   room, and the only thing those agree on is how much of the screen a glyph
+   fills. clamp() keeps both ends sane: the floor is a readable phone, the
+   ceiling stops a 4K panel drawing a number two feet tall.
+   Nothing here animates. This is the one page in the file that can be left
+   running for weeks on a panel that remembers what it displayed. */
+#view-widget main { padding: 0; }
+.wg { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; gap: 3vh; padding: 4vh 0; }
+.wg-verdict { display: flex; align-items: center; gap: 0.45em; font-size: clamp(26px, 6vw, 84px); font-weight: bold; line-height: 1.1; }
+.wg-dot { width: 0.5em; height: 0.5em; border-radius: 50%; flex: 0 0 auto; }
+.wg-wrong { display: flex; flex-direction: column; gap: 0.4em; font-size: clamp(15px, 2.5vw, 34px); }
+.wg-wrong > div { display: flex; align-items: baseline; gap: 0.5em; }
+.wg-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 2.5vh 3vw; }
+.wg-num { display: flex; flex-direction: column; min-width: 0; }
+.wg-num b { font-size: clamp(24px, 4.4vw, 64px); line-height: 1.1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.wg-num span { font-size: clamp(10px, 1.1vw, 17px); color: var(--fg2); text-transform: uppercase; letter-spacing: 0.12em; }
+.wg-foot { display: flex; flex-wrap: wrap; gap: 1.4em; font-size: clamp(10px, 1.1vw, 17px); color: var(--fg2); }
 /* A reference from one gloss to another headword. Marked, not linked: the row
    it points at is on the same screen, and the hover highlight is what connects
    them. */
@@ -1718,6 +1776,10 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
           <a href="/lab/github" id="nav-labgithub" title="the ecosystem on github: contributors, pull requests, and projects that depend on gno"><span class="rail-label">github</span></a>
         </div>
       </div>
+      <!-- Childless, like discover, glossary and watch. The cockpit is a
+           destination rather than a section: everything on it belongs to some
+           other page, and every figure links back to the one that owns it. -->
+      <a href="/cockpit" id="nav-cockpit" title="is gnoscope healthy, and is the chain moving: the whole answer on one page"><svg aria-hidden="true"><use href="#i-pulse"/></svg><span class="rail-label">cockpit</span></a>
       <a href="/glossary" id="nav-glossary" title="what the words on this site mean"><svg aria-hidden="true"><use href="#i-info"/></svg><span class="rail-label">glossary</span></a>
       <a href="/watch" id="nav-watch" title="watch"><svg aria-hidden="true"><use href="#i-eye"/></svg><span class="rail-label">watch</span></a>
   </nav>
@@ -1934,6 +1996,11 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-airdrop"><main><div id="airdrop-content"></div></main></div>
   <div class="view" id="view-failed"><main><div id="failed-content"></div></main></div>
   <div class="view" id="view-sanity"><main><div id="sanity-content"></div></main></div>
+  <div class="view" id="view-cockpit"><main><div id="cockpit-content"></div></main></div>
+  <!-- /widget is not in the rail. It is an embed target and a wall display,
+       reached from /cockpit or from whatever page frames it, the same way a
+       detail page is reached from the list above it. -->
+  <div class="view" id="view-widget"><main><div id="widget-content"></div></main></div>
   <div class="view" id="view-traffic"><main><div id="traffic-content"></div></main></div>
   <div class="view" id="view-contracts"><main><div id="contracts-content"></div></main></div>
   <div class="view" id="view-apps"><main><div id="apps-content"></div></main></div>
@@ -4756,6 +4823,7 @@ const NAV = [
     { id: 'gnohub', label: 'gnohub', path: '/gnohub' },
     { id: 'labgithub', label: 'github', path: '/lab/github' },
   ] },
+  { id: 'cockpit', label: 'cockpit', path: '/cockpit' },
   { id: 'glossary', label: 'glossary', path: '/glossary' },
   { id: 'watch', label: 'watch', path: '/watch' },
 ];
@@ -4834,6 +4902,7 @@ const PAGE_LEADS = {
   people: 'find people by what they have done on chain.',
   realms: 'every realm deployed on this chain.',
   sessions: 'delegated signing keys: who lets what sign for them.',
+  cockpit: 'is gnoscope healthy, and is the chain moving. every figure here belongs to another page, and links to it.',
   traffic: 'what readers of this explorer actually open.',
   txs: 'transactions, newest first.',
   validators: 'who is producing blocks, and the valopers registry.',
@@ -5315,6 +5384,8 @@ function route() {
   else if (path === '/airdrop') { view = 'airdrop'; }
   else if (path === '/failed') { view = 'failed'; }
   else if (path === '/sanity') { view = 'sanity'; }
+  else if (path === '/cockpit') { view = 'cockpit'; }
+  else if (path === '/widget') { view = 'widget'; }
   else if (path === '/watch') { view = 'watch'; }
   else if (path.startsWith('/block/')) { view = 'block-detail'; data = parseInt(path.slice(7)); }
   else if (path.startsWith('/govdao/')) { view = 'govdao-detail'; data = parseInt(path.slice(8)); }
@@ -5349,6 +5420,26 @@ function route() {
       subbar.style.display = 'none';
     }
   }
+
+  // Chromeless, for the document that was opened as one and for the route
+  // that always is. The class is normally applied before the body exists (see
+  // the head script), which covers a load and a reload but not a navigation
+  // inside the app or a popstate, since neither re-runs that script.
+  //
+  // EMBED_LOCKED first: a document opened with ?embed=1 stays chromeless for
+  // its whole life, because navigate() drops the query string and a host
+  // page's iframe must not sprout a rail when the reader clicks something.
+  const chromeless = window.EMBED_LOCKED === true || view === 'widget'
+    || new URLSearchParams(window.location.search).get('embed') === '1';
+  document.documentElement.classList.toggle('embed', chromeless);
+  document.documentElement.classList.toggle('widget-standalone',
+    view === 'widget' && window.self === window.top);
+
+  // The cockpit's poll, which outlives a render and must not outlive the page.
+  // A wall display left on /widget keeps one timer; navigating away has to
+  // take it with you, or every page after it is quietly refetching /api/cockpit
+  // every 30 seconds forever.
+  if (view !== 'cockpit' && view !== 'widget' && typeof cockpitStopPoll === 'function') cockpitStopPoll();
 
   // Cartography's settlement view runs a requestAnimationFrame loop. Left
   // running it holds a core at 60 Hz for as long as the tab stays open, on a
@@ -5412,6 +5503,8 @@ function route() {
     case 'airdrop': loadAirdrop(); break;
     case 'failed': loadFailed(); break;
     case 'sanity': loadSanity(); break;
+    case 'cockpit': loadCockpit(); break;
+    case 'widget': loadWidget(); break;
     case 'traffic': loadTraffic(); break;
     case 'block-detail': loadBlockDetail(data); break;
     case 'realm-detail': loadRealmDetail(data, urlTab); break;
@@ -11035,7 +11128,13 @@ const DIAG_STYLE = {
   stale: { color: '#ffd43b', label: 'stale' },
   indexer_down: { color: '#ffd43b', label: 'indexer down' },
   wedged: { color: '#ff6b6b', label: 'wedged' },
-  node_unreachable: { color: '#ff6b6b', label: 'node unreachable' },
+  // Amber, not red, and this one moved: a node we cannot ask is a diagnostic
+  // we have lost, not a service that has stopped. The indexer is still
+  // answering, history and search still work, and the chain may be perfectly
+  // fine. /cockpit grades it the same way for the same reason, and the two
+  // pages drawing one state in two colours reads as a bug in whichever one you
+  // looked at second.
+  node_unreachable: { color: '#ffd43b', label: 'node unreachable' },
   unknown: { color: 'var(--fg2)', label: 'unknown' },
 };
 
@@ -14159,6 +14258,486 @@ async function loadSanity() {
     renderStorageChart(storageChartsDiv, _storageRealm);
 
   } catch (err) { container.textContent = ''; container.appendChild(el('p', { style: { color: 'var(--red)' } }, 'Error: ' + err.message)); }
+}
+
+// --- /cockpit and /widget: is gnoscope healthy, and is the chain moving ------
+//
+// Two pages, one payload, one grading. /api/cockpit joins what /sanity,
+// /traffic, /storage, the syncer and the rail's about block each already
+// answer, and grades it server-side (see pkg/httpapi/cockpit.go) so the two
+// pages cannot disagree about whether anything is wrong.
+//
+// They are deliberately not one layout at two widths. /cockpit is read at a
+// desk: a verdict, the findings, then every figure behind them with a link to
+// the page that owns it. /widget is recognised from across a room in two
+// seconds: a verdict, what is wrong by name, and five numbers. Every attempt
+// to make one layout serve both ends with nine tiles of counters sitting above
+// the thing that is actually broken.
+
+// Colour per verdict, matching DIAG_STYLE's rule: only ok is green, because
+// everything else is something somebody should look at and three shades of
+// amber is decoration.
+const COCKPIT_STATE = {
+  ok: { color: 'var(--green)' },
+  degraded: { color: 'var(--amber)' },
+  down: { color: 'var(--red)' },
+};
+function cockpitStateStyle(state) { return COCKPIT_STATE[state] || COCKPIT_STATE.degraded; }
+function cockpitSevColor(sev) { return sev === 'down' ? 'var(--red)' : 'var(--amber)'; }
+
+// How often each page re-reads the roll-up. The widget is a display nobody is
+// standing in front of, so it is the one that has to stay current on its own;
+// the cockpit refreshes more slowly because a reader is right there and can
+// see the "as of" stamp move.
+//
+// The server caches this endpoint for a minute and the warmer keeps it hot on
+// a 25s pass, so neither of these costs a recompute: both land on an entry
+// that is already there.
+const COCKPIT_REFRESH_MS = 60000;
+const WIDGET_REFRESH_MS = 30000;
+
+let _cockpitPoll = null;
+let _cockpitGen = 0;
+let _cockpitBuild = null;
+let _cockpitLast = null;
+
+// cockpitStopPoll ends the loop and invalidates whatever is in flight. Called
+// by route() on the way out of both views.
+function cockpitStopPoll() {
+  _cockpitGen++;
+  if (_cockpitPoll) { clearTimeout(_cockpitPoll); _cockpitPoll = null; }
+}
+
+// cockpitPoll re-reads the roll-up on a chained timeout, never setInterval.
+//
+// A background tab throttles timers, and an interval whose callback takes
+// longer than its period queues the overruns to fire back to back the moment
+// the tab is foregrounded. On a screen left running for weeks that is a burst
+// of requests nobody asked for, which is the failure this page most has to
+// avoid: it exists to report load, not to be some.
+function cockpitPoll(every, onData, onError) {
+  cockpitStopPoll();
+  const gen = _cockpitGen;
+  const again = () => { if (gen === _cockpitGen) _cockpitPoll = setTimeout(tick, every); };
+  const tick = () => {
+    api('cockpit').then(c => {
+      if (gen !== _cockpitGen) return;
+      _cockpitLast = c;
+      onData(c);
+    }, err => {
+      if (gen !== _cockpitGen) return;
+      onError(err);
+    }).then(again, again);
+  };
+  _cockpitPoll = setTimeout(tick, every);
+}
+
+// cockpitWatchBuild reloads the page once, when the server's build moves.
+//
+// A screen on a wall outlives deploys. The tab is running whichever build's
+// JavaScript it loaded, and any deploy can change the payload's shape, so a
+// display left up for a month would eventually be rendering a response it does
+// not understand with no one there to press reload. Only after a hash has
+// actually been seen, so a restart into the same build reloads nothing.
+//
+// Called by /widget and not by /cockpit. A reader at a desk already has the
+// build-change handling every other page gets (the cache is dropped, see the
+// footer-version block), and pulling the page out from under them mid-read
+// would be a worse answer than a slightly old one.
+function cockpitWatchBuild(c) {
+  const hash = (c && c.service && c.service.git_hash) || '';
+  if (!hash || hash === 'unknown') return;
+  if (_cockpitBuild && _cockpitBuild !== hash) { window.location.reload(); return; }
+  _cockpitBuild = hash;
+}
+
+// cockpitNet is the network a row or a figure is about, for a link back to the
+// page that owns it.
+function cockpitNet(id) { return id ? '?network=' + encodeURIComponent(id) : ''; }
+
+function loadCockpit() {
+  const container = clear('cockpit-content');
+  skeletonBlock(container);
+  const paint = (c) => { _cockpitLast = c; renderCockpit(container, c); };
+  apiSWR('cockpit', paint).catch(err => failBlock(container, err, loadCockpit));
+  // Repainting the last payload on a failed poll is deliberate: the "as of"
+  // stamp is computed at paint, so a page that stopped refreshing would sit
+  // there claiming to be two minutes old forever. Redrawn, the stamp keeps
+  // growing and says what is actually true.
+  cockpitPoll(COCKPIT_REFRESH_MS,
+    c => renderCockpit(container, c),
+    () => { if (_cockpitLast) renderCockpit(container, _cockpitLast); });
+}
+
+function renderCockpit(into, c) {
+  if (!c) return;
+  into.textContent = '';
+  into.appendChild(cockpitVerdictEl(c));
+  into.appendChild(cockpitFindingsEl(c));
+  into.appendChild(cockpitServiceSection(c));
+  into.appendChild(cockpitNetworksSection(c));
+  into.appendChild(cockpitChainSection(c));
+  const req = cockpitRequestsSection(c);
+  if (req) into.appendChild(req);
+  into.appendChild(cockpitLinksEl(c));
+}
+
+function cockpitVerdictEl(c) {
+  const v = c.verdict || {};
+  const box = el('div', { className: 'ckpt-verdict' });
+  box.appendChild(el('span', { className: 'ckpt-dot', style: { background: cockpitStateStyle(v.state).color } }));
+  box.appendChild(el('span', { className: 'ckpt-headline' }, v.headline || 'unknown'));
+  if (c.generated_at) {
+    const when = el('span', { className: 'ckpt-asof' }, 'as of ' + timeAgo(c.generated_at));
+    when.title = c.generated_at + ' — the roll-up is cached for a minute, so this is when it was computed, not when you asked';
+    box.appendChild(when);
+  }
+  return box;
+}
+
+// Worst first, and each one named. The server ranks them; this draws the order
+// it was given rather than sorting again, so the widget and this page show the
+// same list in the same order.
+function cockpitFindingsEl(c) {
+  const wrap = el('div', { id: 'cockpit-findings' });
+  const findings = c.findings || [];
+  if (!findings.length) {
+    wrap.appendChild(el('div', { className: 'ckpt-clear' },
+      'nothing is firing: every chain is producing blocks, every sync pass is landing, and the index is up with the chain.'));
+    return wrap;
+  }
+  for (const f of findings) {
+    const row = el('div', { className: 'ckpt-finding' });
+    row.appendChild(el('span', { className: 'ckpt-sev', style: { color: cockpitSevColor(f.severity) } }, f.severity || ''));
+    const text = el('div', { className: 'ckpt-ftext' });
+    const title = el('div', { className: 'ckpt-ftitle' });
+    title.appendChild(f.href ? link(f.title, () => navigate(f.href)) : document.createTextNode(f.title || ''));
+    text.appendChild(title);
+    if (f.detail) text.appendChild(el('div', { className: 'ckpt-fdetail' }, f.detail));
+    row.appendChild(text);
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+// cockpitStat is one tile. `to` makes it a link, which nearly all of them are:
+// this page owns no number, and a figure a reader cannot click through to is a
+// figure they have to go and find.
+function cockpitStat(label, value, to, title) {
+  const stat = el('div', { className: 'stat' + (to ? ' stat-link' : '') });
+  if (title) stat.title = title;
+  stat.appendChild(el('span', { className: 'label' }, label));
+  const v = el('span', { className: 'value' });
+  v.appendChild(typeof value === 'string' || typeof value === 'number'
+    ? document.createTextNode(String(value)) : value);
+  stat.appendChild(v);
+  if (to) stat.addEventListener('click', () => navigate(to));
+  return stat;
+}
+
+function cockpitServiceSection(c) {
+  const s = c.service || {};
+  const wrap = el('div', { className: 'section' });
+  wrap.appendChild(el('div', { className: 'section-title' }, 'this instance'));
+  const bar = el('div', { className: 'stats-bar' });
+
+  const commit = el('a', {
+    href: 'https://github.com/gnoverse/gnoscope/commit/' + (s.git_hash || ''),
+    target: '_blank', rel: 'noopener',
+  }, s.version && s.version !== s.git_hash ? s.version : (s.git_hash || 'dev'));
+  bar.appendChild(cockpitStat('build', commit, null, 'the commit this instance was built from'));
+
+  const built = s.build_time && s.build_time !== 'unknown'
+    ? s.build_time.slice(0, 10) + ' (' + shortAge(s.build_time) + ')' : 'unknown';
+  bar.appendChild(cockpitStat('built', built, null, s.build_time || ''));
+
+  const up = cockpitStat('uptime', fmtUptime(s.uptime_seconds || 0), null,
+    s.started_at ? 'running since ' + s.started_at : '');
+  bar.appendChild(up);
+  bar.appendChild(cockpitStat('go', s.go_version || 'unknown'));
+  wrap.appendChild(bar);
+  return wrap;
+}
+
+// How far behind our copy is, as a cell. Both halves of the answer, because
+// they fail apart: a gap of four blocks on a chain producing one every three
+// seconds is nothing, and a gap of four blocks on a chain that has not moved
+// in a day is the chain's problem and not ours.
+function cockpitLagEl(n) {
+  if (!n.indexed) return el('span', { style: { color: 'var(--fg2)' } }, 'nothing indexed');
+  if (!n.reachable) return el('span', { style: { color: 'var(--fg2)' } }, humanishAge(n.lag_seconds) + ' old');
+  const span = el('span', {}, fmtNum(n.lag_blocks || 0) + ' blocks');
+  span.appendChild(el('span', { className: 'block-ctx', style: { marginLeft: '6px' } }, humanishAge(n.lag_seconds)));
+  if ((n.lag_blocks || 0) >= 1000) span.style.color = 'var(--red)';
+  else if ((n.lag_blocks || 0) >= 50) span.style.color = 'var(--amber)';
+  return span;
+}
+
+// humanishAge matches the server's humanDuration so a finding's sentence and
+// the table under it round a gap the same way.
+function humanishAge(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  if (s < 86400) return Math.floor(s / 3600) + 'h';
+  return Math.floor(s / 86400) + 'd';
+}
+
+// Every configured chain, never only the selected one: a chain is most worth
+// seeing here precisely when it is not the one you were looking at. Same
+// argument as the heartbeat strip on /sanity.
+function cockpitNetworksSection(c) {
+  const wrap = el('div', { className: 'section' });
+  wrap.appendChild(el('div', { className: 'section-title' }, 'chains and the index'));
+  wrap.appendChild(el('div', { className: 'section-sub' },
+    'the verdict comes from each chain’s own node, the chain head from its indexer, and the '
+    + 'indexed height from this instance’s database. they disagree exactly when one of the three is '
+    + 'the problem, which is why all three are here.'));
+  const table = el('table');
+  const head = el('tr');
+  ['network', 'verdict', 'chain head', 'indexed', 'behind', 'last block', 'sync'].forEach(h =>
+    head.appendChild(el('th', {}, h)));
+  table.appendChild(el('thead', {}, head));
+  const tbody = el('tbody');
+  for (const n of c.networks || []) {
+    const name = el('td', {});
+    name.appendChild(link(n.network, () => navigate('/sanity' + cockpitNet(n.network))));
+    const verdict = el('td', {});
+    verdict.appendChild(diagBadgeEl(n.diagnosis) || el('span', { style: { color: 'var(--fg2)' } }, 'unknown'));
+    const headCell = el('td', {});
+    headCell.appendChild(n.reachable
+      ? blockLink(n.chain_height, n.network)
+      : el('span', { style: { color: 'var(--fg2)' } }, 'indexer unreachable'));
+    const indexed = el('td', {});
+    indexed.appendChild(n.indexed
+      ? blockLink(n.indexed_height, n.network)
+      : el('span', { style: { color: 'var(--fg2)' } }, '—'));
+    const sync = n.sync || null;
+    let syncCell;
+    if (!sync) syncCell = el('span', { style: { color: 'var(--fg2)' } }, 'no sync loop here');
+    else if (sync.consecutive_failures > 0) {
+      syncCell = el('span', { style: { color: 'var(--red)' } }, sync.consecutive_failures + ' failed in a row');
+      if (sync.last_error) syncCell.title = sync.last_error;
+    } else {
+      syncCell = el('span', { style: { color: 'var(--green)' } }, 'ok');
+      if (sync.last_success_at) syncCell.title = 'last pass succeeded ' + timeAgo(sync.last_success_at);
+    }
+    tbody.appendChild(el('tr', {},
+      name, verdict, headCell, indexed,
+      el('td', {}, cockpitLagEl(n)),
+      el('td', {}, n.last_block_time ? timeAgo(n.last_block_time) : '—'),
+      el('td', {}, syncCell)));
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function cockpitChainSection(c) {
+  const ch = c.chain || {};
+  const net = ch.network || '';
+  const wrap = el('div', { className: 'section' });
+  wrap.appendChild(el('div', { className: 'section-title' },
+    'what ' + (net || 'the chain') + ' did in the last 24 hours'));
+  wrap.appendChild(el('div', { className: 'section-sub' },
+    'one chain, never a blend: there is no such thing as the height of four chains at once, and the '
+    + 'same goes for every counter beside it. the arrow compares the window with the 24 hours before it.'));
+  const bar = el('div', { className: 'stats-bar' });
+
+  const withTrend = (stat, cur, prev) => {
+    const d = el('span', { className: 'delta' });
+    d.appendChild(trendEl(cur || 0, prev || 0, !!ch.has_prev));
+    stat.appendChild(d);
+    return stat;
+  };
+
+  bar.appendChild(cockpitStat('height', fmtNum(ch.height || 0), '/blocks' + cockpitNet(net)));
+  bar.appendChild(withTrend(cockpitStat('txs', fmtNum(ch.txs || 0), '/txs' + cockpitNet(net)), ch.txs, ch.prev_txs));
+  bar.appendChild(withTrend(cockpitStat('active addresses', fmtNum(ch.active_addresses || 0),
+    '/accounts' + cockpitNet(net)), ch.active_addresses, ch.prev_active_addresses));
+  bar.appendChild(withTrend(cockpitStat('new packages', fmtNum(ch.new_packages || 0),
+    '/code/timeline' + cockpitNet(net)), ch.new_packages, ch.prev_new_packages));
+  bar.appendChild(cockpitStat('failed calls', fmtNum(ch.failed_calls || 0), '/failed' + cockpitNet(net),
+    'of ' + fmtNum(ch.calls || 0) + ' calls in the window'));
+  bar.appendChild(cockpitStat('storage', shortBytes(ch.storage_bytes || 0), '/storage' + cockpitNet(net),
+    fmtBytes(ch.storage_bytes || 0) + ' across ' + fmtNum(ch.storage_realms || 0) + ' realms'));
+  // Signed, and sized: this one can be negative, and "-11,403,776 bytes" is a
+  // figure nobody reads at a glance where "-10.9 MB" is.
+  const delta = ch.storage_bytes_window || 0;
+  const growth = cockpitStat('storage in 24h',
+    (delta > 0 ? '+' : delta < 0 ? '-' : '') + shortBytes(Math.abs(delta)),
+    '/storage' + cockpitNet(net),
+    'net of refunds: a window that freed more than it stored is a real answer, not a bug');
+  bar.appendChild(growth);
+  wrap.appendChild(bar);
+  return wrap;
+}
+
+// Absent when -traffic-db is unset, which is the default. An instance that
+// records nothing should say nothing here rather than draw a row of zeroes
+// that reads as "nobody came".
+function cockpitRequestsSection(c) {
+  const rq = c.requests;
+  if (!rq) return null;
+  const wrap = el('div', { className: 'section' });
+  wrap.appendChild(el('div', { className: 'section-title' }, 'what this instance served'));
+  wrap.appendChild(el('div', { className: 'section-sub' },
+    'the last 24 hours of this instance’s own request log, crawlers excluded. '
+    + 'the full breakdown, and the slow routes, are on traffic.'));
+  const bar = el('div', { className: 'stats-bar' });
+  bar.appendChild(cockpitStat('requests', fmtNum(rq.requests || 0), '/traffic'));
+  bar.appendChild(cockpitStat('visitors', fmtNum(rq.visitors || 0), '/traffic'));
+  const rate = cockpitStat('error rate', ((rq.error_rate || 0) * 100).toFixed(1) + '%', '/traffic?errors=1',
+    fmtNum(rq.errors || 0) + ' requests answered 4xx or 5xx');
+  if ((rq.error_rate || 0) > 0.05) rate.querySelector('.value').style.color = 'var(--red)';
+  bar.appendChild(rate);
+  const hitRate = rq.requests ? (100 * (rq.cache_hits || 0) / rq.requests).toFixed(0) + '%' : '—';
+  bar.appendChild(cockpitStat('served from cache', hitRate, null,
+    fmtNum(rq.cache_hits || 0) + ' of ' + fmtNum(rq.requests || 0) + ' requests'));
+  if (rq.dropped > 0) {
+    const dropped = cockpitStat('log rows dropped', fmtNum(rq.dropped), '/traffic',
+      'the buffer threw these away under load, so every figure above understates');
+    dropped.querySelector('.value').style.color = 'var(--red)';
+    bar.appendChild(dropped);
+  }
+  wrap.appendChild(bar);
+  return wrap;
+}
+
+function cockpitLinksEl(c) {
+  const net = (c.chain || {}).network || '';
+  const row = el('div', { className: 'ckpt-links' });
+  const add = (label, path) => row.appendChild(link(label, () => navigate(path)));
+  add('sanity', '/sanity' + cockpitNet(net));
+  add('alerts', '/alerts' + cockpitNet(net));
+  add('traffic', '/traffic');
+  add('storage', '/storage' + cockpitNet(net));
+  add('blocks', '/blocks' + cockpitNet(net));
+  add('validators', '/validators' + cockpitNet(net));
+  // A real anchor and a full page load, not navigate(): /widget is chromeless
+  // and the class that makes it so is applied before the body exists.
+  row.appendChild(el('a', { href: '/widget' + cockpitNet(net), target: '_blank', rel: 'noopener' },
+    'open the widget'));
+  row.appendChild(el('a', { href: '/api/cockpit' + cockpitNet(net), target: '_blank', rel: 'noopener' },
+    'this page as json'));
+  return row;
+}
+
+// --- /widget -----------------------------------------------------------------
+//
+// Nothing here is read, it is recognised: a verdict, then what is wrong by
+// name, then five numbers. No headings, no section titles, no sentences
+// explaining what a figure means — a television across a room has time for
+// about six words and a phone in a hallway has less.
+//
+// It has to survive being left open for weeks with nobody there, which is most
+// of what the code below is about: a chained timeout rather than an interval,
+// a reload when the build moves, a last-good payload kept so one bad response
+// does not blank the screen, and a verdict that says so when gnoscope itself
+// stops answering.
+
+// How many findings fit before the numbers stop being visible. Three is what a
+// 16:9 panel holds at this type size with room left for the row underneath.
+const WIDGET_MAX_FINDINGS = 3;
+
+function loadWidget() {
+  const container = clear('widget-content');
+  container.appendChild(el('div', { className: 'wg' },
+    el('div', { className: 'wg-verdict' },
+      el('span', { className: 'wg-dot', style: { background: 'var(--fg2)' } }),
+      el('span', {}, 'reading'))));
+  const paint = (c) => { _cockpitLast = c; cockpitWatchBuild(c); renderWidget(container, c); };
+  api('cockpit').then(paint, () => renderWidgetUnreachable(container));
+  cockpitPoll(WIDGET_REFRESH_MS, paint, () => renderWidgetUnreachable(container));
+}
+
+// The one verdict this page computes for itself. Everything else is the
+// server's grading, but "gnoscope is not answering" is the one finding the
+// server cannot report, and it is the most important thing a wall display can
+// say: a frozen screen and a healthy chain look identical otherwise.
+function renderWidgetUnreachable(into) {
+  renderWidget(into, {
+    verdict: { state: 'down', headline: 'gnoscope is not answering' },
+    findings: [{ severity: 'down', title: 'this page could not reach /api/cockpit' }],
+    chain: (_cockpitLast || {}).chain || {},
+    service: (_cockpitLast || {}).service || {},
+    networks: (_cockpitLast || {}).networks || [],
+    generated_at: (_cockpitLast || {}).generated_at || '',
+  });
+}
+
+function renderWidget(into, c) {
+  into.textContent = '';
+  const v = c.verdict || {};
+  const ch = c.chain || {};
+  const wrap = el('div', { className: 'wg' });
+
+  const verdict = el('div', { className: 'wg-verdict' });
+  verdict.appendChild(el('span', { className: 'wg-dot', style: { background: cockpitStateStyle(v.state).color } }));
+  verdict.appendChild(el('span', {}, v.headline || 'unknown'));
+  wrap.appendChild(verdict);
+
+  const findings = c.findings || [];
+  if (findings.length) {
+    const wrong = el('div', { className: 'wg-wrong' });
+    for (const f of findings.slice(0, WIDGET_MAX_FINDINGS)) {
+      wrong.appendChild(el('div', {},
+        el('span', { style: { color: cockpitSevColor(f.severity) } }, '●'),
+        el('span', {}, f.title || '')));
+    }
+    if (findings.length > WIDGET_MAX_FINDINGS) {
+      wrong.appendChild(el('div', { style: { color: 'var(--fg2)' } },
+        el('span', {}, '+ ' + (findings.length - WIDGET_MAX_FINDINGS) + ' more')));
+    }
+    wrap.appendChild(wrong);
+  }
+
+  // Five, and the same five every time. A tile that appears and disappears
+  // moves the four beside it, and a layout that moves is a layout nobody
+  // learns the shape of.
+  const nums = el('div', { className: 'wg-nums' });
+  const lag = cockpitWidgetLag(c);
+  nums.appendChild(widgetNumEl('height', fmtNum(ch.height || 0)));
+  nums.appendChild(widgetNumEl('behind', lag.text, lag.color));
+  nums.appendChild(widgetNumEl('txs 24h', fmtNum(ch.txs || 0)));
+  nums.appendChild(widgetNumEl('addresses 24h', fmtNum(ch.active_addresses || 0)));
+  nums.appendChild(widgetNumEl('packages 24h', fmtNum(ch.new_packages || 0)));
+  wrap.appendChild(nums);
+
+  const foot = el('div', { className: 'wg-foot' });
+  if (ch.network) foot.appendChild(el('span', {}, ch.network));
+  if (c.generated_at) foot.appendChild(el('span', {}, timeAgo(c.generated_at)));
+  const hash = (c.service || {}).git_hash;
+  if (hash && hash !== 'unknown') foot.appendChild(el('span', {}, hash));
+  wrap.appendChild(foot);
+
+  into.appendChild(wrap);
+}
+
+// The widget's one derived figure: how far behind the chain the index is, for
+// whichever chain the page is about. Drawn as blocks because that is what the
+// finding is worded in, and coloured at the same two thresholds the server
+// grades on, so the number and the verdict above it cannot say different
+// things.
+function cockpitWidgetLag(c) {
+  const net = (c.chain || {}).network;
+  const row = (c.networks || []).find(n => n.network === net) || (c.networks || [])[0];
+  if (!row) return { text: '—', color: 'var(--fg2)' };
+  if (!row.indexed) return { text: 'none', color: 'var(--amber)' };
+  if (!row.reachable) return { text: humanishAge(row.lag_seconds), color: 'var(--amber)' };
+  const blocks = row.lag_blocks || 0;
+  if (blocks >= 1000) return { text: fmtNum(blocks), color: 'var(--red)' };
+  if (blocks >= 50) return { text: fmtNum(blocks), color: 'var(--amber)' };
+  return { text: fmtNum(blocks), color: null };
+}
+
+function widgetNumEl(label, value, color) {
+  const box = el('div', { className: 'wg-num' });
+  const b = el('b', {}, String(value));
+  if (color) b.style.color = color;
+  box.appendChild(b);
+  box.appendChild(el('span', {}, label));
+  return box;
 }
 
 // --- /storage: the chain as a disk -------------------------------------------
