@@ -145,6 +145,32 @@ body { padding-left: var(--rail-w); }
   box-shadow: 0 0 0 2px var(--bg2); }
 html.rail-collapsed .rail nav a.has-watch::after { left: calc(50% + 4px); }
 
+/* The one row on the rail that is an invitation rather than a destination.
+   /cartography is the page people do not think to open, so it gets the only
+   piece of ornament in the nav: a small heart, after the label.
+
+   Outside .rail-label on purpose. Collapsed, the label is clipped to a pixel
+   and anything inside it goes with it, so a heart in there would vanish at
+   52px; out here it survives that rule. It is still not *seen* collapsed,
+   because this link lives in a .nav-kids block and the whole block is
+   display:none at that width — which is the honest state of things: no row,
+   no heart. The placement costs nothing today and is right the day the
+   collapsed rail learns to show its children, when a childless row with one
+   glyph is exactly how every parent row already reads.
+
+   aria-hidden, so the accessible name stays "cartography" and a screen reader
+   is not told the page is a black heart. */
+.rail nav a .rail-heart { color: #e05a6b; font-size: 10px; line-height: 1; margin-left: 5px;
+  opacity: .72; transform: translateY(-.5px); }
+.rail nav a:hover .rail-heart, .rail nav a.active .rail-heart { opacity: 1; animation: rail-beat 1.1s ease-in-out infinite; }
+@keyframes rail-beat { 0%, 100% { transform: translateY(-.5px) scale(1); } 18% { transform: translateY(-.5px) scale(1.32); } 36% { transform: translateY(-.5px) scale(1); } 54% { transform: translateY(-.5px) scale(1.18); } }
+/* A beating heart next to a cursor is charm once and a tic by the fourth
+   visit, and for some readers it is worse than that. Reduced motion gets the
+   heart and none of the beat. */
+@media (prefers-reduced-motion: reduce) {
+  .rail nav a:hover .rail-heart, .rail nav a.active .rail-heart { animation: none; }
+}
+
 /* Sections. The children are a plain indented list under the parent, with
    the guide line doing the work a second icon column would do badly at
    12.5px. Every section is always open: the parent row is a link to a real
@@ -1713,7 +1739,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
       <div class="nav-group">
         <a href="/lab" id="nav-lab" title="surfaces being tried out"><svg aria-hidden="true"><use href="#i-flask"/></svg><span class="rail-label">lab</span></a>
         <div class="nav-kids">
-          <a href="/cartography" id="nav-cartography" title="the chain drawn as a place: a city, a settlement, orbits, a transit map, terrain, a downtown, boroughs, a hex board, a frontier, an old town, a honeycomb, a skyline, an archipelago and night lights, with a time-lapse and find across all of them"><span class="rail-label">cartography</span></a>
+          <a href="/cartography" id="nav-cartography" title="the chain drawn as a place: a city, a settlement, orbits, a transit map, terrain, a downtown, boroughs, a hex board, a frontier, an old town, a honeycomb, a skyline, an archipelago and night lights, with a time-lapse and find across all of them"><span class="rail-label">cartography</span><span class="rail-heart" aria-hidden="true">♥</span></a>
           <a href="/gnohub" id="nav-gnohub" title="a realm read as a repository: owners, files, deploys"><span class="rail-label">gnohub</span></a>
           <a href="/lab/github" id="nav-labgithub" title="the ecosystem on github: contributors, pull requests, and projects that depend on gno"><span class="rail-label">github</span></a>
         </div>

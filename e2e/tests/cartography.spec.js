@@ -706,6 +706,122 @@ test('as of a day draws only what existed then, and play walks forward to today'
   expect(w.jsErrors).toEqual([]);
 });
 
+// The time-lapse in motion. Three claims: the slider draws while it is dragged,
+// a fast drag coalesces instead of queueing, and the transition leaves nothing
+// of itself behind in the DOM the rest of the page walks.
+
+// dragAsOf drags the as-of slider across `steps` stops as fast as the browser
+// will dispatch, and reports how many drawings the page actually produced.
+//
+// Counted with a MutationObserver on the stage rather than from inside the
+// page's own code: what matters is how many times the drawing was rebuilt, and
+// that is observable from outside without the page having to admit to anything.
+async function dragAsOf(page, steps, pauseMs = 0) {
+  return page.evaluate(async ([steps, pauseMs]) => {
+    const stage = document.getElementById('carto-stage');
+    const sl = document.getElementById('carto-asof');
+    const stops = Number(sl.getAttribute('data-stops'));
+    let draws = 0;
+    // A redraw is the stage getting a new svg or canvas, which is the one event
+    // every view has in common.
+    const obs = new MutationObserver(ms => {
+      for (const m of ms) for (const n of m.addedNodes) {
+        if (n.nodeType === 1 && (n.tagName === 'svg' || n.tagName === 'CANVAS') &&
+          !n.classList.contains('carto-ghost')) draws++;
+      }
+    });
+    obs.observe(stage, { childList: true });
+    const t0 = performance.now();
+    for (let i = 0; i < steps; i++) {
+      sl.value = String(Math.round(stops * (i + 1) / (steps + 1)));
+      sl.dispatchEvent(new Event('input', { bubbles: true }));
+      if (pauseMs) await new Promise(r => setTimeout(r, pauseMs));
+      else await new Promise(r => requestAnimationFrame(r));
+    }
+    const dragMs = performance.now() - t0;
+    // Let the last scheduled frame land before counting.
+    await new Promise(r => setTimeout(r, 900));
+    obs.disconnect();
+    return { draws, dragMs, stops, day: document.getElementById('carto-asof-d').textContent,
+      value: Number(sl.value) };
+  }, [steps, pauseMs]);
+}
+
+test('the as-of slider draws while it is dragged, and a fast drag coalesces', async ({ page }) => {
+  const w = watch(page);
+  await open(page, 'metropolis');
+
+  // One stop, one drawing: the slider does not wait for the reader to let go.
+  const slow = await dragAsOf(page, 1, 300);
+  expect(slow.draws).toBe(1);
+  await expect(page).toHaveURL(new RegExp(`asof=${slow.day}`));
+
+  // Thirty stops as fast as rAF will carry them. The budget is REDRAW_FPS = 8
+  // a second, so the ceiling is the drag's own duration times eight, plus the
+  // frame that lands after the reader lets go. Anything near thirty would mean
+  // the drags were queued rather than coalesced, which is the failure this
+  // exists to catch: a slider that falls further behind the pointer the faster
+  // it is moved.
+  const fast = await dragAsOf(page, 30);
+  const ceiling = Math.ceil(fast.dragMs / 1000 * 8) + 2;
+  expect(fast.draws).toBeLessThanOrEqual(ceiling);
+  expect(fast.draws).toBeGreaterThan(0);
+
+  // And the drawing that survived is the day the slider was left on, not one of
+  // the days it passed through.
+  await expect(page.locator('#carto-asof-d')).toHaveText(fast.day);
+  if (fast.day !== 'today') await expect(page).toHaveURL(new RegExp(`asof=${fast.day}`));
+
+  expect(w.jsErrors).toEqual([]);
+});
+
+test('a transition leaves no ghost, no wrapper and no second copy of a package', async ({ page }) => {
+  const w = watch(page);
+  await open(page, 'honeycomb');
+  const all = await page.locator('#carto-stage [data-cp]').count();
+
+  // Back through the chain's history and forward again. Each step tweens.
+  await dragAsOf(page, 4, 250);
+  await page.evaluate(() => {
+    const sl = document.getElementById('carto-asof');
+    sl.value = sl.getAttribute('data-stops');
+    sl.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(page.locator('#carto-asof-d')).toHaveText('today');
+  // The ghost is scenery and is stripped of its identities before it is shown,
+  // so a count of packages on the stage can never include it; the wrappers the
+  // transition inserts are unwrapped when they land. Both of those are what
+  // keeps find, hover-neighbours and the next transition measuring the drawing
+  // and not the leftovers.
+  await expect.poll(() => page.locator('#carto-stage .carto-ghost').count(), { timeout: 5000 }).toBe(0);
+  await expect.poll(() => page.evaluate(() =>
+    [...document.querySelectorAll('#carto-stage svg g')].filter(g => g.style.transformBox).length),
+  { timeout: 5000 }).toBe(0);
+  expect(await page.locator('#carto-stage [data-cp]').count()).toBe(all);
+
+  // Find still counts exactly the packages that are drawn.
+  await page.locator('#carto-find').fill('hub');
+  const hits = await page.locator('#carto-stage .carto-hit[data-cp]').count();
+  await expect(page.locator('#carto-find-n')).toHaveText(`${hits} of ${all} packages`);
+  expect(w.jsErrors).toEqual([]);
+});
+
+test('a reader who asked for no animation gets the drawing and not the motion', async ({ browser }) => {
+  const ctx = await browser.newContext({ reducedMotion: 'reduce', viewport: { width: 1400, height: 1000 } });
+  const page = await ctx.newPage();
+  const w = watch(page);
+  await open(page, 'metropolis');
+  await dragAsOf(page, 2, 250);
+  // No ghost is ever mounted and no shape is ever wrapped: the stage is
+  // repainted, exactly as it was before any of this existed.
+  expect(await page.locator('.carto-ghost').count()).toBe(0);
+  expect(await page.evaluate(() =>
+    document.getElementById('carto-stage').getAnimations({ subtree: true }).length)).toBe(0);
+  expect(await page.locator('#carto-stage [data-cp]').count()).toBeGreaterThan(0);
+  expect(w.jsErrors).toEqual([]);
+  await ctx.close();
+});
+
 test('find lights one namespace up in whichever view is on screen', async ({ page }) => {
   await open(page, 'honeycomb', '&find=hub');
   const hits = await page.locator('#carto-stage .carto-hit[data-cp]').count();
@@ -822,6 +938,152 @@ test('the settlement as of a day asks for the callers of the window that ended t
   await open(page, 'settlement', `&asof=${first}`);
   expect(asked.some(u => u.includes(`until=${first}`))).toBe(true);
   await expect(page.locator('.carto-asof')).toContainText('per-day call rollup');
+});
+
+// The dice and the link out.
+
+// signature is what "the same drawing" means here: every package, where it
+// landed and how big it is, plus the caption the view wrote about itself.
+//
+// Geometry rather than markup, because every view stamps its <defs> with a
+// per-draw id and two identical drawings would differ on those. Rounded,
+// because a sub-pixel difference is not a reader seeing a different city.
+async function signature(page, sel = '#carto-stage') {
+  return page.evaluate(s => {
+    const stage = document.querySelector(s);
+    const shapes = [...stage.querySelectorAll('[data-cp]')].map(e => {
+      const r = e.getBoundingClientRect();
+      return [e.getAttribute('data-cp'), Math.round(r.x), Math.round(r.y),
+        Math.round(r.width), Math.round(r.height)].join(':');
+    }).sort();
+    const note = [...document.querySelectorAll('#carto-below .carto-note')].map(n => n.innerText).join(' ');
+    return { shapes, note, n: shapes.length };
+  }, sel);
+}
+
+test('the dice draws something else, says what it drew, and the link goes back to it', async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 1000 },
+    permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await ctx.newPage();
+  const w = watch(page);
+  await stubPeople(page);
+  await open(page, 'metropolis');
+
+  const seen = new Set();
+  for (let roll = 0; roll < 6; roll++) {
+    await page.locator('#carto-lucky').click();
+    await settle(page);
+    await page.waitForSelector('#carto-stage svg, #carto-stage canvas', { timeout: 20_000 });
+
+    // Something was drawn, and it was not an empty state. The dice promises
+    // that something interesting happens; a .carto-empty is the one thing it
+    // must never hand back.
+    await expect(page.locator('#carto-stage .carto-empty, #carto-stage .carto-err')).toHaveCount(0);
+
+    // The sentence names the view that is actually on, and every rule that is
+    // actually in force -- both read off the same tables the controls are.
+    const view = await page.locator('.carto-pick button.on b').innerText();
+    const said = await page.locator('#carto-said').innerText();
+    expect(said).toContain(`The ${view}:`);
+    // Every variant the bar is showing is in the sentence, label and value, and
+    // so are the window, the metric and the scale. .carto-variant is the mark
+    // controls() puts on the OPTIONS-backed groups; the bespoke controls beside
+    // them (roads, compass, plan, tilt, light) are the reader's framing rather
+    // than a rule about what is drawn, and the sentence says so by omission.
+    const rules = await page.locator('#carto-bar .carto-variant').evaluateAll(gs =>
+      gs.map(g => [g.querySelector('span').innerText, g.querySelector('button.on').innerText]));
+    for (const [label, value] of rules) expect(said).toContain(`${label} ${value}`);
+    for (const g of ['window', 'size by', 'scale']) {
+      const on = page.locator('#carto-bar .carto-grp', { has: page.locator(`span:text-is("${g}")`) })
+        .locator('button.on');
+      if (await on.count()) expect(said).toContain(await on.innerText());
+    }
+
+    // It rolls the view, the variants, and never the reader's window or a
+    // random day in the chain's history.
+    await expect(page).not.toHaveURL(/asof=/);
+    await expect(page).not.toHaveURL(/cmp=/);
+    await expect(page).toHaveURL(/w=30d/);
+
+    // The link is the drawing. Copied, opened cold, same geometry and same
+    // caption -- which is the only check that the variants made it into the
+    // query string and back out of it.
+    const before = await signature(page);
+    await page.locator('#carto-copy').click();
+    await expect(page.locator('#carto-copy')).toHaveText(/copied/);
+    const url = await page.evaluate(() => navigator.clipboard.readText());
+    expect(url).toContain('/cartography?');
+    expect(url).toContain(`v=${await page.evaluate(() => new URLSearchParams(location.search).get('v'))}`);
+
+    const other = await ctx.newPage();
+    await stubPeople(other);
+    await other.goto(url);
+    await settle(other);
+    await other.waitForSelector('#carto-stage svg, #carto-stage canvas', { timeout: 20_000 });
+    const after = await signature(other);
+    expect(after.n).toBe(before.n);
+    expect(after.shapes).toEqual(before.shapes);
+    expect(after.note).toBe(before.note);
+    expect(await other.locator('#carto-said').innerText()).toBe(said);
+    await other.close();
+
+    seen.add(view);
+  }
+  // Six rolls over fourteen views: a dice that returned one view every time
+  // would be a very unlucky run or a broken one, and this is the assertion
+  // that tells the two apart.
+  expect(seen.size).toBeGreaterThan(1);
+  expect(w.jsErrors).toEqual([]);
+  await ctx.close();
+});
+
+test('the dice will not roll the one view this chain cannot draw', async ({ page }) => {
+  // No stubPeople here: the harness runs with -sync=false, so caller_edges is
+  // legitimately empty and the settlement draws its empty state rather than a
+  // village. That is honest when a reader asks for it and a bad joke when a
+  // button that promised something interesting hands it over.
+  await open(page, 'metropolis');
+  await expect(page.locator('#carto-said')).toBeVisible();
+  const rolled = [];
+  for (let i = 0; i < 40; i++) {
+    await page.locator('#carto-lucky').click();
+    rolled.push(await page.evaluate(() => new URLSearchParams(location.search).get('v')));
+  }
+  expect(rolled).not.toContain('settlement');
+  // And it is a dice, not a loop: forty rolls over thirteen views reach more
+  // than a couple of them.
+  expect(new Set(rolled).size).toBeGreaterThan(3);
+
+  // With a caller graph it is back in the pool, which is the half of this that
+  // says the exclusion is about the data and not a view somebody disliked.
+  await stubPeople(page);
+  await open(page, 'settlement');
+  await expect(page.locator('#carto-stage .carto-empty')).toHaveCount(0);
+});
+
+test('the sentence under the bar follows the controls, not the roll that set them', async ({ page }) => {
+  await open(page, 'honeycomb');
+  await expect(page.locator('#carto-said')).toContainText('The honeycomb:');
+  await expect(page.locator('#carto-said')).toContainText('centre is land value');
+
+  // A variant click goes through restate(), which rebuilds the bar and not the
+  // page: the sentence has to come with it.
+  await page.locator('#carto-bar button', { hasText: 'most called' }).click();
+  await expect(page.locator('#carto-said')).toContainText('centre is most called');
+  await page.locator('#carto-bar button', { hasText: 'storage' }).click();
+  await expect(page.locator('#carto-said')).toContainText('Sized by storage');
+  await page.locator('#carto-bar button', { hasText: 'linear' }).click();
+  await expect(page.locator('#carto-said')).toContainText('on a linear scale');
+
+  // A view with no size channel says so rather than naming a metric it is not
+  // using, and old town drops the wall rule when the ring rule has made it inert.
+  await page.locator('.carto-pick button', { hasText: 'hexes' }).click();
+  await expect(page.locator('#carto-said')).toContainText('Every shape the same size');
+  await page.locator('.carto-pick button', { hasText: 'old town' }).click();
+  await expect(page.locator('#carto-said')).toContainText('walls eras');
+  await page.locator('#carto-bar button', { hasText: 'land value' }).click();
+  await expect(page.locator('#carto-said')).not.toContainText('walls');
+  await expect(page).not.toHaveURL(/oldtown\.walls/);
 });
 
 test('a cartography link previews as the drawing it names', async ({ page }) => {
