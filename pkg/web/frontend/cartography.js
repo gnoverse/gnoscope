@@ -121,6 +121,7 @@ var S = {
   // which packages exist. Calls and imports stay today's either way.
   asof: null,
   play: null,      // setInterval handle while the time-lapse plays
+  tween: false,    // set by the time controls: this redraw is a transition, not a repaint
   // Find: what the reader typed, applied to whatever view is on screen.
   find: '',
   // Compare: the second pane's view, or null, and its own variants, so a
@@ -684,6 +685,10 @@ function groupNamespaces(nodes) {
 function render(root) {
   var el = window.el;
   stopPlay();
+  // A redraw scheduled by a drag the reader abandoned mid-flick, on a view that
+  // is about to stop existing. Ordinary control changes deliberately leave it
+  // alone: the drag is still what the slider is showing, and it should land.
+  stopTick();
   root.textContent = '';
 
   root.appendChild(el('div', { className: 'carto-intro' },
@@ -968,6 +973,300 @@ function stopAnim() {
   S.anims = [];
 }
 
+// -----------------------------------------------------------------------------
+// The time-lapse, in motion
+// -----------------------------------------------------------------------------
+//
+// Moving the as-of day used to replace one drawing with another. The stage was
+// emptied and repainted, and 589 buildings arrived at new addresses between two
+// frames with nothing connecting the two pictures: a reader could see *that*
+// the chain had changed and not *how*, which is the only question a time-lapse
+// is asked.
+//
+// A frame of the time-lapse is now a transition:
+//
+//   stayed   a package in both frames glides and resizes from where it was to
+//            where it is, and cross-fades its colour if that moved too
+//   entered  a package deployed on this day scales up out of nothing
+//   left     a package the reader stepped back past fades out where it stood
+//
+// Identity is the package path and the namespace, read from the data-cp and
+// data-ns attributes bindNode and the namespace shapes already write for find
+// and for hover neighbours. Never an array index: every ranking view reshuffles
+// as the chain grows, and index-keyed motion would show each building handing
+// its slot to its neighbour instead of moving to its own.
+//
+// Why this is one function rather than fourteen. A view draws itself exactly as
+// it always did, into an empty stage, knowing nothing about any of this. The
+// transition is computed from the two DOM trees afterwards: where each key was
+// on screen before the repaint, where it is after, and the difference handed to
+// the shape as a transform it animates away. Fourteen layouts stay fourteen
+// layouts and one place knows about motion, so a fifteenth view animates by
+// calling bindNode, which it has to call anyway to be hoverable.
+//
+// Which views this actually moves, measured rather than assumed:
+//
+//   city, metropolis, boroughs, hexes, frontier, old town, honeycomb, skyline,
+//   archipelago, orbits, metro, night lights
+//                                  tween. Every one of them keys its packages
+//                                  through bindNode, so every package has an
+//                                  identity to be moved by. On a step through
+//                                  mainnet's history the ranking views move
+//                                  500-700 shapes at once and the append-only
+//                                  ones (frontier, old town) move a handful,
+//                                  which is the layouts being honest rather
+//                                  than this code behaving differently.
+//   settlement                     keys its villages and will move them, but
+//                                  on the real chain it almost never does: a
+//                                  village is a realm in the top-80 caller
+//                                  graph, and those realms are old, so a step
+//                                  through the time-lapse leaves the set and
+//                                  the layout alone. What it looks like in
+//                                  practice is a cross-fade, and the walkers
+//                                  restart either way.
+//   relief                         cross-fades, and cannot do better. It is a
+//                                  canvas: a 300x170 scalar field sampled into
+//                                  pixels, with no element per package to move
+//                                  and nothing in the picture that is a
+//                                  package. The honest transition between two
+//                                  samplings of a field is a dissolve, which is
+//                                  what it gets.
+//
+// Two things the drawings keep doing on a cut rather than a glide, said out
+// loud because "it all animates" would be the picture lying again: the roads,
+// frames, axes and labels a view draws around its packages carry no identity,
+// so they are replaced; and the settlement's walkers restart their route,
+// because they are a simulation over the caller graph and not a position that
+// can be interpolated to.
+
+// REDRAW_FPS is the ceiling on how often the stage is rebuilt, and it exists
+// because the slider drives a draw while it is being dragged. `input` fires on
+// every pixel of a drag, ~120 times a second on a trackpad flick across the
+// chain's whole history, and a full repaint is nowhere near that cheap.
+//
+// The number is the measured frame. Against gno.land's 695 packages, stepping
+// the as-of day and watching the main thread with a longtask observer, the
+// worst frame of each view -- the repaint plus this file's measure, wrap and
+// animate pass -- is: relief 61-68 ms, night lights 53-62, archipelago and
+// skyline 51, metropolis and the rest of the city-builders under 50. Eight a
+// second is a 125 ms slot, near twice the worst of those, which leaves the
+// browser room to lay out and composite the ~700 animations the frame starts
+// without the next frame landing on top of it. Twelve a second (83 ms) fits
+// the median and not the tail, and the tail is the view a reader on a slow
+// machine is most likely to be sitting on.
+//
+// Eight is also comfortably above the rate at which a scrub stops reading as
+// one: the slider has 33 stops on mainnet, so a half-second flick across the
+// whole history still draws four of them.
+//
+// It is a ceiling and not a queue, which is the part that matters. A frame that
+// arrives inside the budget replaces the one waiting instead of joining it, so
+// a flick draws the day the reader let go on, never a backlog of the days they
+// passed through. Dropping an intermediate frame is correct; falling behind is
+// not.
+var REDRAW_FPS = 8;
+
+// How long a shape takes to reach its new place. Shorter than the play loop's
+// 900 ms step, so a playing time-lapse settles before the next day arrives
+// rather than being cut off mid-glide every frame.
+var TWEEN_MS = 420;
+
+var _tick = 0, _tickAt = 0, _tickRun = null;
+
+function stopTick() { if (_tick) { cancelAnimationFrame(_tick); _tick = 0; } _tickRun = null; }
+
+// drawSoon runs fn no more than REDRAW_FPS times a second, keeping only the
+// most recent one asked for. rAF rather than setTimeout, matching the
+// settlement's walk: the browser already knows when it is about to paint, and a
+// timer that fires while a tab is hidden would redraw a city nobody is looking
+// at.
+function drawSoon(fn) {
+  _tickRun = fn;
+  if (_tick) return;
+  var step = function () {
+    var now = performance.now();
+    if (now - _tickAt < 1000 / REDRAW_FPS) { _tick = requestAnimationFrame(step); return; }
+    _tick = 0; _tickAt = now;
+    var r = _tickRun; _tickRun = null;
+    if (r) r();
+  };
+  _tick = requestAnimationFrame(step);
+}
+
+// Readers who asked their system not to animate things get the repaint they had
+// before: the drawing still changes, it just does not travel to get there.
+function reducedMotion() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+// keyed indexes every shape under root that carries an identity.
+function keyed(root) {
+  var m = {};
+  root.querySelectorAll('[data-cp],[data-ns]').forEach(function (e) {
+    var cp = e.getAttribute('data-cp');
+    m[cp ? 'p:' + cp : 'n:' + e.getAttribute('data-ns')] = e;
+  });
+  return m;
+}
+
+// fillOf is the colour a keyed shape is carrying, and the element carrying it.
+// A keyed shape is usually a <g> whose first painted child holds the fill, so
+// this looks one level in. A gradient reference is not a colour anything can be
+// interpolated towards, so it is reported as no colour at all and that shape
+// simply moves without changing hue.
+function fillOf(e) {
+  var t = e.getAttribute('fill') ? e : e.querySelector('[fill]');
+  var v = t && t.getAttribute('fill');
+  return v && v.indexOf('url(') !== 0 ? { el: t, v: v } : null;
+}
+
+// tweenOpen measures the drawing that is about to be thrown away and takes it
+// out of the stage before the stage is emptied, so it can stay on screen as the
+// ghost the leaving shapes fade out of.
+//
+// Screen pixels rather than user units, deliberately: half these views refit
+// their viewBox to whatever exists, so one user coordinate is two different
+// places on screen in two consecutive frames. What a reader watches move is the
+// pixel, so the pixel is what is measured.
+function tweenOpen(stage) {
+  if (!stage || reducedMotion()) return null;
+  // A ghost left over from a frame the reader outran. It is inert, but it would
+  // be measured as if it were the drawing.
+  stage.querySelectorAll('.carto-ghost').forEach(function (g) { g.remove(); });
+  var svg = stage.querySelector('svg, canvas');
+  if (!svg) return null;
+  var sr = stage.getBoundingClientRect();
+  var all = keyed(svg), was = {}, n = 0;
+  Object.keys(all).forEach(function (k) {
+    var r = all[k].getBoundingClientRect();
+    if (!r.width && !r.height) return;
+    was[k] = { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height,
+      fill: (fillOf(all[k]) || {}).v || null, el: all[k] };
+    n++;
+  });
+  var r0 = svg.getBoundingClientRect();
+  svg.remove();
+  svg.setAttribute('class', ((svg.getAttribute('class') || '') + ' carto-ghost').trim());
+  return { was: was, n: n, ghost: svg,
+    box: { x: r0.left - sr.left, y: r0.top - sr.top, w: r0.width, h: r0.height } };
+}
+
+function tweenAbort(tw) { if (tw && tw.ghost) tw.ghost.remove(); }
+
+// tweenClose is the whole transition: one read pass over the drawing that has
+// just been mounted, then one write pass that puts every shape back where it
+// came from and lets it travel.
+function tweenClose(tw, stage) {
+  if (!tw) return;
+  var now = keyed(stage), ease = 'cubic-bezier(.25,.85,.3,1)';
+
+  // Everything measured before anything is written. Inserting a wrapper
+  // invalidates layout, so a loop that measured and wrapped in the same pass
+  // would cost 589 forced reflows instead of one.
+  //
+  // getScreenCTM is read here too, off the shape itself: the wrapper goes
+  // between the shape and its parent and starts with no transform of its own,
+  // so the shape's matrix now is the wrapper's matrix later.
+  var pre = {};
+  Object.keys(now).forEach(function (k) {
+    pre[k] = { r: now[k].getBoundingClientRect(), m: now[k].getScreenCTM(), f: fillOf(now[k]) };
+  });
+
+  var moved = 0, born = 0;
+  Object.keys(now).forEach(function (k) {
+    var e = now[k], p = pre[k], r = p.r, was = tw.was[k];
+    if (!p.m || (!r.width && !r.height)) return;
+    var tf, kf;
+    if (was) {
+      // The shape's screen displacement, carried back into the shape's own
+      // coordinate system through the inverse of the linear part of its matrix.
+      // The linear part only: a translation of the matrix moves the origin, not
+      // the delta, and three of these views hand a group a flip or a scale that
+      // a naive division by m.a would get backwards.
+      var det = p.m.a * p.m.d - p.m.b * p.m.c;
+      if (!det) return;
+      var dx = was.x - (r.left + r.width / 2), dy = was.y - (r.top + r.height / 2);
+      var lx = (p.m.d * dx - p.m.c * dy) / det, ly = (-p.m.b * dx + p.m.a * dy) / det;
+      var sx = r.width ? Math.min(6, Math.max(0.15, was.w / r.width)) : 1;
+      var sy = r.height ? Math.min(6, Math.max(0.15, was.h / r.height)) : 1;
+      var still = Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 &&
+        Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01;
+      // Colour rides on its own animation, on the element that actually holds
+      // the fill, and only when it changed. In a time-lapse it usually has not:
+      // a namespace hue and a zone colour are properties of the package, not of
+      // the day. Paying for 589 colour animations to express nothing is the
+      // kind of cost that turns a 420 ms glide into a stutter.
+      if (p.f && was.fill && p.f.v !== was.fill) {
+        p.f.el.animate([{ fill: was.fill }, { fill: p.f.v }], { duration: TWEEN_MS, easing: ease });
+      }
+      if (still) return;
+      tf = 'translate(' + lx.toFixed(2) + 'px,' + ly.toFixed(2) + 'px) scale(' +
+        sx.toFixed(3) + ',' + sy.toFixed(3) + ')';
+      kf = [{ transform: tf }, { transform: 'none' }];
+      moved++;
+    } else {
+      // Deployed on this day. Out of nothing rather than in from somewhere:
+      // there is no honest "somewhere" for a package that did not exist.
+      kf = [{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, transform: 'none' }];
+      born++;
+    }
+    // A wrapper, not the shape itself. In SVG the transform attribute and the
+    // CSS transform property are the same property, and a dozen of these shapes
+    // are groups already placed by a transform attribute: writing a CSS one
+    // onto them would replace their position rather than offset it, and the
+    // city would collapse into its own corner. A <g> with nothing else on it
+    // cannot have that argument with anybody.
+    var w = svgEl('g');
+    e.parentNode.insertBefore(w, e);
+    w.appendChild(e);
+    w.style.transformBox = 'fill-box';
+    w.style.transformOrigin = 'center';
+    var a = w.animate(kf, { duration: TWEEN_MS, easing: ease });
+    // Unwrapped when it lands, so the DOM the next frame measures, and the one
+    // find and hover-neighbours walk, is the one the view drew. An untouched
+    // <g> is harmless; one carrying a transform is a stacking context, and the
+    // night lights' glows stop adding to each other inside one.
+    a.onfinish = function () {
+      var par = w.parentNode;
+      if (!par) return;
+      while (w.firstChild) par.insertBefore(w.firstChild, w);
+      par.removeChild(w);
+    };
+  });
+
+  // The shapes that are gone, fading out of the old drawing where they stood.
+  //
+  // The ghost keeps its whole tree, because a leaving shape's position is its
+  // ancestors' transforms, but it is painted hidden with only the leavers
+  // taking their visibility back: the old drawing's own opaque sky would
+  // otherwise sit on top of the new one for as long as it took to fade.
+  //
+  // Their identities are stripped first. A ghost is scenery, and find, hover
+  // neighbours and the next frame's measurement all walk the stage by data-cp.
+  var gone = [];
+  Object.keys(tw.was).forEach(function (k) {
+    var e = tw.was[k].el;
+    e.removeAttribute('data-cp');
+    e.removeAttribute('data-ns');
+    if (!now[k]) gone.push(e);
+  });
+  var g = tw.ghost;
+  if (tw.n && !gone.length) { g.remove(); return { moved: moved, born: born, gone: 0 }; }
+  if (tw.n) {
+    g.style.visibility = 'hidden';
+    gone.forEach(function (e) { e.style.visibility = 'visible'; });
+  }
+  // tw.n is zero on the relief, which has no shapes to key: there the whole old
+  // canvas stays visible and dissolves into the new one, which is the only
+  // transition a sampled field has.
+  g.style.left = tw.box.x + 'px'; g.style.top = tw.box.y + 'px';
+  g.style.width = tw.box.w + 'px'; g.style.height = tw.box.h + 'px';
+  stage.appendChild(g);
+  g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: TWEEN_MS, easing: 'ease-out', fill: 'forwards' })
+    .onfinish = function () { g.remove(); };
+  return { moved: moved, born: born, gone: gone.length };
+}
+
 var DRAW = function () {
   return { city: drawCity, settlement: drawSettlement, orbits: drawOrbits,
     metro: drawMetro, relief: drawRelief, metropolis: drawMetropolis, boroughs: drawBoroughs,
@@ -1082,24 +1381,48 @@ function timeControl(d) {
   r.value = String(idx);
   var lab = el('b', { className: 'carto-time-d', id: 'carto-asof-d' }, S.asof || 'today');
   var dayAt = function (i) { return i >= days.length ? null : days[i]; };
-  r.addEventListener('input', function () { lab.textContent = dayAt(+r.value) || 'today'; });
-  r.addEventListener('change', function () {
-    stopPlay();
-    S.asof = dayAt(+r.value); writeURL(); draw();
-  });
+
+  // The slider draws while it is being dragged, not when it is let go. A
+  // time-lapse the reader scrubs is the point of having one; a slider that
+  // shows a date and nothing else until release is a date picker.
+  //
+  // Through drawSoon, because `input` fires on every pixel of the drag. The
+  // budget turns a flick across the chain's whole history into REDRAW_FPS
+  // drawings instead of one per pixel, and the one that gets drawn is always
+  // the latest -- the days passed through are dropped, not queued behind it.
+  var seek = function () {
+    var want = dayAt(+r.value);
+    lab.textContent = want || 'today';
+    if (want === S.asof) return;
+    drawSoon(function () {
+      // Read again rather than closing over `want`: between the budget saying
+      // yes and this running, the pointer has usually moved on, and the day it
+      // is on now is the one the reader is asking for.
+      S.asof = dayAt(+r.value);
+      lab.textContent = S.asof || 'today';
+      S.tween = true;
+      writeURL(); draw();
+    });
+  };
+  r.addEventListener('input', function () { stopPlay(); seek(); });
+  r.addEventListener('change', seek);
   var play = el('button', { id: 'carto-play', title: 'replay the chain\u2019s growth one deploy day at a time' }, '\u25b6 play');
   play.addEventListener('click', function () {
     if (S.play) { stopPlay(); return; }
     var i = S.asof ? days.indexOf(S.asof) : -1;
     if (i < 0 || i >= days.length - 1) i = -1;
     play.textContent = '\u25a0 stop'; play.classList.add('on');
+    // Play goes through the same budget as the drag. Its own 900 ms step is
+    // already well inside it, so nothing is ever dropped here; what the budget
+    // buys is that a view slower than its interval cannot be made to fall
+    // behind by a chain with a lot of deploy days.
     var step = function () {
       i++;
-      S.asof = dayAt(i);
+      var day = dayAt(i);
       r.value = String(i >= days.length ? days.length : i);
-      lab.textContent = S.asof || 'today';
-      writeURL(); draw();
-      if (!S.asof) stopPlay();
+      lab.textContent = day || 'today';
+      drawSoon(function () { S.asof = day; S.tween = true; writeURL(); draw(); });
+      if (!day) stopPlay();
     };
     step();
     S.play = setInterval(step, 900);
@@ -1153,10 +1476,18 @@ function draw() {
   tipHide();
   var stage = document.getElementById('carto-stage');
   var below = document.getElementById('carto-below');
+  // Armed before anything is cleared: what the transition needs to measure is
+  // the drawing still on screen. S.tween is a one-shot, set by the time
+  // controls and consumed here, so a metric change is still a plain repaint.
+  var tw = S.tween ? tweenOpen(stage) : null;
+  var twB = S.tween ? tweenOpen(document.getElementById('carto-stage-b')) : null;
+  S.tween = false;
   stage.textContent = '';
   below.textContent = '';
-  var sk = window.el('div', { className: 'skeleton', style: { height: '520px' } });
-  stage.appendChild(sk);
+  // No skeleton while a transition is in flight. The data is already loaded
+  // (the time-lapse filters it rather than refetching it), so the shimmer would
+  // be a frame of grey between two frames that were supposed to be continuous.
+  if (!tw) stage.appendChild(window.el('div', { className: 'skeleton', style: { height: '520px' } }));
 
   cartoLoad().then(function (d) {
     if (gen !== S.gen) return;
@@ -1171,6 +1502,7 @@ function draw() {
         window.el('span', {}, 'chain'), window.el('b', {}, d.network || 'unknown')));
     }
     if (!d.nodes.length) {
+      tweenAbort(tw); tweenAbort(twB);
       stage.appendChild(window.el('div', { className: 'carto-empty' },
         'no packages indexed on this chain yet, nothing to draw'));
       return;
@@ -1191,13 +1523,14 @@ function draw() {
           (d.undated ? ' ' + d.undated + ' packages carry no deploy date and are left out.' : ''))));
     }
     if (!d.nodes.length) {
+      tweenAbort(tw); tweenAbort(twB);
       stage.appendChild(window.el('div', { className: 'carto-empty' },
         'nothing had been deployed by ' + S.asof + '; move the date later'));
       return;
     }
     var needPeople = S.asof && (S.view === 'settlement' || S.cmp === 'settlement');
     (needPeople ? peopleAsOf(all, d) : Promise.resolve(d)).then(function (d2) {
-      if (gen !== S.gen) return;
+      if (gen !== S.gen) { tweenAbort(tw); tweenAbort(twB); return; }
       UID++;
       drawPane(S.view, S.opts, null, stage, below, d2);
       if (S.cmp) {
@@ -1206,11 +1539,18 @@ function draw() {
         sb.textContent = ''; bb.textContent = '';
         UID++;
         drawPane(S.cmp, S.optsB, 'b:' + S.cmp, sb, bb, d2);
+        tweenClose(twB, sb);
+      } else {
+        tweenAbort(twB);
       }
+      // After the panes are mounted and before find is applied: the transition
+      // strips the ghost's identities, and applyFind counts by identity.
+      tweenClose(tw, stage);
       applyFind();
     });
   }, function (e) {
     if (gen !== S.gen) return;
+    tweenAbort(tw); tweenAbort(twB);
     stage.textContent = '';
     stage.appendChild(window.el('div', { className: 'carto-err' },
       'could not load the map: ' + e.message));
@@ -4600,7 +4940,7 @@ window.loadCartography = function (root) {
 // Leaving the page has to stop the settlement walk: a cancelled frame loop is
 // the difference between an idle tab and one holding a core at 60 Hz for as
 // long as it stays open.
-window.unloadCartography = function () { stopAnim(); stopPlay(); tipHide(); };
+window.unloadCartography = function () { stopAnim(); stopPlay(); stopTick(); tipHide(); };
 
 window.addEventListener('mousemove', function (ev) {
   if (TIP && TIP.style.display === 'block') tipMove(ev);

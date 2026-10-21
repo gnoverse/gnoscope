@@ -160,3 +160,14 @@
 .carto-pane-bar button.on { background: var(--bg3); border-color: var(--accent); color: var(--accent); }
 .carto-cmp select { background: var(--bg2); border: 1px solid var(--border); color: var(--fg); font: inherit;
   font-size: 11.5px; padding: 1px 4px; border-radius: 4px; }
+
+/* The time-lapse's ghost: the drawing the reader has just stepped away from,
+   lifted out of the stage and laid back over it so the packages that no longer
+   exist can fade out of where they stood rather than blinking off.
+
+   Over the new drawing and under the camera chrome, and inert: it is a picture
+   of a moment that has passed, and a click on it would navigate to a package
+   the reader can no longer see. Sized in pixels by the transition, because the
+   stage's own 100% would re-fit it to a box the old viewBox was never laid out
+   for and the ghost would not line up with the frame it is fading out of. */
+.carto-stage .carto-ghost { position: absolute; z-index: 1; pointer-events: none; }

@@ -706,6 +706,122 @@ test('as of a day draws only what existed then, and play walks forward to today'
   expect(w.jsErrors).toEqual([]);
 });
 
+// The time-lapse in motion. Three claims: the slider draws while it is dragged,
+// a fast drag coalesces instead of queueing, and the transition leaves nothing
+// of itself behind in the DOM the rest of the page walks.
+
+// dragAsOf drags the as-of slider across `steps` stops as fast as the browser
+// will dispatch, and reports how many drawings the page actually produced.
+//
+// Counted with a MutationObserver on the stage rather than from inside the
+// page's own code: what matters is how many times the drawing was rebuilt, and
+// that is observable from outside without the page having to admit to anything.
+async function dragAsOf(page, steps, pauseMs = 0) {
+  return page.evaluate(async ([steps, pauseMs]) => {
+    const stage = document.getElementById('carto-stage');
+    const sl = document.getElementById('carto-asof');
+    const stops = Number(sl.getAttribute('data-stops'));
+    let draws = 0;
+    // A redraw is the stage getting a new svg or canvas, which is the one event
+    // every view has in common.
+    const obs = new MutationObserver(ms => {
+      for (const m of ms) for (const n of m.addedNodes) {
+        if (n.nodeType === 1 && (n.tagName === 'svg' || n.tagName === 'CANVAS') &&
+          !n.classList.contains('carto-ghost')) draws++;
+      }
+    });
+    obs.observe(stage, { childList: true });
+    const t0 = performance.now();
+    for (let i = 0; i < steps; i++) {
+      sl.value = String(Math.round(stops * (i + 1) / (steps + 1)));
+      sl.dispatchEvent(new Event('input', { bubbles: true }));
+      if (pauseMs) await new Promise(r => setTimeout(r, pauseMs));
+      else await new Promise(r => requestAnimationFrame(r));
+    }
+    const dragMs = performance.now() - t0;
+    // Let the last scheduled frame land before counting.
+    await new Promise(r => setTimeout(r, 900));
+    obs.disconnect();
+    return { draws, dragMs, stops, day: document.getElementById('carto-asof-d').textContent,
+      value: Number(sl.value) };
+  }, [steps, pauseMs]);
+}
+
+test('the as-of slider draws while it is dragged, and a fast drag coalesces', async ({ page }) => {
+  const w = watch(page);
+  await open(page, 'metropolis');
+
+  // One stop, one drawing: the slider does not wait for the reader to let go.
+  const slow = await dragAsOf(page, 1, 300);
+  expect(slow.draws).toBe(1);
+  await expect(page).toHaveURL(new RegExp(`asof=${slow.day}`));
+
+  // Thirty stops as fast as rAF will carry them. The budget is REDRAW_FPS = 8
+  // a second, so the ceiling is the drag's own duration times eight, plus the
+  // frame that lands after the reader lets go. Anything near thirty would mean
+  // the drags were queued rather than coalesced, which is the failure this
+  // exists to catch: a slider that falls further behind the pointer the faster
+  // it is moved.
+  const fast = await dragAsOf(page, 30);
+  const ceiling = Math.ceil(fast.dragMs / 1000 * 8) + 2;
+  expect(fast.draws).toBeLessThanOrEqual(ceiling);
+  expect(fast.draws).toBeGreaterThan(0);
+
+  // And the drawing that survived is the day the slider was left on, not one of
+  // the days it passed through.
+  await expect(page.locator('#carto-asof-d')).toHaveText(fast.day);
+  if (fast.day !== 'today') await expect(page).toHaveURL(new RegExp(`asof=${fast.day}`));
+
+  expect(w.jsErrors).toEqual([]);
+});
+
+test('a transition leaves no ghost, no wrapper and no second copy of a package', async ({ page }) => {
+  const w = watch(page);
+  await open(page, 'honeycomb');
+  const all = await page.locator('#carto-stage [data-cp]').count();
+
+  // Back through the chain's history and forward again. Each step tweens.
+  await dragAsOf(page, 4, 250);
+  await page.evaluate(() => {
+    const sl = document.getElementById('carto-asof');
+    sl.value = sl.getAttribute('data-stops');
+    sl.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(page.locator('#carto-asof-d')).toHaveText('today');
+  // The ghost is scenery and is stripped of its identities before it is shown,
+  // so a count of packages on the stage can never include it; the wrappers the
+  // transition inserts are unwrapped when they land. Both of those are what
+  // keeps find, hover-neighbours and the next transition measuring the drawing
+  // and not the leftovers.
+  await expect.poll(() => page.locator('#carto-stage .carto-ghost').count(), { timeout: 5000 }).toBe(0);
+  await expect.poll(() => page.evaluate(() =>
+    [...document.querySelectorAll('#carto-stage svg g')].filter(g => g.style.transformBox).length),
+  { timeout: 5000 }).toBe(0);
+  expect(await page.locator('#carto-stage [data-cp]').count()).toBe(all);
+
+  // Find still counts exactly the packages that are drawn.
+  await page.locator('#carto-find').fill('hub');
+  const hits = await page.locator('#carto-stage .carto-hit[data-cp]').count();
+  await expect(page.locator('#carto-find-n')).toHaveText(`${hits} of ${all} packages`);
+  expect(w.jsErrors).toEqual([]);
+});
+
+test('a reader who asked for no animation gets the drawing and not the motion', async ({ browser }) => {
+  const ctx = await browser.newContext({ reducedMotion: 'reduce', viewport: { width: 1400, height: 1000 } });
+  const page = await ctx.newPage();
+  const w = watch(page);
+  await open(page, 'metropolis');
+  await dragAsOf(page, 2, 250);
+  // No ghost is ever mounted and no shape is ever wrapped: the stage is
+  // repainted, exactly as it was before any of this existed.
+  expect(await page.locator('.carto-ghost').count()).toBe(0);
+  expect(await page.evaluate(() =>
+    document.getElementById('carto-stage').getAnimations({ subtree: true }).length)).toBe(0);
+  expect(await page.locator('#carto-stage [data-cp]').count()).toBeGreaterThan(0);
+  expect(w.jsErrors).toEqual([]);
+  await ctx.close();
+});
+
 test('find lights one namespace up in whichever view is on screen', async ({ page }) => {
   await open(page, 'honeycomb', '&find=hub');
   const hits = await page.locator('#carto-stage .carto-hit[data-cp]').count();
