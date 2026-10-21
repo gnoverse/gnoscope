@@ -70,6 +70,11 @@ var warmTargets = []string{
 	// Home.
 	"/api/analytics",
 	"/api/sanity/overview",
+	// The cockpit roll-up. On the list for a different reason from everything
+	// else here: it is not visited, it is polled by a wall display that nobody
+	// is standing in front of, and the point of warming it is that the display
+	// never shows a figure it had to wait for.
+	"/api/cockpit",
 	"/api/blocks",
 	"/api/bankstats",
 	"/api/labels",

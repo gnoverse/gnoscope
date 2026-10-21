@@ -135,6 +135,14 @@ var endpointTTL = map[string]time.Duration{
 	// move them by a handful of calls on a window of thousands: nothing a
 	// treemap can show. The code itself moves only with a deploy.
 	CodeTreePath: 5 * time.Minute,
+	// Not slow, but polled rather than visited: /widget asks for this every
+	// 30 seconds for as long as a screen is on a wall, and the warmer keeps it
+	// hot on its own 25s pass. A TTL under the warm interval would mean every
+	// one of those polls landing on an entry that had just expired, so the
+	// display would pay for a recompute it never has to wait for and nobody
+	// would be served by. A minute is also the most staleness the verdict can
+	// carry and still be worth reading.
+	"/api/cockpit": time.Minute,
 }
 
 // pinnedSourceTTL is the server-side freshness of a pinned source read,

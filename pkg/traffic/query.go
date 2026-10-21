@@ -298,20 +298,9 @@ func (s *Store) Report(q Query) (*Report, error) {
 		ErrorsOnly: q.ErrorsOnly,
 	}
 
-	row := s.db.QueryRow(`SELECT
-		COUNT(*),
-		COUNT(DISTINCT CASE WHEN visitor <> '' THEN visitor END),
-		COALESCE(SUM(kind = 'page'), 0),
-		COALESCE(SUM(kind = 'api'), 0),
-		COALESCE(SUM(kind = 'mcp'), 0),
-		COALESCE(SUM(bytes), 0),
-		COALESCE(SUM(status >= 400), 0),
-		COALESCE(SUM(cache = 'HIT'), 0)
-		FROM requests WHERE `+w, args...)
 	t := &out.Totals
-	if err := row.Scan(&t.Requests, &t.Visitors, &t.Pages, &t.API, &t.MCP,
-		&t.Bytes, &t.Errors, &t.CacheHits); err != nil {
-		return nil, fmt.Errorf("totals: %w", err)
+	if err := s.scanTotals(w, args, t); err != nil {
+		return nil, err
 	}
 	if t.Requests == 0 {
 		out.Empty = true
@@ -486,6 +475,48 @@ func runJobs(fns []func() error, limit int) error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// Totals is Report's headline row on its own, without the twenty ranked lists
+// under it.
+//
+// For a caller that wants the volume and the error rate and nothing else. The
+// cockpit roll-up is the one that asked for it: a full Report over 400,000 rows
+// was measured at 6.9s, and all of that work would have been thrown away but
+// for eight numbers this single query already has.
+//
+// Nothing is flushed first, unlike HandleTraffic. A roll-up is read on a timer
+// by a page nobody is watching, and a write per poll to make a 24-hour figure
+// a few seconds fresher is not a trade worth making.
+func (s *Store) Totals(q Query) (Totals, error) {
+	var t Totals
+	if s == nil {
+		return t, nil
+	}
+	if q.Now.IsZero() {
+		q.Now = time.Now()
+	}
+	w, args := q.where()
+	return t, s.scanTotals(w, args, &t)
+}
+
+// scanTotals runs the one query behind both of the above.
+func (s *Store) scanTotals(w string, args []any, t *Totals) error {
+	row := s.db.QueryRow(`SELECT
+		COUNT(*),
+		COUNT(DISTINCT CASE WHEN visitor <> '' THEN visitor END),
+		COALESCE(SUM(kind = 'page'), 0),
+		COALESCE(SUM(kind = 'api'), 0),
+		COALESCE(SUM(kind = 'mcp'), 0),
+		COALESCE(SUM(bytes), 0),
+		COALESCE(SUM(status >= 400), 0),
+		COALESCE(SUM(cache = 'HIT'), 0)
+		FROM requests WHERE `+w, args...)
+	if err := row.Scan(&t.Requests, &t.Visitors, &t.Pages, &t.API, &t.MCP,
+		&t.Bytes, &t.Errors, &t.CacheHits); err != nil {
+		return fmt.Errorf("totals: %w", err)
 	}
 	return nil
 }
