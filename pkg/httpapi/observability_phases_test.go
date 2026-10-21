@@ -64,8 +64,12 @@ func TestServerTimingCarriesHandlerPhases(t *testing.T) {
 	if !strings.HasPrefix(got, "app;dur=") {
 		t.Errorf("Server-Timing %q does not lead with app", got)
 	}
-	if ms := appDurationMS(got); ms <= 0 {
-		t.Errorf("appDurationMS(%q) = %v, want the app metric back", got, ms)
+	// Present and parseable, not positive: a handler this small rounds to
+	// app;dur=0.0, and appDurationMS cannot tell that from the metric being
+	// absent. Asserting on the value instead of its presence is a test that
+	// passes or fails on how busy the machine was.
+	if _, ok := metricMS(got, "app"); !ok {
+		t.Errorf("Server-Timing %q carries no app metric", got)
 	}
 }
 
