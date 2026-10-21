@@ -107,6 +107,11 @@ type API struct {
 	// the network's submissions move. Zero value ready; see
 	// api_code_timeline.go.
 	timeline timelineMemo
+
+	// build is what -ldflags stamped in, plus when this process started. Set
+	// from main.go, which owns those variables; the zero value is a build that
+	// says it does not know, which is the truth in every test and tool.
+	build BuildInfo
 }
 
 // SetClearance installs the operator's clearance lists.
@@ -1014,6 +1019,11 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux := routeRecorder{mux: serveMux, routes: &a.routes}
 
 	mux.HandleFunc("GET /api/endpoints", a.HandleEndpoints)
+	mux.HandleFunc("GET /api/version", a.HandleVersion)
+	// The roll-up behind /cockpit and /widget. See cockpit.go: it joins what
+	// the endpoints above and below already answer, and computes nothing a
+	// second way.
+	mux.HandleFunc("GET /api/cockpit", a.HandleCockpit)
 	mux.HandleFunc("GET /api/stats", a.HandleStats)
 	mux.HandleFunc("GET /api/pulse", a.HandlePulse)
 	mux.HandleFunc("GET /api/failures", a.HandleFailures)

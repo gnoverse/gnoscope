@@ -77,6 +77,19 @@ func run() error {
 		// report to somebody else's analytics account.
 		analyticsScript = flag.String("analytics-script", "",
 			"URL of an analytics script to load in the frontend, e.g. https://scripts.simpleanalyticscdn.com/latest.js (empty = none)")
+		// Who may put /widget in an iframe. A flag, never a compiled-in list:
+		// see pkg/web.Options.WidgetFrameAncestors for the whole argument and
+		// for why the default is permissive.
+		//
+		// $GNOSCOPE_WIDGET_FRAME_ANCESTORS is read when the flag is absent, so
+		// a container can set it without a wrapper script. The literal "none"
+		// sends no header at all, since an empty flag value is how a shell
+		// passes "unset" by accident and would otherwise be indistinguishable
+		// from a deliberate one.
+		widgetFrameAncestors = flag.String("widget-frame-ancestors", "",
+			`who may iframe /widget, as a CSP frame-ancestors source list, e.g. "'self' https://status.example"; `+
+				`falls back to $GNOSCOPE_WIDGET_FRAME_ANCESTORS, then to "`+web.DefaultWidgetFrameAncestors+
+				`", which allows anyone and is right for a read-only public explorer. "none" sends no header`)
 		// Realm screenshots. Empty means the explorer draws no pictures of
 		// realms at all, which is the right default: pointing at a capture
 		// service that is not there would put a broken tile on every row.
@@ -602,6 +615,16 @@ func run() error {
 			len(clearance.Accounts), len(clearance.OtherTeams), len(clearance.Treasury), len(clearance.Deny))
 	}
 	api.SetSyncHealth(syncHealth)
+	// The four build facts, handed over once. /api/version and /api/cockpit
+	// both report them, and holding them in two places is how the two end up
+	// disagreeing about which commit is running.
+	api.SetBuildInfo(httpapi.BuildInfo{
+		GitHash:   gitHash,
+		BuildTime: buildTime,
+		Version:   version,
+		GoVersion: runtime.Version(),
+		StartedAt: startedAt,
+	})
 	api.SetShotUpstream(*gnoshotURL)
 	if api.ShotsEnabled() {
 		log.Printf("screenshots: /api/shot proxies %s", *gnoshotURL)
@@ -646,25 +669,9 @@ func run() error {
 	}()
 	mux := http.NewServeMux()
 
-	// API routes
-	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// shots tells the frontend whether to put any realm <img> on the page.
-		// It asks once and decides for the whole session, so a deployment
-		// without a capture service never requests an image it cannot get.
-		// Uptime is computed here rather than sent as a start timestamp alone
-		// so a reader with a skewed clock still gets the right number; the
-		// timestamp goes out beside it for anything that wants to tick it.
-		httpapi.JSONResponse(w, map[string]any{
-			"git_hash":       gitHash,
-			"build_time":     buildTime,
-			"version":        version,
-			"go_version":     runtime.Version(),
-			"started_at":     startedAt.Format(time.RFC3339),
-			"uptime_seconds": int64(time.Since(startedAt).Seconds()),
-			"shots":          api.ShotsEnabled(),
-		})
-	})
+	// API routes. /api/version is registered by RegisterRoutes from the build
+	// facts set above, not here: a route registered on the mux directly is a
+	// route missing from /api/endpoints.
 	mux.HandleFunc("GET /api/networks", func(w http.ResponseWriter, r *http.Request) {
 		type netInfo struct {
 			ID      string `json:"id"`
@@ -710,10 +717,38 @@ func run() error {
 	log.Printf("mcp: %s serves %d read-only tools, %d req/min and %d concurrent per address",
 		httpapi.MCPPath, httpapi.MCPToolCount(), *mcpPerMinute, *mcpConcurrent)
 
+	// Who may frame /widget: flag, then environment, then the permissive
+	// default. Same shape as -github-token above, and for the same reason: a
+	// container sets an environment variable, a unit file sets a flag, and
+	// neither should need the other. "none" is spelled out because an empty
+	// value is what a shell passes by accident, and a widget that silently
+	// stopped declaring itself framable is exactly the failure this knob
+	// exists to prevent.
+	frameAncestors := *widgetFrameAncestors
+	if frameAncestors == "" {
+		frameAncestors = os.Getenv("GNOSCOPE_WIDGET_FRAME_ANCESTORS")
+	}
+	if frameAncestors == "" {
+		frameAncestors = web.DefaultWidgetFrameAncestors
+	}
+	if frameAncestors == "none" {
+		frameAncestors = ""
+	}
+
 	// Frontend: SPA handler serves index.html for all non-API routes
-	frontend, err := web.Handler(web.Options{AnalyticsScript: *analyticsScript, Shots: api.ShotsEnabled(), DefaultNetwork: api.DefaultNetwork()})
+	frontend, err := web.Handler(web.Options{
+		AnalyticsScript:      *analyticsScript,
+		Shots:                api.ShotsEnabled(),
+		DefaultNetwork:       api.DefaultNetwork(),
+		WidgetFrameAncestors: frameAncestors,
+	})
 	if err != nil {
 		return err
+	}
+	if frameAncestors == "" {
+		log.Printf("widget: %s sends no frame-ancestors, so an X-Frame-Options added upstream decides who may frame it", web.WidgetPath)
+	} else {
+		log.Printf("widget: %s may be framed by %s", web.WidgetPath, frameAncestors)
 	}
 	if *analyticsScript != "" {
 		log.Printf("analytics: frontend loads %s", *analyticsScript)
