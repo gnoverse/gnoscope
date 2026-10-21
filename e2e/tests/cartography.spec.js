@@ -940,6 +940,152 @@ test('the settlement as of a day asks for the callers of the window that ended t
   await expect(page.locator('.carto-asof')).toContainText('per-day call rollup');
 });
 
+// The dice and the link out.
+
+// signature is what "the same drawing" means here: every package, where it
+// landed and how big it is, plus the caption the view wrote about itself.
+//
+// Geometry rather than markup, because every view stamps its <defs> with a
+// per-draw id and two identical drawings would differ on those. Rounded,
+// because a sub-pixel difference is not a reader seeing a different city.
+async function signature(page, sel = '#carto-stage') {
+  return page.evaluate(s => {
+    const stage = document.querySelector(s);
+    const shapes = [...stage.querySelectorAll('[data-cp]')].map(e => {
+      const r = e.getBoundingClientRect();
+      return [e.getAttribute('data-cp'), Math.round(r.x), Math.round(r.y),
+        Math.round(r.width), Math.round(r.height)].join(':');
+    }).sort();
+    const note = [...document.querySelectorAll('#carto-below .carto-note')].map(n => n.innerText).join(' ');
+    return { shapes, note, n: shapes.length };
+  }, sel);
+}
+
+test('the dice draws something else, says what it drew, and the link goes back to it', async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 1000 },
+    permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await ctx.newPage();
+  const w = watch(page);
+  await stubPeople(page);
+  await open(page, 'metropolis');
+
+  const seen = new Set();
+  for (let roll = 0; roll < 6; roll++) {
+    await page.locator('#carto-lucky').click();
+    await settle(page);
+    await page.waitForSelector('#carto-stage svg, #carto-stage canvas', { timeout: 20_000 });
+
+    // Something was drawn, and it was not an empty state. The dice promises
+    // that something interesting happens; a .carto-empty is the one thing it
+    // must never hand back.
+    await expect(page.locator('#carto-stage .carto-empty, #carto-stage .carto-err')).toHaveCount(0);
+
+    // The sentence names the view that is actually on, and every rule that is
+    // actually in force -- both read off the same tables the controls are.
+    const view = await page.locator('.carto-pick button.on b').innerText();
+    const said = await page.locator('#carto-said').innerText();
+    expect(said).toContain(`The ${view}:`);
+    // Every variant the bar is showing is in the sentence, label and value, and
+    // so are the window, the metric and the scale. .carto-variant is the mark
+    // controls() puts on the OPTIONS-backed groups; the bespoke controls beside
+    // them (roads, compass, plan, tilt, light) are the reader's framing rather
+    // than a rule about what is drawn, and the sentence says so by omission.
+    const rules = await page.locator('#carto-bar .carto-variant').evaluateAll(gs =>
+      gs.map(g => [g.querySelector('span').innerText, g.querySelector('button.on').innerText]));
+    for (const [label, value] of rules) expect(said).toContain(`${label} ${value}`);
+    for (const g of ['window', 'size by', 'scale']) {
+      const on = page.locator('#carto-bar .carto-grp', { has: page.locator(`span:text-is("${g}")`) })
+        .locator('button.on');
+      if (await on.count()) expect(said).toContain(await on.innerText());
+    }
+
+    // It rolls the view, the variants, and never the reader's window or a
+    // random day in the chain's history.
+    await expect(page).not.toHaveURL(/asof=/);
+    await expect(page).not.toHaveURL(/cmp=/);
+    await expect(page).toHaveURL(/w=30d/);
+
+    // The link is the drawing. Copied, opened cold, same geometry and same
+    // caption -- which is the only check that the variants made it into the
+    // query string and back out of it.
+    const before = await signature(page);
+    await page.locator('#carto-copy').click();
+    await expect(page.locator('#carto-copy')).toHaveText(/copied/);
+    const url = await page.evaluate(() => navigator.clipboard.readText());
+    expect(url).toContain('/cartography?');
+    expect(url).toContain(`v=${await page.evaluate(() => new URLSearchParams(location.search).get('v'))}`);
+
+    const other = await ctx.newPage();
+    await stubPeople(other);
+    await other.goto(url);
+    await settle(other);
+    await other.waitForSelector('#carto-stage svg, #carto-stage canvas', { timeout: 20_000 });
+    const after = await signature(other);
+    expect(after.n).toBe(before.n);
+    expect(after.shapes).toEqual(before.shapes);
+    expect(after.note).toBe(before.note);
+    expect(await other.locator('#carto-said').innerText()).toBe(said);
+    await other.close();
+
+    seen.add(view);
+  }
+  // Six rolls over fourteen views: a dice that returned one view every time
+  // would be a very unlucky run or a broken one, and this is the assertion
+  // that tells the two apart.
+  expect(seen.size).toBeGreaterThan(1);
+  expect(w.jsErrors).toEqual([]);
+  await ctx.close();
+});
+
+test('the dice will not roll the one view this chain cannot draw', async ({ page }) => {
+  // No stubPeople here: the harness runs with -sync=false, so caller_edges is
+  // legitimately empty and the settlement draws its empty state rather than a
+  // village. That is honest when a reader asks for it and a bad joke when a
+  // button that promised something interesting hands it over.
+  await open(page, 'metropolis');
+  await expect(page.locator('#carto-said')).toBeVisible();
+  const rolled = [];
+  for (let i = 0; i < 40; i++) {
+    await page.locator('#carto-lucky').click();
+    rolled.push(await page.evaluate(() => new URLSearchParams(location.search).get('v')));
+  }
+  expect(rolled).not.toContain('settlement');
+  // And it is a dice, not a loop: forty rolls over thirteen views reach more
+  // than a couple of them.
+  expect(new Set(rolled).size).toBeGreaterThan(3);
+
+  // With a caller graph it is back in the pool, which is the half of this that
+  // says the exclusion is about the data and not a view somebody disliked.
+  await stubPeople(page);
+  await open(page, 'settlement');
+  await expect(page.locator('#carto-stage .carto-empty')).toHaveCount(0);
+});
+
+test('the sentence under the bar follows the controls, not the roll that set them', async ({ page }) => {
+  await open(page, 'honeycomb');
+  await expect(page.locator('#carto-said')).toContainText('The honeycomb:');
+  await expect(page.locator('#carto-said')).toContainText('centre is land value');
+
+  // A variant click goes through restate(), which rebuilds the bar and not the
+  // page: the sentence has to come with it.
+  await page.locator('#carto-bar button', { hasText: 'most called' }).click();
+  await expect(page.locator('#carto-said')).toContainText('centre is most called');
+  await page.locator('#carto-bar button', { hasText: 'storage' }).click();
+  await expect(page.locator('#carto-said')).toContainText('Sized by storage');
+  await page.locator('#carto-bar button', { hasText: 'linear' }).click();
+  await expect(page.locator('#carto-said')).toContainText('on a linear scale');
+
+  // A view with no size channel says so rather than naming a metric it is not
+  // using, and old town drops the wall rule when the ring rule has made it inert.
+  await page.locator('.carto-pick button', { hasText: 'hexes' }).click();
+  await expect(page.locator('#carto-said')).toContainText('Every shape the same size');
+  await page.locator('.carto-pick button', { hasText: 'old town' }).click();
+  await expect(page.locator('#carto-said')).toContainText('walls eras');
+  await page.locator('#carto-bar button', { hasText: 'land value' }).click();
+  await expect(page.locator('#carto-said')).not.toContainText('walls');
+  await expect(page).not.toHaveURL(/oldtown\.walls/);
+});
+
 test('a cartography link previews as the drawing it names', async ({ page }) => {
   const html = await (await page.request.get('/cartography?v=skyline&network=alpha')).text();
   expect(html).toMatch(/property="og:image" content="[^"]*\/cartography-og\/skyline\.jpg"/);

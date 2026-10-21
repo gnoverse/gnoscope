@@ -772,12 +772,18 @@ function btnGroup(label, options, isOn, pick) {
   return g;
 }
 
+// isSized: does this view have a size channel for the metric to drive?
+//
+// hexes is the one city-builder view without one: a tile is the same size
+// whatever is in it, which is its point. Lifted out of controls() because the
+// metric picker, the sentence under the bar and the dice all have to agree
+// about it, and three copies of a list of four view names would not.
+function isSized(view) { return ['settlement', 'metro', 'hexes', 'archipelago'].indexOf(view) < 0; }
+
 function controls(root) {
   var el = window.el;
   var bar = el('div', { className: 'carto-bar', id: 'carto-bar' });
-  // hexes is the one city-builder view without a size channel: a tile is the
-  // same size whatever is in it, which is its point.
-  var sized = ['settlement', 'metro', 'hexes', 'archipelago'].indexOf(S.view) < 0;
+  var sized = isSized(S.view);
   // The three isometric drawings share one camera model, so they share its
   // controls: the compass and the plan view.
   var iso = S.view === 'city' || S.view === 'metropolis' || S.view === 'boroughs';
@@ -843,8 +849,13 @@ function controls(root) {
 
   (OPTIONS[S.view] || []).forEach(function (o) {
     if (o.when && !o.when()) return;
-    bar.appendChild(btnGroup(o.label, o.values, function (v) { return opt(o.key) === v; },
-      function (v) { if (opt(o.key) !== v) { S.opts[S.view + '.' + o.key] = v; writeURL(); restate(root); } }));
+    var g = btnGroup(o.label, o.values, function (v) { return opt(o.key) === v; },
+      function (v) { if (opt(o.key) !== v) { S.opts[S.view + '.' + o.key] = v; writeURL(); restate(root); } });
+    // Marked as a variant, which is what tells the three things that have to
+    // agree about this list -- the dice, the sentence and the suite -- apart
+    // from the bespoke controls beside them.
+    g.classList.add('carto-variant');
+    bar.appendChild(g);
   });
 
   // Compare: a second pane beside this one.
@@ -892,7 +903,151 @@ function controls(root) {
       function (v) { if (S.sun !== v) { S.sun = v; writeURL(); restate(root); } }));
   }
 
+  bar.appendChild(luckyGroup(root));
   return bar;
+}
+
+// -----------------------------------------------------------------------------
+// A roll of the dice, and the link to what came up
+// -----------------------------------------------------------------------------
+//
+// Fourteen views with up to two variants each is 46 drawings, and the page
+// opens on one of them. A reader who does not already know what a honeycomb
+// coloured by zone looks like has no reason to go and find out, so the dice
+// goes and finds out for them, and the sentence under the bar says in words
+// what they are looking at.
+//
+// The sentence is assembled from VIEWS' blurbs and OPTIONS' labels, which are
+// the tables that already define every one of those drawings. That is the whole
+// point of building it this way: a fifteenth view, or a third variant on an
+// existing one, is described correctly the moment it is added, by whoever added
+// it, without anybody remembering that a second table exists.
+
+// describe is the drawing on screen in one sentence.
+//
+// It narrates the view, the metric, the scale, the window and the OPTIONS
+// variants, and deliberately nothing else. The per-view controls beside them --
+// the city's roads, the compass, the plan view, the orbits' tilt, the relief's
+// light -- are hand-written branches in controls() rather than rows in a table,
+// so naming them here would mean a second list to keep in step, which is the
+// one thing this sentence exists not to need. They are the reader's framing of
+// a drawing rather than a rule about what is in it; the dice leaves them alone
+// for the same reason, and the link carries them regardless.
+function describe() {
+  var v = VIEWS.filter(function (x) { return x.id === S.view; })[0];
+  var met = METRICS[S.metric];
+  var tail = [];
+  (OPTIONS[S.view] || []).forEach(function (o) {
+    if (o.when && !o.when()) return;         // a rule with no effect is not worth a clause
+    tail.push(o.label + ' ' + optLabel(o.key));
+  });
+  var sized = isSized(S.view);
+  var sentence = 'The ' + v.name + ': ' + v.blurb + '. ' +
+    (sized ? 'Sized by ' + met.label + ' over the last ' + S.window + ', on a ' + S.scale + ' scale'
+           : 'Every shape the same size, over the last ' + S.window);
+  if (tail.length) {
+    sentence += ', with ' + (tail.length > 1
+      ? tail.slice(0, -1).join(', ') + ' and ' + tail[tail.length - 1]
+      : tail[0]);
+  }
+  return sentence + '.';
+}
+
+// pickLucky rolls one drawing and puts it in S.
+//
+// What it rolls: the view, and every variant that view offers, and -- only on
+// the views that have a size channel to give it -- the metric and the scale.
+//
+// What it leaves alone, and why. The window is the reader's: they set it to
+// mean something, and a dice that answered "24h" would hand back a city where
+// every building is dark and call it a drawing. The as-of day goes back to
+// today for the same reason, because most random days on this chain are a
+// handful of packages. Compare is cleared: a roll is one drawing, and two
+// random ones side by side compare nothing to nothing. Find is cleared, or the
+// new drawing opens with nine tenths of it dimmed.
+//
+// What it refuses to roll: the settlement, on a chain whose caller graph came
+// back empty. It is the one view whose data is a second fetch that is allowed
+// to fail, and when it has failed the view says so in a sentence instead of
+// drawing -- an honest empty state, and a terrible thing to be handed by a
+// button whose promise is that something interesting happens.
+function pickLucky() {
+  var one = function (a) { return a[Math.floor(Math.random() * a.length)]; };
+  var people = S.data && S.data.people && S.data.people.length;
+  var pool = VIEWS.filter(function (v) { return v.id !== 'settlement' || people; });
+  var v = one(pool);
+
+  S.view = v.id;
+  S.cmp = null;
+  S.asof = null;
+  S.find = '';
+  if (isSized(v.id)) {
+    S.metric = one(Object.keys(METRICS));
+    // Weighted, not even. Linear is an honest drawing and usually an unreadable
+    // one: on mainnet the top realm has two orders of magnitude on the median,
+    // so four rolls in five should be a city a reader can see something in.
+    S.scale = Math.random() < 0.8 ? 'log' : 'linear';
+  }
+  (OPTIONS[v.id] || []).forEach(function (o) { S.opts[v.id + '.' + o.key] = one(o.values)[1]; });
+  // A variant the current roll has made inert (old town's walls, under any
+  // ranking but deploy order) is dropped rather than left in the URL, so a
+  // shared link carries only the rules that are doing something.
+  (OPTIONS[v.id] || []).forEach(function (o) {
+    if (o.when && !o.when()) delete S.opts[v.id + '.' + o.key];
+  });
+}
+
+// copyLink hands over the address of exactly what is on screen. writeURL has
+// already put every control in the query string, so there is nothing to build
+// here: the link is the page's own location, which is the only version of it
+// that cannot drift from what the reader is looking at.
+function copyLink(btn) {
+  writeURL();
+  var url = window.location.href;
+  var say = function (t) {
+    btn.textContent = t;
+    setTimeout(function () { btn.textContent = 'copy link'; }, 1800);
+  };
+  var fallback = function () {
+    // No clipboard API, or permission refused. Selecting the text is the oldest
+    // way to let somebody copy a link and still works everywhere.
+    var i = window.el('input', { className: 'carto-copy-fb', value: url, readOnly: true });
+    btn.parentNode.insertBefore(i, btn.nextSibling);
+    i.select();
+    try { document.execCommand('copy'); } catch (_) { /* then the reader does it */ }
+    say('\u2713 copied');
+    setTimeout(function () { i.remove(); }, 1800);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function () { say('\u2713 copied'); }, fallback);
+  } else {
+    fallback();
+  }
+}
+
+// luckyGroup is the dice, the link and the sentence, on their own line at the
+// foot of the bar. Rebuilt with the rest of the bar on every control change,
+// which is how the sentence stays true: it is derived from S, never stored.
+function luckyGroup(root) {
+  var el = window.el;
+  var g = el('div', { className: 'carto-grp carto-lucky' });
+  var dice = el('button', { className: 'carto-dice', id: 'carto-lucky',
+    // U+2726 and not a die face: the mono stack this page is set in has no
+    // glyph for U+2684 and draws a tofu box, which is a worse invitation than
+    // no glyph at all.
+    title: 'a random view, with random rules, drawn from today\u2019s chain' }, '\u2726 i\u2019m feeling lucky');
+  dice.addEventListener('click', function () {
+    pickLucky();
+    writeURL();
+    render(root);    // the view changed, so the picker and the bar both move
+  });
+  var copy = el('button', { id: 'carto-copy',
+    title: 'the address of this exact drawing, variants and all' }, 'copy link');
+  copy.addEventListener('click', function () { copyLink(copy); });
+  g.appendChild(dice);
+  g.appendChild(copy);
+  g.appendChild(el('span', { className: 'carto-said', id: 'carto-said' }, describe()));
+  return g;
 }
 
 function writeURL() {
