@@ -3,10 +3,25 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+// metricMS pulls one named metric out of a Server-Timing header.
+func metricMS(h, name string) (float64, bool) {
+	for _, part := range strings.Split(h, ",") {
+		part = strings.TrimSpace(part)
+		rest, ok := strings.CutPrefix(part, name+";dur=")
+		if !ok {
+			continue
+		}
+		v, err := strconv.ParseFloat(rest, 64)
+		return v, err == nil
+	}
+	return 0, false
+}
 
 // A handler's phases reach the header through the request context, not through
 // the ResponseWriter. That is the whole point: WithCompression sits between
@@ -25,9 +40,23 @@ func TestServerTimingCarriesHandlerPhases(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/holders", nil))
 
 	got := rec.Header().Get("Server-Timing")
-	for _, want := range []string{"app;dur=", "positions;dur=1", "prices;dur=3"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("Server-Timing %q carries no %q", got, want)
+	// On the names and the magnitudes, never on the formatted digits: a
+	// prefix match like "prices;dur=3" passes at 30.1ms and fails at 29.9ms,
+	// which is a test that reports how loaded the machine was.
+	for _, tc := range []struct {
+		metric  string
+		atLeast float64
+	}{
+		{"positions", 100},
+		{"prices", 25},
+	} {
+		v, ok := metricMS(got, tc.metric)
+		if !ok {
+			t.Errorf("Server-Timing %q carries no %s metric", got, tc.metric)
+			continue
+		}
+		if v < tc.atLeast {
+			t.Errorf("%s;dur=%v, want at least %v", tc.metric, v, tc.atLeast)
 		}
 	}
 	// app stays first and parseable: the traffic store reads it out of this
