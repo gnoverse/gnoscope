@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,8 +28,52 @@ import (
 func WithServerTiming(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(&timingWriter{ResponseWriter: w, start: start}, r)
+		rec := &phaseRecorder{}
+		r = r.WithContext(context.WithValue(r.Context(), phaseKey{}, rec))
+		next.ServeHTTP(&timingWriter{ResponseWriter: w, start: start, phases: rec}, r)
 	})
+}
+
+// Phase records how long one named step of a handler took, so an endpoint that
+// is sometimes slow can say *which* part was slow rather than only that it was.
+//
+// Carried on the request context rather than on the ResponseWriter, which is
+// the obvious place and the wrong one: WithCompression sits between this
+// middleware and the mux, so by the time a handler has a writer it is no longer
+// the timingWriter, and a type assertion for one would compile, never match,
+// and record nothing. A context value survives every wrapper.
+//
+// A no-op when nothing is recording, so a handler can call it unconditionally
+// and a test can call the handler directly.
+func Phase(ctx context.Context, name string, started time.Time) {
+	rec, _ := ctx.Value(phaseKey{}).(*phaseRecorder)
+	if rec == nil {
+		return
+	}
+	rec.add(name, time.Since(started))
+}
+
+type phaseKey struct{}
+
+type phaseRecorder struct {
+	mu    sync.Mutex
+	parts []string
+}
+
+func (p *phaseRecorder) add(name string, d time.Duration) {
+	ms := float64(d.Microseconds()) / 1000
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.parts = append(p.parts, name+";dur="+strconv.FormatFloat(ms, 'f', 1, 64))
+}
+
+func (p *phaseRecorder) header() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.parts) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(p.parts, ", ")
 }
 
 // timingWriter writes the header on the way out, at WriteHeader time, because
@@ -36,6 +83,7 @@ type timingWriter struct {
 	http.ResponseWriter
 	start   time.Time
 	written bool
+	phases  *phaseRecorder
 }
 
 func (w *timingWriter) stamp() {
@@ -44,7 +92,14 @@ func (w *timingWriter) stamp() {
 	}
 	w.written = true
 	ms := float64(time.Since(w.start).Microseconds()) / 1000
-	w.Header().Set("Server-Timing", "app;dur="+strconv.FormatFloat(ms, 'f', 1, 64))
+	// app first, and the phases after it: appDurationMS reads the app metric
+	// out of this header and stops at the first delimiter, so everything added
+	// here is invisible to it.
+	v := "app;dur=" + strconv.FormatFloat(ms, 'f', 1, 64)
+	if w.phases != nil {
+		v += w.phases.header()
+	}
+	w.Header().Set("Server-Timing", v)
 }
 
 func (w *timingWriter) WriteHeader(status int) {

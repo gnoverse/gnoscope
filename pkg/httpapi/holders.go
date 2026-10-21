@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gnoverse/gnoscope/pkg/price"
 	"github.com/gnoverse/gnoscope/pkg/store"
@@ -117,7 +118,16 @@ func (a *API) HandleHolders(w http.ResponseWriter, r *http.Request) {
 	wantNative := q.Get("native") != "0"
 	wantPositions := q.Get("positions") == "1"
 
+	// Phased, because this is the slowest route on the site and nobody could
+	// say which part of it was slow. Measured server-side over 24h of
+	// production traffic on 2026-10-21: a p50 of 0.033s against a p95 of 70.2s,
+	// which is not a constant cost but something occasionally catastrophic.
+	// AllPositions benchmarks at 0.39s at production's shape and prices account
+	// for ~10s of the 70, so the rest was unexplained (#499). These four names
+	// turn the next slow request into its own answer.
+	t0 := time.Now()
 	positions, truncated, err := a.db.AllPositions(network, holdersMaxPositions)
+	Phase(r.Context(), "positions", t0)
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
@@ -130,7 +140,9 @@ func (a *API) HandleHolders(w http.ResponseWriter, r *http.Request) {
 		// display limit: an address rich in ugnot and poor in everything else
 		// must be able to out-rank one that is the other way round, and cutting
 		// the native side early would decide that by accident.
+		tNative := time.Now()
 		native, err := a.db.NativePositions(network, holdersMaxPositions)
+		Phase(r.Context(), "native", tNative)
 		if err == nil && len(native) > 0 {
 			positions = append(positions, native...)
 			resp.NativeIncluded = true
@@ -141,7 +153,10 @@ func (a *API) HandleHolders(w http.ResponseWriter, r *http.Request) {
 	// Prices are best-effort and usually mostly absent. A failure here does not
 	// fail the endpoint: the ranking falls back to position count and says so.
 	quotes := map[string]*price.Quote{}
-	if res, err := a.pricesFor(r.Context(), network); err == nil && res != nil {
+	tPrices := time.Now()
+	res, pricesErr := a.pricesFor(r.Context(), network)
+	Phase(r.Context(), "prices", tPrices)
+	if pricesErr == nil && res != nil {
 		if res.Unavailable != "" {
 			resp.PricesUnavailable = res.Unavailable
 		}
@@ -153,10 +168,11 @@ func (a *API) HandleHolders(w http.ResponseWriter, r *http.Request) {
 			}
 			resp.TotalAssets++
 		}
-	} else if err != nil {
-		resp.PricesUnavailable = err.Error()
+	} else if pricesErr != nil {
+		resp.PricesUnavailable = pricesErr.Error()
 	}
 
+	tAssemble := time.Now()
 	byAddr := map[string]*holderRow{}
 	for _, p := range positions {
 		if tokenFilter != "" && p.Token != tokenFilter {
@@ -224,6 +240,7 @@ func (a *API) HandleHolders(w http.ResponseWriter, r *http.Request) {
 		out = out[:limit]
 	}
 	resp.Holders = out
+	Phase(r.Context(), "assemble", tAssemble)
 	JSONResponse(w, resp)
 }
 
