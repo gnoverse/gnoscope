@@ -189,3 +189,32 @@ func TestWarmerWithoutHealthDoesNotBlock(t *testing.T) {
 		t.Fatal("WaitReady blocked with a nil registry")
 	}
 }
+
+// The routes whose cost is paid by a reader rather than by the warmer are the
+// ones that have to be on this list, and they are not always landing pages.
+//
+// /api/prices is the case that taught it: a refresh is dozens of
+// sequential-ish RPC reads, the quote cache's grace is five minutes, and on a
+// site this quiet the grace lapses between visitors. Measured against
+// production on 2026-10-25, /api/holders took 18.9s on the first request after
+// a silence and 0.83s on the three behind it, and the whole difference was the
+// price leg it reads.
+func TestWarmPlanCoversTheReadsAReaderWouldOtherwisePayFor(t *testing.T) {
+	plan := WarmPlan([]string{"mainnet"})
+	for _, want := range []string{
+		"/api/prices",
+		"/api/govdao/overview",
+		"/api/analytics",
+	} {
+		var found bool
+		for _, p := range plan {
+			if p == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the warm plan does not cover %s, so the next reader computes it", want)
+		}
+	}
+}
