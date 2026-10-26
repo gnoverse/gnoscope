@@ -638,6 +638,10 @@ function cartoLoad() {
   }).then(function (r) {
     var d = {
       network: r[4],
+      // What the map payload says about when it is true: the stored height it
+      // was computed at and the live tip beside it. Read from the payload, not
+      // from the header's feed, so the caption cannot drift from the numbers.
+      prov: r[0],
       nodes: r[0].nodes || [],
       imports: (r[1] && r[1].edges) || [],
       overlap: (r[2] && r[2].edges) || [],
@@ -1200,6 +1204,7 @@ function draw() {
       if (gen !== S.gen) return;
       UID++;
       drawPane(S.view, S.opts, null, stage, below, d2);
+      provNote(below, d2);
       if (S.cmp) {
         paneBar();
         var sb = document.getElementById('carto-stage-b'), bb = document.getElementById('carto-below-b');
@@ -1225,6 +1230,15 @@ function note(below, parts) {
   });
   below.appendChild(n);
   return n;
+}
+
+// provNote says which block the drawing is true at, under the caption that
+// already says which window, which metric and which day. Absent when the
+// server could not say, rather than a dash that reads as block zero.
+function provNote(below, d) {
+  if (!d.prov || !d.prov.indexed_height || !window.graphProvenance) return;
+  below.appendChild(window.el('div', { className: 'carto-note carto-prov' },
+    window.graphProvenance(d.prov, d.network)));
 }
 
 function legend(below, items) {

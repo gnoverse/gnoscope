@@ -1265,6 +1265,7 @@ html:not(.has-shots) .shot-cell { display: none; }
 .dash-title { font-size: 13px; color: var(--fg); }
 .dash-chart { width: 100%; height: 300px; }
 .dash-msg { color: var(--fg2); font-size: 12px; padding: 20px 0; }
+.dash-prov { color: var(--fg2); font-size: 11px; margin-top: 6px; }
 .dash-note { color: var(--fg2); font-size: 11px; margin-bottom: 10px; }
 /* Detail-page charts. Narrower than a dashboard card because they sit inside a
    tab that already has a stats bar and a table above them, and the chart is the
@@ -3660,6 +3661,37 @@ function timeEl(t) {
   span.textContent = t ? timeAgo(t) : '';
   return span;
 }
+// graphProvenance is the quiet line under a graph that says when it was
+// true. Every graph payload carries the stored height it was computed at and
+// the live tip as the header's feed last saw it (graphProvenance in
+// pkg/httpapi/api_graph.go); the only arithmetic here is the difference of
+// those two, and only when the server carried both. A count the server cut
+// at topN is said here as well, because a trimmed neighbourhood draws exactly
+// like a complete one.
+function graphProvenance(p, network) {
+  const line = el('span');
+  if (!p || !p.indexed_height) return line;
+  line.appendChild(document.createTextNode('computed at block '));
+  line.appendChild(blockWithAge(p.indexed_height, p.indexed_time, network));
+  if (p.live_tip_height && p.live_tip_height >= p.indexed_height) {
+    const ahead = p.live_tip_height - p.indexed_height;
+    line.appendChild(document.createTextNode(' \u00b7 ' +
+      (ahead ? 'live tip ' + fmtNum(ahead) + ' blocks ahead' : 'at the live tip')));
+    if (p.live_tip_checked_at) {
+      line.appendChild(document.createTextNode(', checked '));
+      line.appendChild(timeEl(p.live_tip_checked_at));
+    }
+  }
+  if (p.dropped) {
+    line.appendChild(document.createTextNode(' \u00b7 ' + fmtNum(p.dropped) +
+      ' more past the top ' + fmtNum(p.top_n) + ' not drawn'));
+  }
+  if (p.stopped_at_hop) {
+    line.appendChild(document.createTextNode(' \u00b7 top ' + fmtNum(p.top_n) +
+      ' reached at hop ' + p.stopped_at_hop + ' of ' + p.hops + ', nothing further out was walked'));
+  }
+  return line;
+}
 setInterval(() => {
   document.querySelectorAll('[data-time]').forEach(s => {
     const t = s.getAttribute('data-time');
@@ -3718,13 +3750,14 @@ function onNetworkChange() {
   const sel = document.getElementById('network-select');
   const n = sel.value;
   setNetwork(n);
-  // transfer-graph's drilled-into ego address lives on the module-level
+  // The two graphs' drilled-into ego lives on the module-level
   // DASHBOARDS array, so it survives a network switch even though it is
   // meaningless there: an address from one chain almost certainly has no edges
   // on another. Persisting it across a *window* change is intentional; only a
   // network switch resets it.
-  const transferGraph = DASHBOARDS.flatMap(s => s.charts).find(c => c.id === 'transfer-graph');
-  if (transferGraph && transferGraph.state) transferGraph.state.ego = null;
+  DASHBOARDS.flatMap(s => s.charts)
+    .filter(c => c.id === 'transfer-graph' || c.id === 'caller-graph')
+    .forEach(c => { if (c.state) c.state.ego = null; });
   // The default is what stays out of the URL, and 'all' is no longer it.
   //
   // While the default WAS 'all', the absence of the parameter meant "every
@@ -25911,6 +25944,7 @@ const DASHBOARDS = [
         wide: true,
         mode: 'B',
         networkScoped: true,
+        provenance: true,
         state: { ego: null },
         why: 'Who sends GNOT to whom. Node size is total volume in the window; edge width is the value moved between that pair. Starts on the top 100 addresses by volume — click a node to drill into its direct counterparties only (1 hop), and use "back to overview" to return.',
         controls: (bar, rerender, state) => {
@@ -26028,9 +26062,23 @@ const DASHBOARDS = [
         // when this card is actually drawn (#214); renderDashChart reads this
         // flag to decide which library to wait for.
         gl: true,
-        why: 'Who calls into which realms. Blue nodes are calling addresses, teal nodes are realms; edge width is call volume. Rendered in WebGL (no ego drill-down yet) since this graph can have more nodes than the force-directed canvas view above comfortably lays out.',
-        fetch: w => dashApi('graph/callers?topN=300', w),
-        opt: graph => {
+        provenance: true,
+        state: { ego: null },
+        why: 'Who calls into which realms. Blue nodes are calling addresses, teal nodes are realms; edge width is call volume. The overview is rendered in WebGL since it can have more nodes than the force-directed canvas view above comfortably lays out. Click a node to see only its direct neighbours (the realms an address called, or the addresses that called a realm), and use "back to overview" to return.',
+        controls: (bar, rerender, state) => {
+          if (!state.ego) return;
+          const btn = el('button', { type: 'button' }, '\u2190 back to overview');
+          btn.addEventListener('click', () => { state.ego = null; rerender(); });
+          bar.appendChild(btn);
+        },
+        fetch: function (w) {
+          this.state = this.state || {};
+          const q = this.state.ego ? 'ego=' + encodeURIComponent(this.state.ego) : 'topN=300';
+          return dashApi('graph/callers?' + q, w);
+        },
+        opt: function (graph) {
+          const ego = this.state && this.state.ego;
+          if (ego) return callerEgoOpt(graph, ego);
           if (graph.nodes.length === 0) {
             // echarts-gl's graphGL series throws "The texture attached to
             // color buffer is not a valid" when handed an empty node/edge set
@@ -26073,6 +26121,42 @@ const DASHBOARDS = [
   },
 ];
 
+// callerEgoOpt draws one node of the caller graph and its neighbours on the
+// canvas force layout rather than in WebGL. The neighbourhood is bounded by
+// topN on the server, which is well inside what the canvas view lays out, and
+// the canvas series is the one whose click events say which node was hit, so
+// a reader can keep walking from neighbour to neighbour.
+function callerEgoOpt(graph, ego) {
+  const maxN = graph.nodes.reduce((m, n) => Math.max(m, n.calls), 1);
+  const maxE = graph.edges.reduce((m, e) => Math.max(m, e.calls), 1);
+  return dashBase({
+    tooltip: {
+      formatter: p => dashTooltipNode(
+        p.dataType === 'edge'
+          ? [shortAddr(p.data.source) + ' \u2192 ' + p.data.target, fmtNum(p.data.value) + ' calls']
+          : [p.data.name, fmtNum(p.data.value) + ' calls']
+      ),
+    },
+    series: [{
+      type: 'graph',
+      layout: 'force',
+      roam: true,
+      draggable: true,
+      force: { repulsion: 120, edgeLength: [40, 160] },
+      label: { show: false },
+      data: graph.nodes.map(n => ({
+        id: n.id, name: n.id, value: n.calls,
+        symbolSize: 8 + 24 * (n.calls / maxN),
+        itemStyle: { color: n.id === ego ? DASH_PAL[1] : (n.type === 'realm' ? DASH_PAL[0] : DASH_PAL[5]) },
+      })),
+      edges: graph.edges.map(e => ({
+        source: e.caller, target: e.pkg_path, value: e.calls,
+        lineStyle: { width: 1 + 5 * (e.calls / maxE), color: '#3a3a3a', curveness: 0.1 },
+      })),
+    }],
+  });
+}
+
 function infoTip(text) {
   const btn = el('button', { type: 'button', className: 'info-btn', 'aria-label': 'what this chart shows' }, 'i');
   const pop = el('span', { className: 'info-pop', role: 'tooltip' }, text);
@@ -26085,6 +26169,7 @@ function dashCard(chart) {
   const parts = [head];
   if (chart.controls) parts.push(el('div', { className: 'dash-controls', id: 'dash-controls-' + chart.id }));
   parts.push(el('div', { className: 'dash-chart', id: 'dash-chart-' + chart.id }));
+  if (chart.provenance) parts.push(el('div', { className: 'dash-prov', id: 'dash-prov-' + chart.id }));
   const card = el('div', { className: 'dash-card' + (chart.wide ? ' wide' : '') });
   parts.forEach(p => card.appendChild(p));
   return card;
@@ -26156,6 +26241,11 @@ async function renderDashChart(chart, gen) {
     return;
   }
   if (gen !== _dashGen) return;
+  const prov = document.getElementById('dash-prov-' + chart.id);
+  if (prov) {
+    prov.textContent = '';
+    prov.appendChild(graphProvenance(rows, getNetwork()));
+  }
   // The fetch may have refreshed chart.state (e.g. the function heatmap's
   // realm list) even though it returned nothing to plot, so re-render with
   // whatever is now current before the empty-data exit below.
@@ -26195,9 +26285,13 @@ async function renderDashChart(chart, gen) {
     return;
   }
   _dashCharts[chart.id] = inst;
-  if (chart.id === 'transfer-graph') {
+  if (chart.id === 'transfer-graph' || chart.id === 'caller-graph') {
     inst.on('click', params => {
-      if (params.dataType !== 'node') return;
+      // The canvas graph names what was hit in dataType. echarts-gl's graphGL
+      // dispatches a point hit with a data index and no dataType at all, so
+      // the overview's clicks are recognised by carrying a node's id.
+      if (params.dataType === 'edge' || !params.data || !params.data.id) return;
+      if (params.dataType && params.dataType !== 'node') return;
       chart.state = chart.state || {};
       chart.state.ego = params.data.id;
       renderDashChart(chart, _dashGen);
