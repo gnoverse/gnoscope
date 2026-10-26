@@ -203,7 +203,14 @@ func TestWarmPlanCoversTheReadsAReaderWouldOtherwisePayFor(t *testing.T) {
 	plan := WarmPlan([]string{"mainnet"})
 	for _, want := range []string{
 		"/api/prices",
+		// Both spellings of the quotes, because they are two different caches:
+		// HandlePrices keys on networkParam, which is "" with no parameter,
+		// while HandleHolders keys on singleNetwork, which is "mainnet". #507
+		// warmed only the first and the second stayed cold, which cost a
+		// reader a 502 rather than a slow page.
+		"/api/prices?network=mainnet",
 		"/api/govdao/overview",
+		"/api/govdao/overview?network=mainnet",
 		"/api/analytics",
 	} {
 		var found bool
