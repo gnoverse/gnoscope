@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,8 +32,30 @@ func WithServerTiming(next http.Handler) http.Handler {
 		rec := &phaseRecorder{}
 		r = r.WithContext(context.WithValue(r.Context(), phaseKey{}, rec))
 		next.ServeHTTP(&timingWriter{ResponseWriter: w, start: start, phases: rec}, r)
+
+		// A handler slower than this says so in the log, because the header it
+		// would otherwise say it in never reaches anybody.
+		//
+		// http.Server runs with WriteTimeout 30s, so a handler past that has
+		// its connection cut before WriteHeader is ever called: no status, no
+		// Server-Timing, and Caddy answers the reader 502. Measured against
+		// production on 2026-10-26, /api/holders after a quiet spell did that
+		// three times in four, at 36.8s, 50.1s and 67.0s — reported by every
+		// client-side measurement as "slow" rather than as the error page it
+		// was. The one channel left for a request that dies is this one.
+		if d := time.Since(start); d >= slowHandlerThreshold {
+			log.Printf("slow %s %s in %s%s", r.Method, r.URL.RequestURI(), d.Round(time.Millisecond), rec.header())
+		}
 	})
 }
+
+// slowHandlerThreshold is well under http.Server's 30s WriteTimeout, so a
+// request is logged while it can still be correlated with the 502 a reader
+// saw, and high enough that ordinary cold computes stay out of the log.
+//
+// A var rather than a const only so a test can lower it: asserting on this
+// otherwise means a test that sleeps for five seconds.
+var slowHandlerThreshold = 5 * time.Second
 
 // Phase records how long one named step of a handler took, so an endpoint that
 // is sometimes slow can say *which* part was slow rather than only that it was.

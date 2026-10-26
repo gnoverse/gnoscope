@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -102,5 +105,52 @@ func TestServerTimingIsUnchangedWithoutPhases(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "app;dur=") {
 		t.Errorf("Server-Timing = %q, want it to lead with app", got)
+	}
+}
+
+// A handler that outlives WriteTimeout never calls WriteHeader, so its phases
+// never reach a header and the reader gets a 502 with nothing in it. The log is
+// the only channel left, and it has to carry the phases or it says no more than
+// the 502 did.
+func TestASlowHandlerLogsItsPhases(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	restore := slowHandlerThreshold
+	slowHandlerThreshold = 10 * time.Millisecond
+	t.Cleanup(func() { slowHandlerThreshold = restore })
+
+	h := WithServerTiming(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		time.Sleep(20 * time.Millisecond)
+		Phase(r.Context(), "positions", started)
+		// Deliberately never writes: that is what a handler killed by
+		// WriteTimeout looks like from in here.
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/holders?network=mainnet", nil))
+
+	got := buf.String()
+	for _, want := range []string{"slow GET", "/api/holders?network=mainnet", "positions;dur="} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log %q carries no %q", got, want)
+		}
+	}
+}
+
+// An ordinary request stays out of the log, or the log is noise and nobody
+// reads it when it matters.
+func TestAFastHandlerLogsNothing(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	h := WithServerTiming(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/version", nil))
+
+	if got := buf.String(); got != "" {
+		t.Errorf("log = %q, want nothing", got)
 	}
 }
