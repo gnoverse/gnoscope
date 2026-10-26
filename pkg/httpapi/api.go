@@ -91,6 +91,11 @@ type API struct {
 	// Absent means unverified, which is treated as unusable — see rpcURLFor.
 	rpcMu   sync.RWMutex
 	rpcPick map[string]string
+	// chainIDs is the chain id each network's indexer reported for block 1,
+	// kept from the same re-check rather than read again, so a payload can
+	// name its chain without a round trip. Under rpcMu with the verdict it
+	// was read beside.
+	chainIDs map[string]string
 
 	// shotUpstream is the gnoshot base URL, or "" when no capture service is
 	// configured. See shot.go.
@@ -1279,6 +1284,7 @@ func (a *API) VerifyRPCChains(ctx context.Context) {
 			// than changing it because an indexer was briefly unreachable.
 			continue
 		}
+		a.setChainID(n.ID, block.ChainID)
 
 		// Among the RPCs that serve the right chain, take the one furthest
 		// along. Being on the right chain is a floor, not a recommendation:
@@ -1321,6 +1327,23 @@ func (a *API) VerifyRPCChains(ctx context.Context) {
 			a.setRPCVerified(n.ID, best)
 		}
 	}
+}
+
+func (a *API) setChainID(network, id string) {
+	a.rpcMu.Lock()
+	defer a.rpcMu.Unlock()
+	if a.chainIDs == nil {
+		a.chainIDs = map[string]string{}
+	}
+	a.chainIDs[network] = id
+}
+
+// chainID is "" until VerifyRPCChains has read the network's block 1, and for
+// a network with no RPC configured, which that check skips.
+func (a *API) chainID(network string) string {
+	a.rpcMu.RLock()
+	defer a.rpcMu.RUnlock()
+	return a.chainIDs[network]
 }
 
 func (a *API) setRPCVerified(network, url string) {

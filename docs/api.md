@@ -1455,12 +1455,33 @@ All accept `days` and `granularity`.
 | `GET /api/timeseries/storage/deltas` | on-chain storage movement per bucket: `deposited`, `released` (negative, as the chain emits it) and `net`, from `storage_events`. `realm=<path>` scopes it to one realm. Distinct from `/api/timeseries/storage`, which counts source bytes added and only ever grows |
 | `GET /api/storage/consumers` | realms ranked by absolute net storage change. `topN` (default 20, max 100). Keyed by `(network, pkg_path)`, so a realm deployed on two chains is two rows |
 | `GET /api/storage/map` | the whole /storage page in one response. **Requires `network`**: capacity is a chain's own supply divided by its own price per byte, so there is no total across several. Returns `capacity` (`price_per_byte`, `price_source` = `chain` or `default`, `supply_ugnot`, `capacity_bytes`, `used_bytes`, `locked_ugnot`, `realms`), `cells` (one row per realm with `namespace`, `deployer`, `bytes`, `fee`, `first_height`, `first_time`, `last_height`), `payers` (per account, attributed to whoever the chain charged) and `cells_truncated`. `limit` (default 2000, max 5000) caps `cells` only, and `capacity.used_bytes` is always the full total. `capacity_bytes` and the supply are **decimal strings**, not numbers: 1.3e15 ugnot is past what JSON can carry exactly |
-| `GET /api/graph/transfers` | value-transfer graph for one chain. **Requires `network`**: values are denominated and an address is a different actor per chain. `topN` (default 100, max 1000), `min_value`, or `ego=<address>` for that address's 1-hop neighbourhood, which ignores `topN`. Returns `{nodes: [{id, volume}], edges: [{from, to, value, tx_count}]}`. There is no `hops` parameter — `ego` is fixed at 1 hop |
-| `GET /api/graph/callers` | caller-to-realm graph for one chain. **Requires `network`**, same reason. `topN` (default 200, max 1000), `min_calls`, and `until=YYYY-MM-DD` to end the window on that day instead of today (the window is still `days` long; a malformed date is a 400, never today). Returns `{nodes: [{id, type, calls}], edges: [{caller, pkg_path, calls}]}` where `type` is `"caller"` or `"realm"`. No `ego` support yet |
+| `GET /api/graph/transfers` | value-transfer graph for one chain. **Requires `network`**: values are denominated and an address is a different actor per chain. `topN` (default 100, max 1000), `min_value`, or `ego=<address>` with `hops` (default 1, 1 to 5, anything else is a 400 that states the range) for that address's neighbourhood. `hops=1` is the immediate counterparties, exactly as `ego` answered before `hops` existed, and is never cut. From the second hop on `topN` is the node budget for the whole walk: each ring keeps the addresses with the most value linking them inward, and `dropped` counts the ones left out. Once the budget is spent the walk stops, and `stopped_at_hop` says after which hop: counting what lies further out would be the unbounded query the budget exists to prevent, so a ring query never covers more than `topN` addresses. The neighbourhood is complete only when `dropped` is 0 and `stopped_at_hop` is absent. An edge is returned when both ends are kept and one end is nearer than the radius, so `hops=1` carries the ego's edges and not those between two counterparties. Returns `{nodes: [{id, volume}], edges: [{from, to, value, tx_count}]}` first, then the echo and stamp below, plus `hops`, `dropped` and `stopped_at_hop` when `ego` is set |
+| `GET /api/graph/callers` | caller-to-realm graph for one chain. **Requires `network`**, same reason. `topN` (default 200, max 1000), `min_calls`, and `until=YYYY-MM-DD` to end the window on that day instead of today (the window is still `days` long; a malformed date is a 400, never today). `ego=<address or realm path>` answers that node and its direct neighbours instead, with `topN` as the neighbour budget and `dropped` counting the rest; the ego's own `calls` includes the dropped ones. Returns `{nodes: [{id, type, calls}], edges: [{caller, pkg_path, calls}]}` where `type` is `"caller"` or `"realm"`, then the echo and stamp below, with `until` echoed as the day the window ended |
 | `GET /api/graph/active` | the package paths that saw activity in a window: called at least once, or deployed inside it. `window` = `all` (default), `90d`, `30d`, `7d`, `24h`; unknown windows are a 400. Returns `{network, window, paths: []}`, sorted. **Does not require `network`**, unlike the two above: it returns paths rather than per-chain quantities, so an absent network is the union over every configured chain, which is what `/api/deps` answers for too. Backs the activity filter on the dependency graph, which is drawn from `dependencies` and has no call data of its own |
 | `GET /api/timeseries/blocks` | blocks and transactions per bucket. **Single-network** |
 | `GET /api/timeseries/new-addresses` | addresses seen on-chain for the first time, bucketed by that first appearance. First-seen is derived over all indexed history, so widening the window never relabels an old address as new |
 | `GET /api/timeseries/active-rolling` | `dau`, `wau`, `mau` — distinct active addresses over trailing 1/7/30-day windows. **Always daily**: `granularity` is ignored, because the three windows are day-defined. A request shorter than 7 days is widened to 7, and capped at 365 regardless of `window`/`days`/`granularity` |
+
+**Every graph payload says what it is and when it is true.** The two
+`/api/graph/*` graphs above and `/api/contracts/map` and `/api/contracts/edges`
+carry, beside their existing keys:
+
+- `chain_id`: what the network's indexer reported for block 1, kept from the
+  RPC verification that already reads it. Absent until that check has run, and
+  for a network with no RPC configured.
+- `indexed_height` and `indexed_time`: the newest block this instance has
+  stored, the reading `/api/cockpit` calls `indexed_height`. This is the height
+  the answer was computed at.
+- `live_tip_height` and `live_tip_checked_at`: the height the `/api/live` tip
+  frame carries, read from that feed rather than asked for again, and when the
+  feed last heard it from the indexer. The feed only polls while somebody is
+  subscribed, so the time is how a reader tells a current tip from an old one.
+
+Each is absent when unknown rather than zero, and no lag is computed: carry
+both and the reader sees it. The two `/api/graph/*` endpoints also echo every
+parameter they read with the value they used, defaults included: `network`,
+`days`, `window`, `granularity` (it decides whether `days` is capped at 365),
+`top_n`, `min_value` or `min_calls`, and `ego`.
 
 `storage` and `calls/function-heatmap` are the only endpoints that accept a
 `realm` parameter; there is no general per-realm activity time series.

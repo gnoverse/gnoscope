@@ -43,6 +43,7 @@ type contractsMapResponse struct {
 	Network string               `json:"network"`
 	Window  string               `json:"window"`
 	Nodes   []store.ContractNode `json:"nodes"`
+	graphProvenance
 }
 
 type contractsEdgesResponse struct {
@@ -53,6 +54,7 @@ type contractsEdgesResponse struct {
 	Limit   int                  `json:"limit"`
 	Fanout  int                  `json:"max_fanout"`
 	Edges   []store.ContractEdge `json:"edges"`
+	graphProvenance
 }
 
 // singleNetwork resolves the network for an endpoint that, unlike most, may
@@ -134,7 +136,8 @@ func (a *API) HandleContractsMap(w http.ResponseWriter, r *http.Request) {
 	}
 	a.stampParked(r.Context(), network, nodes)
 
-	JSONResponse(w, contractsMapResponse{Network: network, Window: windowName, Nodes: nodes})
+	JSONResponse(w, contractsMapResponse{Network: network, Window: windowName, Nodes: nodes,
+		graphProvenance: a.provenance(network)})
 }
 
 func (a *API) HandleContractsEdges(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +157,8 @@ func (a *API) HandleContractsEdges(w http.ResponseWriter, r *http.Request) {
 		kind = "callers"
 	}
 
-	resp := contractsEdgesResponse{Network: network, Kind: kind, Window: windowName}
+	resp := contractsEdgesResponse{Network: network, Kind: kind, Window: windowName,
+		graphProvenance: a.provenance(network)}
 	switch kind {
 	case "imports":
 		// Imports are a property of the deployed source, not of traffic, so
