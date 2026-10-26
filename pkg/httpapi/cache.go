@@ -51,10 +51,30 @@ const (
 	// /api/txs without a limit can return the whole chain.
 	cacheMaxBodyBytes = 8 << 20 // 8 MiB
 
-	// backgroundRefreshTimeout bounds a refresh that nobody is waiting on. The
-	// slowest endpoint measured in production is ~8s; this leaves room for a
-	// bad day without letting a wedged indexer pin a goroutine forever.
-	backgroundRefreshTimeout = 60 * time.Second
+	// backgroundRefreshTimeout bounds a refresh that nobody is waiting on.
+	//
+	// It has to outlive the slowest endpoint's own budget, or that endpoint can
+	// never be refreshed in the background at all: the refresh is cancelled,
+	// nothing is stored, the entry ages out of the grace, and the next reader
+	// computes it inline. The warmer cannot help either, because it goes
+	// through this same path.
+	//
+	// 60s was set when "the slowest endpoint measured in production is ~8s".
+	// That is an order of magnitude out of date. A price refresh is budgeted 90
+	// seconds by priceReadTimeout, and on 2026-10-26 the server logged one
+	// taking 81.9s of an /api/holders request's 82.6s:
+	//
+	//	slow GET /api/holders in 1m22.635s, positions;dur=730.8, prices;dur=81869.6
+	//
+	// So /api/prices had never once been refreshed in the background, and every
+	// reader arriving after its grace lapsed paid for it — past http.Server's
+	// 30s WriteTimeout, which cuts the connection and hands them a 502.
+	//
+	// Two minutes: above priceReadTimeout, the longest budget any endpoint
+	// gives itself, and still bounded so a wedged indexer cannot pin a
+	// goroutine forever. TestBackgroundRefreshOutlivesTheSlowestEndpoint keeps
+	// the two in that order.
+	backgroundRefreshTimeout = 2 * time.Minute
 )
 
 type cacheEntry struct {
