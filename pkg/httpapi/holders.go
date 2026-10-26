@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"math/big"
 	"net/http"
 	"sort"
@@ -152,9 +153,24 @@ func (a *API) HandleHolders(w http.ResponseWriter, r *http.Request) {
 
 	// Prices are best-effort and usually mostly absent. A failure here does not
 	// fail the endpoint: the ranking falls back to position count and says so.
+	//
+	// So it is read on a short clock of its own, and the reader is never held
+	// behind a refresh. A refresh is dozens of sequential-ish RPC reads and the
+	// server logged one costing 81.9s of an 82.6s request; over twelve samples
+	// ten minutes apart on 2026-10-26, five came back 502 and the slowest good
+	// answer took 71.7s. Widening cache budgets moved that around without
+	// fixing it, because the real mistake is a page waiting at all for
+	// something it is documented not to need.
+	//
+	// Missing the deadline costs the USD column and nothing else: the response
+	// says so in prices_unavailable, pricesFor has started its own background
+	// refresh on a context this cancellation cannot touch, and the next reader
+	// gets the quotes.
 	quotes := map[string]*price.Quote{}
 	tPrices := time.Now()
-	res, pricesErr := a.pricesFor(r.Context(), network)
+	priceCtx, cancelPrices := context.WithTimeout(r.Context(), holdersPriceBudget)
+	res, pricesErr := a.pricesFor(priceCtx, network)
+	cancelPrices()
 	Phase(r.Context(), "prices", tPrices)
 	if pricesErr == nil && res != nil {
 		if res.Unavailable != "" {
@@ -243,6 +259,14 @@ func (a *API) HandleHolders(w http.ResponseWriter, r *http.Request) {
 	Phase(r.Context(), "assemble", tAssemble)
 	JSONResponse(w, resp)
 }
+
+// holdersPriceBudget is how long this page will wait for quotes before
+// rendering without them.
+//
+// Three seconds: long enough that a warm cache, which answers in tens of
+// milliseconds, always makes it, and short enough that a cold one is a column
+// missing from a page rather than a page nobody gets.
+const holdersPriceBudget = 3 * time.Second
 
 // usdValue converts a base-unit balance using the exact per-base-unit price
 // rather than the per-token one.
