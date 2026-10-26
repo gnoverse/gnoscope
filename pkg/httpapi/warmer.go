@@ -114,6 +114,21 @@ var networkScopedWarmTargets = []string{
 	"/api/govdao/overview",
 	"/api/govdao",
 	"/api/govdao/voters",
+	// Per network as well as network-wide, because the two spellings are two
+	// different quote caches and only one of them is the one a reader needs.
+	//
+	// HandlePrices resolves its network with networkParam, which answers ""
+	// when the parameter is absent. HandleHolders uses singleNetwork, which
+	// falls back to networks[0], so it asks for "mainnet". Warming the bare
+	// path fills the "" key and leaves the one holders reads cold, which is
+	// what #507 did and why it did not work.
+	//
+	// Measured against production on 2026-10-26, after #507 was deployed: the
+	// first /api/holders after six minutes of quiet spent 36.8s to first byte
+	// and Caddy answered 502, then the next one took 1.5s with
+	// prices;dur=0.0. A reader meeting that endpoint after a lull was not
+	// getting a slow page, they were getting an error page.
+	"/api/prices",
 }
 
 // WarmPlan is the full list of request paths one pass issues.
