@@ -74,6 +74,91 @@ type StateResponse struct {
 	FetchedAt    int64 `json:"fetched_at"`
 }
 
+// ObjectResponse is one stored object, decoded one level deep.
+type ObjectResponse struct {
+	ObjectID  string        `json:"object_id"`
+	Network   string        `json:"network"`
+	Node      gnostate.Node `json:"node"`
+	FetchedAt int64         `json:"fetched_at"`
+}
+
+// HandleStateObject expands exactly one stored object, and follows nothing.
+//
+// The state view resolves a realm's object graph eagerly up to a deadline and
+// renders whatever did not fit as a `ref`, which until now was dead text: the
+// reader could see that something was there and had no way to open it. The
+// only way forward was ?full=1, which re-walks the whole realm with a wider
+// budget — all or nothing, and on a realm like r/gnoland/blog (~1,250 objects,
+// ~39s) the "all" does not fit inside the server's 30s WriteTimeout at all.
+//
+// This is the other shape: one object, one ABCI round trip, no walk and no
+// deadline. Its own children come back as refs in turn, so a reader opens the
+// graph where they are actually looking and the cost is proportional to what
+// they asked for rather than to the size of the realm.
+//
+// type_id is what the parent row knew. DecodeObject needs it because a stored
+// object arrives with no type attached, and without it a struct's fields have
+// no names and an avl.Tree is unrecognizable — the expanded view would
+// disagree with the row it was opened from.
+func (a *API) HandleStateObject(w http.ResponseWriter, r *http.Request) {
+	network := a.networkParam(r)
+	oid := strings.TrimRight(r.PathValue("oid"), "/")
+	if oid == "" {
+		jsonError(w, "no object id", 400)
+		return
+	}
+	rpcURL := a.rpcURLFor(network)
+	if rpcURL == "" {
+		jsonError(w, "no verified RPC endpoint for network "+network, 503)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), stateObjectDeadline)
+	defer cancel()
+
+	raw, err := fetchABCIQuery(ctx, rpcURL, "vm/qobject_json", oid)
+	if err != nil {
+		// Same split HandleState makes, and for the same reason: an id the
+		// chain does not know is a fact about the chain and reads as a 404,
+		// while a node that is down is ours. The raw abci error surfaces as
+		// `map[@type:/vm.InvalidPkgPathError] ()`, which reads like a bug in
+		// this explorer rather than an answer, so it never reaches a reader.
+		if strings.Contains(err.Error(), "InvalidPkgPath") {
+			jsonError(w, oid+" is not a stored object on "+network, 404)
+			return
+		}
+		jsonError(w, "could not read object "+oid+": "+err.Error(), 502)
+		return
+	}
+	if raw == "" {
+		jsonError(w, oid+" is not a stored object on "+network, 404)
+		return
+	}
+
+	// A nil resolver is the whole point: every stored object inside this one
+	// renders as a ref the reader can open next, rather than being followed
+	// now on their time.
+	node, err := gnostate.DecodeObject([]byte(raw), r.URL.Query().Get("type_id"), nil, gnostate.Limits{MaxDepth: 64})
+	if err != nil {
+		jsonError(w, "decode object: "+err.Error(), 502)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(ObjectResponse{
+		ObjectID:  oid,
+		Network:   network,
+		Node:      *node,
+		FetchedAt: time.Now().Unix(),
+	})
+}
+
+// stateObjectDeadline bounds one object read. Short, because it is one ABCI
+// round trip with nothing to fan out: if a single object cannot be read in
+// this long the node is the problem, and a reader expanding a row would rather
+// be told that quickly than watch a spinner.
+const stateObjectDeadline = 8 * time.Second
+
 // stateFetcher resolves object and type references through a bounded worker
 // pool, and gives up politely when its deadline passes.
 type stateFetcher struct {

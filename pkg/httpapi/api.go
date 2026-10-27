@@ -1121,6 +1121,9 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/bankstats", a.HandleBankStats)
 	mux.HandleFunc("GET /api/timeseries/realm-share", a.HandleTimeSeriesRealmShare)
 	mux.HandleFunc("GET /api/namespaces", a.HandleNamespaces)
+	// Before the /api/state/{path...} wildcard below, by Go 1.22 mux
+	// specificity: this one expands a single stored object on demand.
+	mux.HandleFunc("GET /api/state/object/{oid...}", a.HandleStateObject)
 	mux.HandleFunc("GET /api/state/{path...}", a.HandleState)
 	mux.HandleFunc("GET /api/storage/{path...}", a.HandleStorage)
 	mux.HandleFunc("GET /api/allevents", a.HandleAllEvents)
