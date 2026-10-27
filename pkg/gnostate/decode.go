@@ -8,6 +8,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Amino type discriminators. Written out rather than matched by suffix because
@@ -103,6 +104,8 @@ type walker struct {
 	// types caches decoded type declarations for the life of the decode. A
 	// realm with 500 posts asks for the same struct type 500 times.
 	types map[string]*typeInfo
+	// typeMiss is why a cached-nil entry in types is nil.
+	typeMiss map[string]Miss
 }
 
 // typeInfo is the part of a type declaration the walker needs: what to call
@@ -210,10 +213,11 @@ func DecodeObject(raw []byte, typeID string, res Resolver, lim Limits) (*Node, e
 
 func newWalker(res Resolver, lim Limits) *walker {
 	return &walker{
-		res:    res,
-		lim:    lim.withDefaults(),
-		onPath: map[string]bool{},
-		types:  map[string]*typeInfo{},
+		res:      res,
+		lim:      lim.withDefaults(),
+		onPath:   map[string]bool{},
+		types:    map[string]*typeInfo{},
+		typeMiss: map[string]Miss{},
 	}
 }
 
@@ -275,7 +279,8 @@ func (w *walker) rawValue(name string, ti *typeInfo, raw json.RawMessage, depth 
 			Value string `json:"value"`
 		}
 		_ = json.Unmarshal(raw, &v)
-		return Node{Name: name, Type: tname(ti), TypeID: tid(ti), Kind: KindPrimitive, Value: w.clip(v.Value)}
+		return Node{Name: name, Type: tname(ti), TypeID: tid(ti), Kind: KindPrimitive, Value: w.clip(v.Value),
+			Lossy: strings.Count(v.Value, "\uFFFD")}
 
 	case vBigint, vBigdec:
 		var v struct {
@@ -397,7 +402,7 @@ func (w *walker) ref(name string, ti *typeInfo, raw json.RawMessage, depth int) 
 	}
 	_ = json.Unmarshal(raw, &v)
 
-	unresolved := Node{Name: name, Type: tname(ti), TypeID: tid(ti), Kind: KindRef, ObjectID: v.ObjectID, Hash: v.Hash}
+	unresolved := Node{Name: name, Type: tname(ti), TypeID: tid(ti), Kind: KindRef, ObjectID: v.ObjectID, Hash: v.Hash, Unresolved: MissUnreached}
 	if v.PkgPath != "" {
 		// A ref to a package, not to an object: there is no object to fetch.
 		return Node{Name: name, Type: tname(ti), TypeID: tid(ti), Kind: KindPackage, Value: v.PkgPath}
@@ -416,10 +421,12 @@ func (w *walker) ref(name string, ti *typeInfo, raw json.RawMessage, depth int) 
 	w.stats.Fetches++
 	body, err := w.res.Object(v.ObjectID)
 	if err != nil || len(body) == 0 {
+		unresolved.Unresolved = w.objectMiss(v.ObjectID, err)
 		return unresolved
 	}
 	var env objectEnvelope
 	if json.Unmarshal(body, &env) != nil || len(env.Value) == 0 {
+		unresolved.Unresolved = MissUndecodable
 		return unresolved
 	}
 
@@ -445,13 +452,17 @@ func (w *walker) structValue(name string, ti *typeInfo, raw json.RawMessage, dep
 
 	// Field names come from the type declaration, fetched once per type. With
 	// no resolver the fields are still all there, addressed positionally.
-	names := w.fieldNames(ti, len(v.Fields))
+	names, miss := w.fieldNames(ti, len(v.Fields))
+	n.Positional = miss
 	for i, f := range v.Fields {
 		fname := fmt.Sprintf("[%d]", i)
 		if i < len(names) && names[i] != "" {
 			fname = names[i]
 		}
 		n.Children = append(n.Children, w.value(fname, f, depth+1))
+	}
+	if tid(ti) == "time.Time" {
+		n.Value = timeValue(n.Children)
 	}
 	return n
 }
@@ -524,28 +535,72 @@ func (w *walker) array(name string, ti *typeInfo, raw json.RawMessage, depth int
 	return n
 }
 
+// mapEntry is one item of a MapValue's list.
+type mapEntry struct {
+	Key   typedValue `json:"Key"`
+	Value typedValue `json:"Value"`
+}
+
+// mapValue decodes a MapValue's entries, in the map's insertion order, which
+// is the order gno iterates it in.
+//
+// The entries arrive one object deeper than the struct tag suggests:
+// MapValue.List is a *MapList, and amino writes it through MapListImage, so
+// the wire shape is `"List":{"List":[…]}`. Reading `List` as the array made
+// every unmarshal fail quietly and every map on every realm render as "len 0"
+// while holding entries: measured 2026-10-27 on mainnet's bubblerumble6, whose
+// `players` is 37 KB of entries that rendered as "empty". A bare array is
+// still accepted, and anything else is reported as undecodable rather than as
+// an empty map, which is the one answer that cannot be right.
 func (w *walker) mapValue(name string, ti *typeInfo, raw json.RawMessage, depth int) Node {
 	var v struct {
-		ObjectInfo objectInfo `json:"ObjectInfo"`
-		List       []struct {
-			Key   typedValue `json:"Key"`
-			Value typedValue `json:"Value"`
-		} `json:"List"`
+		ObjectInfo objectInfo      `json:"ObjectInfo"`
+		List       json.RawMessage `json:"List"`
 	}
 	_ = json.Unmarshal(raw, &v)
 
 	n := Node{Name: name, Type: tname(ti), TypeID: tid(ti), Kind: KindMap}
 	stamp(&n, v.ObjectInfo)
-	for i, e := range v.List {
+
+	entries, ok := mapEntries(v.List)
+	if !ok {
+		n.Positional = MissUndecodable
+		n.Value = "undecodable entries"
+		return n
+	}
+	for i, e := range entries {
+		// A key is a value like any other, and a scalar one (a string, an
+		// address, a number) is its own name. A struct or pointer key has no
+		// text form, and inventing one would give two different keys a chance
+		// to read the same, so those entries are numbered and the map says so.
 		k := w.value("", e.Key, depth+1)
 		key := k.Value
-		if key == "" {
+		if k.Kind != KindPrimitive {
 			key = fmt.Sprintf("[%d]", i)
+			n.Positional = MissKeys
 		}
 		n.Children = append(n.Children, w.value(key, e.Value, depth+1))
 	}
-	n.Value = fmt.Sprintf("len %d", len(v.List))
+	n.Value = fmt.Sprintf("len %d", len(entries))
 	return n
+}
+
+// mapEntries reads a MapValue's List in either of the shapes it can take.
+func mapEntries(raw json.RawMessage) ([]mapEntry, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, true
+	}
+	var img struct {
+		List []mapEntry `json:"List"`
+	}
+	if json.Unmarshal(raw, &img) == nil {
+		return img.List, true
+	}
+	var flat []mapEntry
+	if json.Unmarshal(raw, &flat) == nil {
+		return flat, true
+	}
+	return nil, false
 }
 
 // number renders the N payload: 8 little-endian bytes, base64-encoded, whose
@@ -613,7 +668,14 @@ func (w *walker) typeOf(raw json.RawMessage) *typeInfo {
 
 	case tRef:
 		// A RefType is a bare type ID: the declaration it names lives
-		// elsewhere and is fetched only if something asks for field names.
+		// elsewhere. It is hinted the moment it is seen, not when the first
+		// struct of that type is reached, because by then the read is deep
+		// and late: measured on bubblerumble6, the Pool type was first wanted
+		// in the same round as 337 objects, queued behind them, and the 12s
+		// deadline expired before it was asked for, leaving 60 pools as
+		// unlabelled tuples. Seen in the package block's own TypeValues, it is
+		// fetched in the first round instead.
+		w.hintType(head.ID)
 		return &typeInfo{name: shortTypeID(head.ID), id: head.ID}
 
 	case tDeclared:
@@ -685,48 +747,67 @@ func (w *walker) typeOf(raw json.RawMessage) *typeInfo {
 // want guards against a declaration that has drifted from the stored value:
 // naming 3 fields of a 5-field struct would silently mislabel the last two, so
 // a mismatch falls back to positional names for all of them.
-func (w *walker) fieldNames(ti *typeInfo, want int) []string {
-	if ti == nil || want == 0 {
-		return nil
+//
+// The Miss is why there are no names, and is empty when there are: the caller
+// stamps it on the node so the row can say it is showing positions.
+func (w *walker) fieldNames(ti *typeInfo, want int) ([]string, Miss) {
+	if want == 0 {
+		return nil, ""
+	}
+	if ti == nil {
+		return nil, MissUntyped
 	}
 	// A DeclaredType arrives with its Base inline, so most structs cost no
 	// fetch at all.
 	if len(ti.fields) == want {
-		return ti.fields
+		return ti.fields, ""
 	}
-	if ti.id == "" || w.res == nil {
-		return nil
+	if ti.id == "" {
+		return nil, MissUntyped
+	}
+	if w.res == nil {
+		return nil, MissUnreached
 	}
 	if cached, ok := w.types[ti.id]; ok {
-		if cached == nil || len(cached.fields) != want {
-			return nil
-		}
-		return cached.fields
+		return fieldsOf(cached, want, w.typeMiss[ti.id])
 	}
 	w.types[ti.id] = nil // negative-cache before the call, so a failure is not retried
+	w.typeMiss[ti.id] = MissUnreached
 
 	if w.stats.Fetches >= w.lim.MaxFetch {
 		w.stats.Truncated = true
-		return nil
+		return nil, MissUnreached
 	}
 	w.stats.Fetches++
 	body, err := w.res.Type(ti.id)
 	if err != nil || len(body) == 0 {
-		return nil
+		w.typeMiss[ti.id] = w.typeMissOf(ti.id, err)
+		return nil, w.typeMiss[ti.id]
 	}
 	var env struct {
 		TypeID string          `json:"typeid"`
 		Type   json.RawMessage `json:"type"`
 	}
 	if json.Unmarshal(body, &env) != nil {
-		return nil
+		w.typeMiss[ti.id] = MissUndecodable
+		return nil, MissUndecodable
 	}
 	resolved := w.typeOf(env.Type)
 	w.types[ti.id] = resolved
-	if resolved == nil || len(resolved.fields) != want {
-		return nil
+	w.typeMiss[ti.id] = MissUndecodable
+	return fieldsOf(resolved, want, MissUndecodable)
+}
+
+// fieldsOf applies the field-count guard to a resolved declaration. miss is
+// the reason to report when there is no declaration at all.
+func fieldsOf(t *typeInfo, want int, miss Miss) ([]string, Miss) {
+	if t == nil {
+		return nil, miss
 	}
-	return resolved.fields
+	if len(t.fields) != want {
+		return nil, MissMismatch
+	}
+	return t.fields, ""
 }
 
 // tname is the display name of a possibly-absent type.
@@ -879,4 +960,94 @@ func (w *walker) funcValue(name string, ti *typeInfo, raw json.RawMessage) Node 
 		n.Line = ln
 	}
 	return n
+}
+
+// A Resolver may implement these to make the tree more honest and the read
+// faster. Both are optional, and a plain Resolver keeps working without them.
+type (
+	// missReporter says why a lookup came back empty. Without it a nil answer
+	// is read as "the node had nothing", which for a read that ran out of
+	// time is the wrong thing to tell a reader.
+	missReporter interface {
+		objectMiss(oid string) Miss
+		typeMissed(tid string) Miss
+	}
+	// typeHinter is told about every type ID the walk sees, before any value
+	// of that type needs it, so its declaration can be fetched early.
+	typeHinter interface {
+		hintType(tid string)
+	}
+)
+
+func (w *walker) objectMiss(oid string, err error) Miss {
+	if err != nil {
+		return MissUnreached
+	}
+	if mr, ok := w.res.(missReporter); ok {
+		return mr.objectMiss(oid)
+	}
+	return MissNotFound
+}
+
+func (w *walker) typeMissOf(tid string, err error) Miss {
+	if err != nil {
+		return MissUnreached
+	}
+	if mr, ok := w.res.(missReporter); ok {
+		return mr.typeMissed(tid)
+	}
+	return MissNotFound
+}
+
+// hintType passes a type ID on to a resolver that wants it early. Uverse
+// types (`.uverse.address`, `.uverse.error`) are skipped: they are declared
+// by the VM, never have fields worth naming, and asking for them is a round
+// trip for nothing.
+func (w *walker) hintType(tid string) {
+	if tid == "" || strings.HasPrefix(tid, ".") {
+		return
+	}
+	if h, ok := w.res.(typeHinter); ok {
+		h.hintType(tid)
+	}
+}
+
+// internalToUnix converts gno's time.Time seconds to Unix seconds. gno's
+// time.Time stores `sec` counted from January 1, year 1, UTC, and converts
+// with exactly this constant (gnovm/stdlibs/time/time.gno: `unixSec() int64
+// { return t.sec + internalToUnix }`). It is written out rather than computed
+// so the number can be checked against that file by eye.
+const internalToUnix = -62135596800
+
+// timeValue renders a decoded time.Time as an RFC 3339 instant in UTC.
+//
+// It reads only `sec` and `nsec`, and only when both were named, so a
+// time.Time whose declaration was not fetched stays three positional numbers
+// rather than being guessed at. The zone (`loc`) is not applied: the instant
+// is the same in every zone and UTC is the one that needs no lookup.
+func timeValue(fields []Node) string {
+	var sec, nsec int64
+	var haveSec, haveNsec bool
+	for _, f := range fields {
+		if f.Kind != KindPrimitive {
+			continue
+		}
+		switch f.Name {
+		case "sec":
+			v, err := strconv.ParseInt(f.Value, 10, 64)
+			sec, haveSec = v, err == nil
+		case "nsec":
+			v, err := strconv.ParseInt(f.Value, 10, 64)
+			nsec, haveNsec = v, err == nil
+		}
+	}
+	if !haveSec || !haveNsec || nsec < 0 || nsec > 999999999 {
+		return ""
+	}
+	if sec == 0 && nsec == 0 {
+		// The zero time.Time, which is how a realm spells "not set". A date in
+		// year 1 would be true and useless.
+		return "zero time"
+	}
+	return time.Unix(sec+internalToUnix, nsec).UTC().Format(time.RFC3339Nano)
 }

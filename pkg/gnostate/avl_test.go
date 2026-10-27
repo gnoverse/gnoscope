@@ -135,8 +135,10 @@ func TestFlattenAVL(t *testing.T) {
 				"n:1": inner("n:1", "b", 1, 3, "n:2", "n:missing"),
 				"n:2": leaf("n:2", "a", "alpha"),
 			},
-			want:    []string{"a"},
-			wantVal: []string{"alpha"},
+			// The unread subtree stays, nameless and in key order, as the
+			// ref a reader can ask for on its own.
+			want:    []string{"a", ""},
+			wantVal: []string{"alpha", ""},
 			partial: true,
 		},
 	}
@@ -169,6 +171,11 @@ func TestFlattenAVL(t *testing.T) {
 				}
 				if i < len(tt.wantVal) && vals[i] != tt.wantVal[i] {
 					t.Errorf("value[%d] = %q, want %q", i, vals[i], tt.wantVal[i])
+				}
+			}
+			for _, c := range posts.Children {
+				if c.Name == "" && (c.Kind != KindRef || c.ObjectID == "" || !c.Subtree) {
+					t.Errorf("a nameless child is %q with object %q, subtree %v, want a followable subtree ref", c.Kind, c.ObjectID, c.Subtree)
 				}
 			}
 			gotPartial := strings.Contains(posts.Value, "partially loaded")
