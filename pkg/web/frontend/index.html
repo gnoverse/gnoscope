@@ -5313,7 +5313,7 @@ function pageTitle(path) {
   // The server reads a decoded path. A malformed escape is not a reason to
   // leave the previous page's title up.
   try { thing = pageThing(decodeURIComponent(path)); } catch (e) { thing = pageThing(path); }
-  if (!thing) return 'gnoscope';
+  if (!thing) return 'gnoscope · gno.land block explorer';
   const chars = Array.from(thing);
   if (chars.length > 120) thing = chars.slice(0, 120).join('') + '…';
   return thing + ' on gnoscope';

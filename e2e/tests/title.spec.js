@@ -45,13 +45,13 @@ test('navigating in the app retitles the tab, and going back restores it', async
   const seen = watch(page);
   await page.goto('/?network=alpha');
   await settle(page);
-  expect(await page.title()).toBe('gnoscope');
+  expect(await page.title()).toBe('gnoscope · gno.land block explorer');
 
   await page.locator('#nav-realms').click();
   await expect(page).toHaveTitle('realms · contracts on gnoscope');
 
   await page.goBack();
-  await expect(page).toHaveTitle('gnoscope');
+  await expect(page).toHaveTitle('gnoscope · gno.land block explorer');
 
   expect(seen.jsErrors, 'uncaught exceptions').toEqual([]);
   expect(unexpected(seen.consoleErrors), 'console errors').toEqual([]);
@@ -70,7 +70,11 @@ test('the bundle arrives as a cacheable, compressed asset', async ({ page }) => 
   const html = await doc.text();
   expect(html.length, 'the document is small').toBeLessThan(100_000);
 
-  const paths = assets.map(r => new URL(r.url()).pathname).sort();
+  // Ordered by extension, not by name: the hash decides which name sorts
+  // first, so a plain sort passes or fails with the build.
+  const ext = (p) => p.slice(p.lastIndexOf('.'));
+  const paths = assets.map(r => new URL(r.url()).pathname)
+    .sort((a, b) => ext(a).localeCompare(ext(b)));
   expect(paths).toEqual([
     expect.stringMatching(/^\/assets\/app\.[0-9a-f]{12}\.css$/),
     expect.stringMatching(/^\/assets\/app\.[0-9a-f]{12}\.js$/),

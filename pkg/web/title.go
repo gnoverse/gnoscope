@@ -21,8 +21,14 @@ import (
 // e2e/tests/title.spec.js loads each shape of URL and fails if the title the
 // server wrote is not the one the client sets.
 
-// siteName closes every title but the home page's, which is only this.
+// siteName closes every title.
 const siteName = "gnoscope"
+
+// homeTitle is the title of a page that names no thing of its own: the home
+// page, and anything the app does not route. "gnoscope" alone says whose site
+// it is and not what it is for, which is the half a search result or a
+// bookmark list needs.
+const homeTitle = siteName + " · gno.land block explorer"
 
 // maxTitleThing bounds the part of a title taken from the URL. A transaction
 // hash or a realm path fits comfortably; a pasted URL a kilobyte long would
@@ -32,7 +38,7 @@ const maxTitleThing = 120
 // titleOf is the one format: the thing, then where it is.
 func titleOf(thing string) string {
 	if thing == "" {
-		return siteName
+		return homeTitle
 	}
 	if r := []rune(thing); len(r) > maxTitleThing {
 		thing = string(r[:maxTitleThing]) + "…"

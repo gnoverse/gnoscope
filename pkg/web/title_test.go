@@ -37,9 +37,9 @@ func titleIn(t *testing.T, body string) string {
 // e2e/tests/title.spec.js checks the client agrees with each of these.
 func TestPageTitles(t *testing.T) {
 	for _, c := range []struct{ path, want string }{
-		{"/", "gnoscope"},
-		{"/no-such-page", "gnoscope"},
-		{"/widget", "gnoscope"},
+		{"/", "gnoscope · gno.land block explorer"},
+		{"/no-such-page", "gnoscope · gno.land block explorer"},
+		{"/widget", "gnoscope · gno.land block explorer"},
 		{"/realms", "realms · contracts on gnoscope"},
 		{"/discover", "discover on gnoscope"},
 		{"/analytics", "analytics on gnoscope"},
@@ -53,11 +53,11 @@ func TestPageTitles(t *testing.T) {
 		{"/gnohub/anything", "gnohub · lab on gnoscope"},
 		{"/realm/r/gov/dao", "gno.land/r/gov/dao on gnoscope"},
 		{"/realm/gno.land/r/gov/dao/", "gno.land/r/gov/dao on gnoscope"},
-		{"/realm/x/y", "gnoscope"},
+		{"/realm/x/y", "gnoscope · gno.land block explorer"},
 		{"/tx/abc%2Fdef=", "tx abc/def= on gnoscope"},
 		{"/block/1234", "block 1234 on gnoscope"},
 		{"/block/007x", "block 7 on gnoscope"},
-		{"/block/latest", "gnoscope"},
+		{"/block/latest", "gnoscope · gno.land block explorer"},
 		{"/govdao/12", "proposal 12 on gnoscope"},
 		{"/address/g1abc", "g1abc on gnoscope"},
 		{"/validator/g1abc", "g1abc on gnoscope"},
