@@ -3,7 +3,9 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -58,9 +60,12 @@ const (
 
 // StateResponse is one realm's decoded state.
 type StateResponse struct {
-	Path    string          `json:"path"`
-	Network string          `json:"network"`
-	Nodes   []gnostate.Node `json:"nodes"`
+	Path    string `json:"path"`
+	Network string `json:"network"`
+	// Objects is set on a subtree read (?object=): the stored objects Nodes
+	// were decoded from, one node per object, in order.
+	ObjectIDs []string        `json:"object_ids,omitempty"`
+	Nodes     []gnostate.Node `json:"nodes"`
 	// Partial is true when the reader is not looking at the whole state:
 	// either the walk hit a limit or the fetch deadline expired. It drives a
 	// badge, and it is the difference between an explorer and a screenshot.
@@ -96,11 +101,13 @@ func (f *stateFetcher) Types(tids []string) (map[string][]byte, error) {
 
 // fanout fetches a whole round in parallel.
 //
-// A key that fails, or that is requested after the deadline, is simply absent
-// from the result. That is not an error: gnostate renders an unresolved
-// reference as a followable link, so a partial answer degrades the page rather
-// than replacing it with one. Returning an error here would throw away every
-// object that *did* resolve.
+// A key the node was asked for and had nothing for is in the result with a nil
+// body; a key never asked, because the deadline passed first, is absent. The
+// difference is what lets a ref say "the read did not reach this" rather than
+// "this does not exist" (see gnostate.Fetcher). Neither is an error: gnostate
+// renders an unresolved reference as a followable link, so a partial answer
+// degrades the page rather than replacing it with one. Returning an error here
+// would throw away every object that *did* resolve.
 func (f *stateFetcher) fanout(queryPath string, keys []string, count bool) (map[string][]byte, error) {
 	out := make(map[string][]byte, len(keys))
 	if f.expired() {
@@ -120,19 +127,30 @@ func (f *stateFetcher) fanout(queryPath string, keys []string, count bool) (map[
 				return
 			}
 			body, err := fetchABCIQuery(f.ctx, f.rpcURL, queryPath, k)
-			if err != nil || body == "" {
+			if err != nil && f.expired() {
+				// Cut off mid-flight by the deadline: not an answer.
 				return
 			}
 			mu.Lock()
+			defer mu.Unlock()
+			if err != nil || body == "" {
+				out[k] = nil
+				return
+			}
 			out[k] = []byte(body)
-			mu.Unlock()
 		}(k)
 	}
 	wg.Wait()
 
 	if count {
+		n := 0
+		for _, b := range out {
+			if b != nil {
+				n++
+			}
+		}
 		f.mu.Lock()
-		f.objects += len(out)
+		f.objects += n
 		f.mu.Unlock()
 	}
 	return out, nil
@@ -199,12 +217,13 @@ func (a *API) HandleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if oids := r.URL.Query()["object"]; len(oids) > 0 {
+		a.serveStateObjects(ctx, w, r, path, network, rpcURL, workers, full, oids)
+		return
+	}
+
 	f := &stateFetcher{ctx: ctx, rpcURL: rpcURL, workers: workers}
-	tree, err := gnostate.DecodePackageWith([]byte(pkg), f, gnostate.Limits{
-		// Generous, because the deadline above is the real bound. These exist
-		// to stop a pathological realm rather than to shape the common case.
-		MaxDepth: 64, MaxNodes: 60000, MaxFetch: 20000,
-	})
+	tree, err := gnostate.DecodePackageWith([]byte(pkg), f, stateLimits)
 	if err != nil {
 		jsonError(w, "decode state: "+err.Error(), 502)
 		return
@@ -229,6 +248,112 @@ func (a *API) HandleState(w http.ResponseWriter, r *http.Request) {
 		resp.Reason = "the walk hit its size limit"
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// stateLimits are the walk limits for a realm read and a subtree read alike.
+// Generous, because the deadline is the real bound. These exist to stop a
+// pathological realm rather than to shape the common case.
+var stateLimits = gnostate.Limits{MaxDepth: 64, MaxNodes: 60000, MaxFetch: 20000}
+
+// objectIDPattern is an ObjectID as the chain writes it: a 20-byte package ID
+// in hex, a colon, and the realm's object counter. Checked before it goes in
+// an RPC payload, because it comes from a URL.
+var objectIDPattern = regexp.MustCompile(`^[0-9a-f]{40}:[0-9]{1,19}$`)
+
+// typeIDPattern is a type ID: a package path, a dot and a name. Loose on
+// purpose (paths may hold letters, digits, `_`, `-`, `.` and `/`), and only
+// there to keep anything that is not a type ID out of the RPC payload.
+var typeIDPattern = regexp.MustCompile(`^[A-Za-z0-9_./-]{1,256}$`)
+
+// maxStateObjects bounds one subtree read. Sixty pools in one click is the
+// case it is sized for; more than this and the URL alone gets long enough for
+// a proxy to refuse it.
+const maxStateObjects = 64
+
+// serveStateObjects answers `?object=<ObjectID>&type=<TypeID>`, repeated: some
+// branches of a realm, read on their own. `type` is positional against
+// `object` and may be empty or absent.
+//
+// It exists because a realm-wide read is bounded by a deadline and a big realm
+// does not fit in it, so the honest page has refs the read did not reach. The
+// alternative a reader had was ?full=1, which re-reads the whole realm for up
+// to 24s to maybe reach one more branch; this reads only the branch asked for,
+// under the same deadline as a normal read, and may itself come back partial,
+// in which case it says so the same way.
+//
+// Every ObjectID must belong to the realm in the path: its package-ID prefix is
+// compared against the prefix of the ObjectIDs the realm's own package block
+// refers to. Without that check this endpoint would read any object on the
+// chain under any realm's URL, and the response cache would key it there.
+//
+// The prefix is read from the chain rather than derived. gnovm derives a
+// PkgID as sha256(path)[:20] in the sources checked (v1.1.0 and a 2026-03
+// snapshot), and mainnet does not agree with that: for bubblerumble6 the
+// derivation gives 213fb9fe… and every object on mainnet is 013fb9fe…. A
+// check built on the derivation would reject every real object; one built on
+// the package block cannot drift from what the chain does.
+func (a *API) serveStateObjects(ctx context.Context, w http.ResponseWriter, r *http.Request, path, network, rpcURL string, workers int, full bool, oids []string) {
+	if len(oids) > maxStateObjects {
+		jsonError(w, fmt.Sprintf("at most %d objects per read", maxStateObjects), 400)
+		return
+	}
+	types := r.URL.Query()["type"]
+	roots := make([]gnostate.ObjectRef, len(oids))
+	for i, oid := range oids {
+		var typeID string
+		if i < len(types) {
+			typeID = types[i]
+		}
+		if !objectIDPattern.MatchString(oid) || (typeID != "" && !typeIDPattern.MatchString(typeID)) {
+			jsonError(w, "object must be an ObjectID (hex:counter) and type a type ID", 400)
+			return
+		}
+		roots[i] = gnostate.ObjectRef{ObjectID: oid, TypeID: typeID}
+	}
+	pkg, err := fetchABCIQuery(ctx, rpcURL, "vm/qpkg_json", path)
+	if err != nil || pkg == "" {
+		jsonError(w, "could not read "+path+" to check the objects belong to it", 502)
+		return
+	}
+	for _, oid := range oids {
+		if !strings.Contains(pkg, `"ObjectID":"`+oid[:strings.IndexByte(oid, ':')+1]) {
+			jsonError(w, "object "+oid+" does not belong to "+path, 400)
+			return
+		}
+	}
+
+	f := &stateFetcher{ctx: ctx, rpcURL: rpcURL, workers: workers}
+	nodes, stats, err := gnostate.DecodeObjectsWith(roots, f, stateLimits)
+	if err != nil {
+		jsonError(w, "decode object: "+err.Error(), 502)
+		return
+	}
+	// A subtree of an avl.Tree arrives as a raw avl.Node: turn it into the
+	// entries the placeholder it replaces stood for.
+	for i := range nodes {
+		nodes[i] = gnostate.FlattenSubtree(nodes[i])
+	}
+
+	resp := StateResponse{
+		Path:      path,
+		Network:   network,
+		ObjectIDs: oids,
+		Nodes:     nodes,
+		Objects:   f.objects,
+		NodeCount: stats.Nodes,
+		FetchedAt: time.Now().Unix(),
+	}
+	switch {
+	case f.timedOut:
+		resp.Partial = true
+		resp.Reason = "the fetch deadline passed before every reference resolved"
+		resp.CanRetryFull = !full
+	case stats.Truncated:
+		resp.Partial = true
+		resp.Reason = "the walk hit its size limit"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
