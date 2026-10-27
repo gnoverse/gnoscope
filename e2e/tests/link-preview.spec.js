@@ -1,9 +1,9 @@
 // Link previews for a realm.
 //
 // A crawler does not run the SPA, so the only thing it can read is the bytes it
-// is handed. Every other route still gets the one precomputed document, which
-// is the property most worth holding: the per-path body is a deliberate
-// exception and it should stay exactly one.
+// is handed. Every route gets its own <title> and og:url; only a realm (and a
+// cartography view) gets a picture, and the app under the head is the same
+// document everywhere.
 import { expect, test } from '@playwright/test';
 
 import { HUB, HUB_ROUTE } from '../harness/fixture.mjs';
@@ -41,19 +41,22 @@ test('the advertised image resolves', async ({ request }) => {
   expect((await res.body()).length).toBeGreaterThan(64);
 });
 
-// The exception stays one route wide.
-test('every other route is still the one document', async ({ request }) => {
+// The picture stays one route wide, and what differs between two documents is
+// their head and nothing after it.
+test('every other route is the same app with its own head', async ({ request }) => {
   const realm = await (await request.get(`/realm/${HUB_ROUTE}`)).text();
   const bodies = await Promise.all(
     ['/', '/txs', '/blocks', '/realms', '/packages', '/address/g1abc']
       .map(async p => [p, await (await request.get(p)).text()]));
 
+  const afterHead = (html) => html.slice(html.indexOf('</head>'));
   const base = bodies[0][1];
   for (const [path, body] of bodies) {
-    expect(body === base, `${path} differs from /`).toBe(true);
+    expect(afterHead(body) === afterHead(base), `${path} differs from / after </head>`).toBe(true);
     expect(body.includes('og:image'), `${path} grew a per-path card`).toBe(false);
+    expect(metaOf(body, 'og:url'), `${path} has no og:url`).toBeTruthy();
   }
-  expect(realm).not.toBe(base);
+  expect(realm.includes('og:image')).toBe(true);
 });
 
 // A per-path body still has to cost nothing on a repeat visit, and two realms

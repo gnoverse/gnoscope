@@ -70,7 +70,7 @@ func cartographyViewFromRequest(r *http.Request) (cartographyView, bool) {
 // cartographyTags is ogTags' counterpart for a drawing. Every value is from
 // the constant table above or built through url.URL, never from the request
 // verbatim: ?v= only ever selects a row.
-func cartographyTags(origin string, v cartographyView, network string) []byte {
+func cartographyTags(origin string, v cartographyView, r *http.Request) []byte {
 	title := v.Name + " · cartography on gnoscope"
 	desc := "gno.land drawn as a place: " + v.Blurb + "."
 
@@ -84,19 +84,15 @@ func cartographyTags(origin string, v cartographyView, network string) []byte {
 	meta("property", "og:title", title)
 	meta("property", "og:description", desc)
 	meta("name", "description", desc)
-	if u, err := url.Parse(origin); origin != "" && err == nil {
-		q := url.Values{}
-		q.Set("v", v.ID)
-		if network != "" {
-			q.Set("network", network)
-		}
-		u.Path = "/cartography"
-		u.RawQuery = q.Encode()
-		meta("property", "og:url", u.String())
-
-		img := *u
+	// ?v= is rewritten to the view it resolved to, so an unknown one
+	// canonicalises to the drawing the card shows. The rest of the query is
+	// the reader's, carried as for any page.
+	q := r.URL.Query()
+	q.Set("v", v.ID)
+	if u := canonicalURL(origin, "/cartography", q); u != "" {
+		meta("property", "og:url", u)
+		img, _ := url.Parse(origin)
 		img.Path = "/cartography-og/" + v.ID + ".jpg"
-		img.RawQuery = ""
 		meta("property", "og:image", img.String())
 		meta("property", "og:image:width", "1200")
 		meta("property", "og:image:height", "630")

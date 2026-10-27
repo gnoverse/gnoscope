@@ -603,15 +603,24 @@ worse than either outcome on its own.
 
 ### Link previews
 
-With a capture service configured, a `/realm/<path>` URL is also the **one
-route that gets its own document**: the head carries `og:title`,
-`og:description`, `og:url` and an `og:image` pointing at that realm's `og` rung,
-so a link pasted into Slack, Discord or X previews as a picture of the realm.
+Every document carries its own `<title>` and a card with `og:title` and
+`og:url`. The `og:url` keeps the request's query string (network, tab, and
+anything finer), minus tracking parameters and `embed`, so a shared link
+canonicalises to the view that was shared.
 
-Everything else still gets the single precomputed, pre-gzipped document, byte
-for byte, and a test holds that line. The exception exists because a crawler
-does not run the SPA, and the SPA is where every other answer lives.
+With a capture service configured, a `/realm/<path>` URL also gets
+`og:description` and an `og:image` pointing at that realm's `og` rung, so a
+link pasted into Slack, Discord or X previews as a picture of the realm. The
+exception exists because a crawler does not run the SPA, and the SPA is where
+every other answer lives.
 
-It costs a per-path ETag and a BestSpeed gzip **on that branch only**. Without
-`-gnoshot` the text half is still served and the card is downgraded to a plain
-`summary`, rather than advertising an image that is not there.
+Every document is built per request, with a per-path ETag and brotli or gzip.
+That is cheap because the document is about 44 KB: the app's stylesheet and
+script are served separately from `/assets/`, under content-hashed names,
+`immutable`, precompressed once per process (gzip at startup, brotli at its
+best ratio in the background a few seconds later). Without `-gnoshot` the text
+half is still served and the card is downgraded to a plain `summary`, rather
+than advertising an image that is not there.
+
+Compression of the document and the bundle happens in the binary, so a reverse
+proxy in front needs no `encode` directive (or brotli plugin) for them.

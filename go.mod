@@ -4,6 +4,8 @@ go 1.25.0
 
 require modernc.org/sqlite v1.48.1
 
+require github.com/andybalholm/brotli v1.2.7
+
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

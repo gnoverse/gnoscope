@@ -115,7 +115,12 @@ an entry is a pull request against a file rather than an edit to the frontend.
 query the indexer live. `ws.go` here serves Server-Sent Events.
 
 **`pkg/web`** — the embedded single-file frontend and the SPA handler that serves
-index.html for any route it does not have a file for, so deep links work.
+index.html for any route it does not have a file for, so deep links work. At
+startup it cuts the `data-bundle` stylesheet and script out of index.html and
+serves them from `/assets/app.<hash>.{css,js}`, `immutable` for a year, so the
+document every route gets is about 44 KB and revalidated, and the 1.5 MB of app
+is downloaded once per deploy rather than once per cold tab. Each document gets
+its own `<title>` and `og:url` (`title.go`, `og.go`).
 
 **Server-Sent Events** Polls the indexer for new blocks every 3s and
 fans out to connected browsers. Starts polling on the first subscriber and stops

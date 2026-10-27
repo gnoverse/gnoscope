@@ -79,7 +79,8 @@ func requestOrigin(r *http.Request) string {
 // package path comes off the chain by way of the URL, so it reaches the
 // attribute through html.EscapeString and the query string through
 // url.Values.Encode, never by concatenation.
-func ogTags(origin, pkgPath, network string, withImage bool) []byte {
+func ogTags(origin, pkgPath string, r *http.Request, withImage bool) []byte {
+	network := networkParam(r)
 	title := pkgPath + " on gnoscope"
 	desc := "What " + pkgPath + " looks like, what it holds, and who has been calling it."
 
@@ -93,15 +94,8 @@ func ogTags(origin, pkgPath, network string, withImage bool) []byte {
 	meta("property", "og:title", title)
 	meta("property", "og:description", desc)
 	meta("name", "description", desc)
-	if origin != "" {
-		// Built through url.URL, not concatenated: html.EscapeString stops a
-		// chain-chosen path breaking out of the attribute, and would happily
-		// leave a quote or an angle bracket sitting raw inside the URL itself,
-		// which is not a URL a crawler can follow back.
-		if u, err := url.Parse(origin); err == nil {
-			u.Path = "/realm/" + strings.TrimPrefix(pkgPath, "gno.land/")
-			meta("property", "og:url", u.String())
-		}
+	if u := canonicalURL(origin, "/realm/"+strings.TrimPrefix(pkgPath, "gno.land/"), r.URL.Query()); u != "" {
+		meta("property", "og:url", u)
 	}
 
 	// No capture service, no picture, and no card claiming there is one: a
@@ -126,6 +120,73 @@ func ogTags(origin, pkgPath, network string, withImage bool) []byte {
 	meta("name", "twitter:title", title)
 	meta("name", "twitter:description", desc)
 	return b.Bytes()
+}
+
+// pageTags is the card for every route that has no picture of its own: what
+// the page is called and where it is, which is what a chat window shows for a
+// pasted link. No description, since a sentence written here for a page whose
+// content lives in the SPA would be a second account of it.
+func pageTags(origin, title string, r *http.Request) []byte {
+	var b bytes.Buffer
+	meta := func(attr, key, value string) {
+		b.WriteString(`<meta ` + attr + `="` + key + `" content="` + html.EscapeString(value) + `">` + "\n")
+	}
+	meta("property", "og:type", "website")
+	meta("property", "og:site_name", "gnoscope")
+	meta("property", "og:title", title)
+	if u := canonicalURL(origin, r.URL.Path, r.URL.Query()); u != "" {
+		meta("property", "og:url", u)
+	}
+	meta("name", "twitter:card", "summary")
+	meta("name", "twitter:title", title)
+	return b.Bytes()
+}
+
+// canonicalURL is the address a shared link should resolve to: the view that
+// was shared, query string included, and not the page's default view.
+//
+// og:url used to be the bare path, so a link to a realm's state tab on testnet
+// previewed, and was deduplicated by every platform that honours og:url, as
+// the realm's info tab on whatever network a reader happened to land on. The
+// query is where the app keeps the network, the tab and anything finer, so it
+// is kept whole rather than allow-listed: a parameter added to the app later
+// (a per-value deep link, say) survives without this file hearing about it.
+//
+// Two kinds of parameter are dropped. Tracking ones describe where a click
+// came from, not what it shows. `embed` is how a page is framed, and a card
+// opening the chromeless page in a full tab would be a page with no way out.
+//
+// Built through url.URL, not concatenated: html.EscapeString stops a
+// chain-chosen path breaking out of the attribute, and would happily leave a
+// quote or an angle bracket sitting raw inside the URL itself, which is not a
+// URL a crawler can follow back.
+func canonicalURL(origin, path string, q url.Values) string {
+	if origin == "" {
+		return ""
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return ""
+	}
+	u.Path = path
+	for k := range q {
+		if k == "embed" || trackingParam(k) {
+			q.Del(k)
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// trackingParam is the response cache's list in pkg/httpapi, restated because
+// pkg/web may not import it, plus every utm_.
+func trackingParam(k string) bool {
+	switch k {
+	case "fbclid", "gclid", "mc_cid", "mc_eid", "igshid", "msclkid", "twclid",
+		"yclid", "ref_src", "ref_url", "_ga", "_gl":
+		return true
+	}
+	return strings.HasPrefix(k, "utm_")
 }
 
 // networkParam echoes a network back only if it looks like one of ours.
