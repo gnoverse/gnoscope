@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- A placeholder: pkg/web replaces this line with each page's own title and
+     link preview (title.go, og.go), and refuses to start if it is missing. -->
 <title>gnoscope</title>
 <!-- The chart libraries are fetched on first use, not here (#214), so the two
      origins they come from are warmed rather than waited on. A preconnect is a
@@ -74,7 +76,11 @@
      chrome: it carries its own background, so it stays legible whether
      the browser draws tabs light or dark. -->
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNyIgZmlsbD0iIzBhMGEwYSIvPjxyZWN0IHg9IjEiIHk9IjEiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgcng9IjYiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzJhMmEyYSIgc3Ryb2tlLXdpZHRoPSIyIi8+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iOC42IiBmaWxsPSJub25lIiBzdHJva2U9IiM0ZWNkYzQiIHN0cm9rZS13aWR0aD0iMi4yIi8+PHBhdGggZD0iTTE2IDE2TDE2LjAwIDcuNDBNMTYgMTZMMjMuNDUgMjAuMzBNMTYgMTZMOC41NSAyMC4zMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNGVjZGM0IiBzdHJva2Utd2lkdGg9IjIuMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iNC4wMCIgZmlsbD0iIzBhMGEwYSIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTYiIHI9IjMuMDAiIGZpbGw9IiM0ZWNkYzQiLz48L3N2Zz4=">
-<style>
+<!-- data-bundle: written inline, served as a file. pkg/web cuts this block
+     out at startup and serves it from /assets/ under its content hash, so a
+     browser keeps it across pages and visits instead of re-downloading it
+     with every document. Same for the script at the bottom. See assets.go. -->
+<style data-bundle="app.css">
 :root {
   --bg: #0a0a0a; --bg2: #141414; --bg3: #1e1e1e;
   --fg: #e0e0e0; --fg2: #888;
@@ -2054,7 +2060,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
     <span id="footer-indexer">data from tx-indexer</span>
   </div>
 </footer>
-<script>
+<script data-bundle="app.js">
 // --- Lazy third-party libraries (#214) --------------------------------------
 //
 // These four used to be plain <script src> tags right above this one: 676 KB
@@ -5257,6 +5263,62 @@ function trackSearchNow(term, n) {
   });
 })();
 
+// pageTitle is what the tab, the history entry and a screen reader call the
+// page at `path`. The server writes the same string into the document it
+// sends (pageThing in pkg/web/title.go), and this keeps it true after the
+// first navigation, which the server never sees. e2e/tests/title.spec.js loads
+// one URL of every shape and fails if the two disagree, so a change to one
+// side is a change to both.
+//
+// It leads with the thing, because a tab strip truncates from the right and a
+// screen reader is interrupted by the next announcement. Rail pages take their
+// rail label, and a child its section after it: "options" alone does not say
+// of what.
+const NAV_TITLE = {};
+for (const s of NAV) {
+  if (s.path !== '/') NAV_TITLE[s.path] = s.label;
+  for (const c of s.children || []) {
+    NAV_TITLE[c.path] = s.id === 'home' ? c.label : c.label + ' · ' + s.label;
+  }
+}
+const NAV_TITLE_ALIAS = { '/grc721': '/nfts', '/tokens': '/grc20', '/params': '/govdao/params' };
+
+function pageThing(path) {
+  if (NAV_TITLE[path]) return NAV_TITLE[path];
+  if (NAV_TITLE_ALIAS[path]) return NAV_TITLE[NAV_TITLE_ALIAS[path]];
+  const cut = (prefix) => path.startsWith(prefix) && path.length > prefix.length ? path.slice(prefix.length) : null;
+  let rest;
+  if ((rest = cut('/realm/')) !== null) {
+    rest = rest.replace(/^\/+|\/+$/g, '');
+    if (rest && !rest.includes('..') && !rest.includes('//')) {
+      rest = rest.replace(/^gno\.land\//, '');
+      if (rest.startsWith('r/') || rest.startsWith('p/')) return 'gno.land/' + rest;
+    }
+  }
+  if ((rest = cut('/tx/')) !== null) return 'tx ' + rest;
+  if ((rest = cut('/block/')) !== null) { const n = parseInt(rest, 10); return isNaN(n) || n < 0 ? '' : 'block ' + n; }
+  if ((rest = cut('/address/')) !== null) return rest;
+  if ((rest = cut('/validator/')) !== null) return rest;
+  if ((rest = cut('/grc20/')) !== null) return rest;
+  if ((rest = cut('/stdlib/')) !== null) return rest + ' · stdlib';
+  if ((rest = cut('/code/')) !== null) return rest + ' · code';
+  if (path.startsWith('/gnohub/')) return NAV_TITLE['/gnohub'];
+  if ((rest = cut('/govdao/')) !== null) { const n = parseInt(rest, 10); return isNaN(n) || n < 0 ? '' : 'proposal ' + n; }
+  if (path === '/search' || path.startsWith('/search/')) return 'search';
+  return '';
+}
+
+function pageTitle(path) {
+  let thing = '';
+  // The server reads a decoded path. A malformed escape is not a reason to
+  // leave the previous page's title up.
+  try { thing = pageThing(decodeURIComponent(path)); } catch (e) { thing = pageThing(path); }
+  if (!thing) return 'gnoscope · gno.land block explorer';
+  const chars = Array.from(thing);
+  if (chars.length > 120) thing = chars.slice(0, 120).join('') + '…';
+  return thing + ' on gnoscope';
+}
+
 function route() {
   _watchTarget = null;
   // Cleared on every navigation, and set again by switchTab when a realm page
@@ -5410,6 +5472,7 @@ function route() {
   }
   mountPageNav(view, navId);
   mountPageLead(view);
+  document.title = pageTitle(path);
 
   const subbar = document.getElementById('sanity-subbar');
   if (subbar) {

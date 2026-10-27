@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,68 +16,88 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gnoverse/gnoscope/pkg/registry"
 	"github.com/gnoverse/gnoscope/pkg/tags"
 )
 
-// The app is one 450 KB file re-served on every deep link and every cold tab.
-// These are the three things that stop that being the dominant cost of loading
-// the site, and each of them has a silent failure mode: a missing
-// Content-Encoding just sends the big body, a missing ETag just re-sends it, and
-// a wrong Content-Length truncates the page with no error anywhere.
+// The document is re-served on every deep link and every cold tab, so it has
+// to be small, compressed and revalidatable. Each of those has a silent failure
+// mode: a missing Content-Encoding just sends the big body, a missing ETag just
+// re-sends it, and a wrong Content-Length truncates the page with no error
+// anywhere.
 func TestIndexIsCompressedAndRevalidatable(t *testing.T) {
 	h, err := Handler(Options{})
 	if err != nil {
 		t.Fatalf("Handler: %v", err)
 	}
-	index, err := Index()
-	if err != nil {
-		t.Fatalf("Index: %v", err)
-	}
-
-	t.Run("serves the raw body when gzip is not accepted", func(t *testing.T) {
+	get := func(path, enc string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", path, nil)
+		if enc != "" {
+			req.Header.Set("Accept-Encoding", enc)
+		}
 		rec := httptest.NewRecorder()
-		h(rec, httptest.NewRequest("GET", "/", nil))
-		if got := rec.Header().Get("Content-Encoding"); got != "" {
+		h(rec, req)
+		return rec
+	}
+	raw := get("/", "")
+
+	t.Run("serves the raw body when nothing is accepted", func(t *testing.T) {
+		if got := raw.Header().Get("Content-Encoding"); got != "" {
 			t.Errorf("Content-Encoding = %q", got)
 		}
-		if !bytes.Equal(rec.Body.Bytes(), index) {
-			t.Error("body is not index.html")
+		body := raw.Body.String()
+		if !strings.HasPrefix(body, "<!DOCTYPE html>") || !strings.Contains(body, `id="view-home"`) {
+			t.Error("body is not the app's document")
+		}
+		// The bundle lives elsewhere now. 100 KB is twice what the markup
+		// weighs, and a fifteenth of what the document weighed with the
+		// script in it.
+		if raw.Body.Len() > 100_000 {
+			t.Errorf("the document is %d bytes: the bundle is back inline", raw.Body.Len())
 		}
 	})
 
-	t.Run("gzips when accepted, and the bytes round-trip", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", nil)
-		req.Header.Set("Accept-Encoding", "gzip")
-		rec := httptest.NewRecorder()
-		h(rec, req)
+	for _, enc := range []struct {
+		name   string
+		decode func(io.Reader) (io.Reader, error)
+	}{
+		{"gzip", func(r io.Reader) (io.Reader, error) { return gzip.NewReader(r) }},
+		{"br", func(r io.Reader) (io.Reader, error) { return brotli.NewReader(r), nil }},
+	} {
+		t.Run(enc.name+" when accepted, and the bytes round-trip", func(t *testing.T) {
+			rec := get("/", enc.name)
+			if got := rec.Header().Get("Content-Encoding"); got != enc.name {
+				t.Fatalf("Content-Encoding = %q, want %s", got, enc.name)
+			}
+			if rec.Body.Len() >= raw.Body.Len()/2 {
+				t.Errorf("compressed to %d bytes from %d: barely compressed at all", rec.Body.Len(), raw.Body.Len())
+			}
+			if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(rec.Body.Len()) {
+				t.Errorf("Content-Length = %q but body is %d bytes: a browser would truncate the page", got, rec.Body.Len())
+			}
+			zr, err := enc.decode(bytes.NewReader(rec.Body.Bytes()))
+			if err != nil {
+				t.Fatalf("reader: %v", err)
+			}
+			out, err := io.ReadAll(zr)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if !bytes.Equal(out, raw.Body.Bytes()) {
+				t.Error("decoded body is not the document")
+			}
+		})
+	}
 
-		if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
-			t.Fatalf("Content-Encoding = %q, want gzip", got)
-		}
-		if rec.Body.Len() >= len(index)/2 {
-			t.Errorf("compressed to %d bytes from %d — barely compressed at all", rec.Body.Len(), len(index))
-		}
-		if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(rec.Body.Len()) {
-			t.Errorf("Content-Length = %q but body is %d bytes — a browser would truncate the page", got, rec.Body.Len())
-		}
-		zr, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
-		if err != nil {
-			t.Fatalf("gzip reader: %v", err)
-		}
-		out, err := io.ReadAll(zr)
-		if err != nil {
-			t.Fatalf("gunzip: %v", err)
-		}
-		if !bytes.Equal(out, index) {
-			t.Error("decompressed body is not index.html")
+	t.Run("prefers br when both are accepted", func(t *testing.T) {
+		if got := get("/", "gzip, deflate, br, zstd").Header().Get("Content-Encoding"); got != "br" {
+			t.Errorf("Content-Encoding = %q, want br", got)
 		}
 	})
 
 	t.Run("revalidates with an ETag", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		h(rec, httptest.NewRequest("GET", "/", nil))
-		etag := rec.Header().Get("ETag")
+		etag := raw.Header().Get("ETag")
 		if etag == "" {
 			t.Fatal("no ETag")
 		}
@@ -95,47 +117,226 @@ func TestIndexIsCompressedAndRevalidatable(t *testing.T) {
 
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Header.Set("If-None-Match", `"stale-from-an-older-build"`)
-		rec = httptest.NewRecorder()
+		rec := httptest.NewRecorder()
 		h(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Errorf("a non-matching ETag got %d, want 200 — a new build would never reach the reader", rec.Code)
+			t.Errorf("a non-matching ETag got %d, want 200: a new build would never reach the reader", rec.Code)
 		}
 	})
 
 	// A deep link is not a 404: the SPA routes on the URL, so every path that
-	// is not an embedded file has to arrive at the app.
-	//
-	// Byte-identical for every route but a realm's. A realm gets the same app
-	// with a link-preview block spliced into its head, because a crawler does
-	// not run the SPA and that block is the only thing it can read.
-	t.Run("a non-realm deep link is the precomputed document, unchanged", func(t *testing.T) {
-		for _, path := range []string{"/txs", "/blocks", "/address/g1abc", "/realmish/r/x/y"} {
+	// is not an embedded file has to arrive at the app. Each with its own
+	// title, and each loading the same bundle.
+	t.Run("every deep link is the app, under its own title", func(t *testing.T) {
+		js, css := bundleRefs(t, raw.Body.String())
+		seen := map[string]string{}
+		for _, path := range []string{"/txs", "/blocks", "/address/g1abc", "/realmish/r/x/y", "/realm/gno.land/r/demo/boards"} {
+			rec := get(path, "")
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Errorf("%s: status %d", path, rec.Code)
+				continue
+			}
+			if j, c := bundleRefs(t, body); j != js || c != css {
+				t.Errorf("%s loads %s and %s, / loads %s and %s", path, j, c, js, css)
+			}
+			if prev, ok := seen[rec.Header().Get("ETag")]; ok {
+				t.Errorf("%s and %s share an ETag", path, prev)
+			}
+			seen[rec.Header().Get("ETag")] = path
+		}
+	})
+}
+
+// bundleRefs returns the script and stylesheet a document loads from
+// AssetPrefix, failing unless there is exactly one of each.
+func bundleRefs(t *testing.T, doc string) (js, css string) {
+	t.Helper()
+	scripts := regexp.MustCompile(`<script src="(/assets/[^"]+)"></script>`).FindAllStringSubmatch(doc, -1)
+	sheets := regexp.MustCompile(`<link rel="stylesheet" href="(/assets/[^"]+)">`).FindAllStringSubmatch(doc, -1)
+	if len(scripts) != 1 || len(sheets) != 1 {
+		t.Fatalf("the document loads %d bundled scripts and %d stylesheets, want one of each", len(scripts), len(sheets))
+	}
+	return scripts[0][1], sheets[0][1]
+}
+
+// inlineBlock is a data-bundle block's body as written in index.html.
+func inlineBlock(t *testing.T, tag, name string) []byte {
+	t.Helper()
+	index, err := Index()
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	open := []byte(`<` + tag + ` data-bundle="` + name + `">`)
+	i := bytes.Index(index, open)
+	if i < 0 {
+		t.Fatalf("no %s in index.html", open)
+	}
+	rest := index[i+len(open):]
+	return rest[:bytes.Index(rest, []byte("</"+tag+">"))]
+}
+
+// The bundle is the 1.5 MB that used to ride inside every document. It is only
+// worth splitting out if a browser is allowed to keep it, and only safe to let
+// a browser keep it forever if its name changes whenever a byte of it does.
+func TestBundleIsAnImmutableAsset(t *testing.T) {
+	h, err := Handler(Options{})
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+	doc := httptest.NewRecorder()
+	h(doc, httptest.NewRequest("GET", "/", nil))
+	js, css := bundleRefs(t, doc.Body.String())
+
+	for _, c := range []struct {
+		path, tag, name, ctype string
+	}{
+		{js, "script", "app.js", "text/javascript"},
+		{css, "style", "app.css", "text/css"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			want := inlineBlock(t, c.tag, c.name)
+			if bytes.Contains(doc.Body.Bytes(), want[:200]) {
+				t.Error("the document still carries the block inline")
+			}
+
+			rec := httptest.NewRecorder()
+			h(rec, httptest.NewRequest("GET", c.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: status %d", c.path, rec.Code)
+			}
+			if !bytes.Equal(rec.Body.Bytes(), want) {
+				t.Errorf("%s is not the block index.html carries", c.path)
+			}
+			if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, c.ctype) {
+				t.Errorf("Content-Type = %q, want %s", got, c.ctype)
+			}
+			if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") || !strings.Contains(got, "max-age=31536000") {
+				t.Errorf("Cache-Control = %q, want a year, immutable", got)
+			}
+
+			// The name is the content: a different body is a different URL.
+			sum := sha256.Sum256(want)
+			if !strings.Contains(c.path, hex.EncodeToString(sum[:6])) {
+				t.Errorf("%s does not carry the hash of its body", c.path)
+			}
+
+			req := httptest.NewRequest("GET", c.path, nil)
+			req.Header.Set("If-None-Match", rec.Header().Get("ETag"))
+			rec304 := httptest.NewRecorder()
+			h(rec304, req)
+			if rec304.Code != http.StatusNotModified {
+				t.Errorf("revalidating %s: status %d, want 304", c.path, rec304.Code)
+			}
+
+			req = httptest.NewRequest("GET", c.path, nil)
+			req.Header.Set("Accept-Encoding", "gzip")
+			gz := httptest.NewRecorder()
+			h(gz, req)
+			gzLen := gz.Body.Len()
+			zr, err := gzip.NewReader(gz.Body)
+			if err != nil {
+				t.Fatalf("gzip: %v", err)
+			}
+			if out, _ := io.ReadAll(zr); !bytes.Equal(out, want) {
+				t.Error("gzip does not round-trip")
+			}
+
+			// Brotli is computed in the background; wait for it here.
+			b, _ := bundle()
+			<-b.byPath[c.path].brDone
+			req = httptest.NewRequest("GET", c.path, nil)
+			req.Header.Set("Accept-Encoding", "br")
+			br := httptest.NewRecorder()
+			h(br, req)
+			if got := br.Header().Get("Content-Encoding"); got != "br" {
+				t.Fatalf("Content-Encoding = %q, want br", got)
+			}
+			if br.Body.Len() >= gzLen {
+				t.Errorf("br is %d bytes and gzip %d: brotli is not paying for itself", br.Body.Len(), gzLen)
+			}
+			if out, _ := io.ReadAll(brotli.NewReader(br.Body)); !bytes.Equal(out, want) {
+				t.Error("br does not round-trip")
+			}
+		})
+	}
+
+	// A document from the previous build names a hash this one does not have.
+	// It must get a plain 404 and not the app: HTML with a 200 where script
+	// was asked for is a MIME error in the console and a page that looks hung.
+	t.Run("an unknown hash is a 404, never the app", func(t *testing.T) {
+		for _, path := range []string{"/assets/app.000000000000.js", "/assets/", "/assets/app.js"} {
 			rec := httptest.NewRecorder()
 			h(rec, httptest.NewRequest("GET", path, nil))
-			if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), index) {
-				t.Errorf("%s got %d and %d bytes, want the untouched document", path, rec.Code, rec.Body.Len())
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("%s: status %d, want 404", path, rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), "<!DOCTYPE html>") {
+				t.Errorf("%s: answered with the app", path)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("%s: Cache-Control = %q, want no-store so a miss mid-deploy is not remembered", path, got)
 			}
 		}
 	})
 
-	t.Run("a realm deep link gets the app plus its preview", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		h(rec, httptest.NewRequest("GET", "/realm/gno.land/r/demo/boards", nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d", rec.Code)
+	// Stays where the inline script was, at the foot of the body, so it still
+	// runs after the markup it draws into, and still parser-blocking.
+	t.Run("the script loads where the inline one ran", func(t *testing.T) {
+		body := doc.Body.String()
+		at := strings.Index(body, `<script src="`+js+`">`)
+		if footer := strings.Index(body, "</footer>"); at < footer {
+			t.Errorf("the bundle loads at %d, before </footer> at %d", at, footer)
 		}
-		body := rec.Body.Bytes()
-		// Still the whole app: a preview must not cost the reader the page.
-		if !bytes.Contains(body, []byte("<title>gnoscope</title>")) {
-			t.Error("the realm document is not the app")
+		if tag := body[at : at+strings.Index(body[at:], ">")]; strings.Contains(tag, "defer") || strings.Contains(tag, "async") {
+			t.Error("the bundle is deferred: the inline script it replaces was not")
 		}
-		if len(body) <= len(index) {
-			t.Errorf("realm document is %d bytes against the base %d, so nothing was injected", len(body), len(index))
-		}
-		if !bytes.Contains(body, []byte(`property="og:title"`)) {
-			t.Error("no og:title")
+		if link := strings.Index(body, `href="`+css+`"`); link > strings.Index(body, "</head>") {
+			t.Error("the stylesheet is not in <head>")
 		}
 	})
+}
+
+// A one-byte change to the script has to change its URL and therefore the
+// document's ETag, or a reader revalidating the document is told nothing
+// changed and runs the old bundle forever.
+func TestBundleHashFollowsTheContent(t *testing.T) {
+	page := func(js string) string {
+		return "<html><head><style data-bundle=\"app.css\">a{}</style></head><body><script data-bundle=\"app.js\">" + js + "</script></body></html>"
+	}
+	docA, assetsA, err := splitBundle([]byte(page("var a = 1;")))
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	docB, assetsB, err := splitBundle([]byte(page("var a = 2;")))
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if len(assetsA) != 2 || len(assetsB) != 2 {
+		t.Fatalf("got %d and %d assets, want 2", len(assetsA), len(assetsB))
+	}
+	if assetsA[0].path != assetsB[0].path {
+		t.Error("the stylesheet did not change and its URL did")
+	}
+	if assetsA[1].path == assetsB[1].path {
+		t.Error("the script changed and its URL did not")
+	}
+	if bytes.Equal(docA, docB) {
+		t.Error("the script changed and the document did not, so its ETag would not either")
+	}
+	if strings.Contains(string(docA), "var a") {
+		t.Error("the script is still inline")
+	}
+
+	for _, bad := range []string{
+		"<html></html>",
+		`<script data-bundle="app.js">never closed`,
+		`<style data-bundle="app.js">a{}</style>`,
+	} {
+		if _, _, err := splitBundle([]byte(bad)); err == nil {
+			t.Errorf("splitBundle(%q) succeeded", bad)
+		}
+	}
 }
 
 // Two `function` declarations sharing a name are not an error in JavaScript.
@@ -478,11 +679,6 @@ func TestFrontendSpriteHasNoOrphansOrDanglingRefs(t *testing.T) {
 // fetched, because the first row is drawn before /api/version comes back. Off
 // by default, and off means the served bytes are the embedded file unchanged.
 func TestFeatureFlagIsInjectedOnlyWhenOn(t *testing.T) {
-	index, err := Index()
-	if err != nil {
-		t.Fatalf("Index: %v", err)
-	}
-
 	t.Run("off leaves the body untouched", func(t *testing.T) {
 		h, err := Handler(Options{})
 		if err != nil {
@@ -490,9 +686,6 @@ func TestFeatureFlagIsInjectedOnlyWhenOn(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		h(rec, httptest.NewRequest("GET", "/", nil))
-		if !bytes.Equal(rec.Body.Bytes(), index) {
-			t.Error("a build with no capture service does not serve index.html unchanged")
-		}
 		// The assignment, not the reads: the application script reads
 		// window.FEATURES defensively and that text is in index.html either way.
 		if bytes.Contains(rec.Body.Bytes(), []byte("window.FEATURES={")) {
