@@ -84,6 +84,13 @@ breadth-first, because the walker asks for one object at a time and a realm can
 need thousands: `r/gnoland/blog` costs 4m29s one-at-a-time and 38s in rounds.
 Takes a `Resolver`, so the same code reads from live RPC, a cache or a stored
 snapshot. No gno dependency: the `@type` discriminators are enough.
+A read is bounded by a deadline and a large realm does not fit in one, so the
+tree says what it could not show instead of filling it in: a ref carries why it
+was not followed (`unresolved`), a struct named by position carries why
+(`positional`), a string the node's JSON had to mangle carries how much
+(`lossy`). `DecodeObjectsWith` reads just the branches a reader asks for, which
+`/api/state/{path}?object=<id>&type=<type>` serves (repeatable, up to 64), and
+the state tab addresses any value as `?tab=state&value=pools[0].Name`.
 
 **`pkg/gnoaddr`** — derives the two accounts every package path owns (the realm
 banker and its storage deposit). Both are pure functions of the path, so nothing
