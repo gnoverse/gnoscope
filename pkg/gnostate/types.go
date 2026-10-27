@@ -90,6 +90,39 @@ type Node struct {
 	File string `json:"file,omitempty"`
 	Line int    `json:"line,omitempty"`
 
+	// Positional says that this struct's children are named [0], [1]… rather
+	// than by field, and why. Empty means every child carries its declared
+	// name. Set rather than left implicit because a reader cannot tell a
+	// field the decoder failed to name from a struct whose author really did
+	// write an array: the row says which one they are looking at.
+	//
+	// On a map it means the keys have no text form (a struct or pointer key),
+	// so entries are numbered in the map's own insertion order.
+	Positional Miss `json:"positional,omitempty"`
+
+	// Unresolved, on a KindRef, says why the walk stopped at this reference.
+	// The distinction matters to the reader's next move: a ref the read did
+	// not reach is worth asking for again, one the node had nothing for is
+	// not.
+	Unresolved Miss `json:"unresolved,omitempty"`
+
+	// Lossy counts U+FFFD characters in a string value. The node's JSON
+	// encoder writes U+FFFD for every byte that is not valid UTF-8, so a
+	// string holding binary (a hash, a commitment) reaches us with those
+	// bytes already replaced and not recoverable from `vm/qobject_json`.
+	// Measured on bubblerumble6's `commits`, 32-byte values arriving with 15
+	// replaced. A real U+FFFD in a real string is counted too: the wire
+	// cannot tell the two apart, so this is "may have lost bytes", and the UI
+	// says exactly that.
+	Lossy int `json:"lossy,omitempty"`
+
+	// Subtree marks a nameless KindRef among a flattened avl.Tree's entries:
+	// a part of the tree the read did not reach, standing for an unknown
+	// number of entries at that position in key order. It is not an entry,
+	// and a map entry whose key is the empty string is, which is why this is
+	// a flag and not inferred from the missing name.
+	Subtree bool `json:"subtree,omitempty"`
+
 	// fromHeapItem records that this node is the contents of a heap item the
 	// walker unwrapped. It is unexported, so it never reaches the API; it
 	// exists only so a PointerValue can tell "index 0 of a heap item", where
@@ -97,6 +130,27 @@ type Node struct {
 	// it still has to select field 0.
 	fromHeapItem bool
 }
+
+// Miss says why something the walk wanted is not in the tree.
+type Miss string
+
+const (
+	// MissUnreached: the read stopped before asking for it, because its
+	// deadline passed or its fetch budget ran out. Asking again for just this
+	// object can succeed.
+	MissUnreached Miss = "unreached"
+	// MissNotFound: the node was asked and returned nothing.
+	MissNotFound Miss = "missing"
+	// MissUntyped: the value carries no type the chain can be asked about.
+	MissUntyped Miss = "untyped"
+	// MissMismatch: the type declaration and the stored value disagree on the
+	// number of fields, so naming them would mislabel some.
+	MissMismatch Miss = "mismatch"
+	// MissKeys: a map's keys are not scalars and have no text form.
+	MissKeys Miss = "keys"
+	// MissUndecodable: the payload is not in a shape this decoder knows.
+	MissUndecodable Miss = "undecodable"
+)
 
 // Limits bound a single decode. Zero means "use the default", so a caller can
 // set one field without silently disabling the rest.

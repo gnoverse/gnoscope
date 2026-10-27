@@ -189,3 +189,71 @@ func TestHandleStateDoesNotOfferFullTwice(t *testing.T) {
 		t.Error("a ?full=1 response offered a full retry, which would loop the reader")
 	}
 }
+
+// ?object= reads one branch of a realm on its own, which is how a reader gets
+// past a ref the realm-wide read did not reach without re-reading everything.
+func TestHandleStateObject(t *testing.T) {
+	const pid = "013fb9febea2bc081446a5af5fe5d73341d7e079"
+	pkg := `{"names":["m"],"values":[{"T":{"@type":"/gno.MapType"},
+	  "V":{"@type":"/gno.RefValue","ObjectID":"` + pid + `:15"}}]}`
+	obj := `{"objectid":"` + pid + `:15","value":{"@type":"/gno.MapValue",
+	  "ObjectInfo":{"ID":"` + pid + `:15","LastObjectSize":"4700"},
+	  "List":{"List":[{"Key":{"T":{"@type":"/gno.PrimitiveType","value":"16"},"V":{"@type":"/gno.StringValue","value":"FR"}},
+	                   "Value":{"T":{"@type":"/gno.PrimitiveType","value":"1024"},"N":"OXDeCQAAAAA="}}]}}}`
+
+	tests := []struct {
+		name   string
+		query  string
+		status int
+		check  func(*testing.T, StateResponse)
+	}{
+		{
+			name: "an object of this realm decodes", query: "&object=" + pid + ":15", status: 200,
+			check: func(t *testing.T, got StateResponse) {
+				if len(got.ObjectIDs) != 1 || got.ObjectIDs[0] != pid+":15" || len(got.Nodes) != 1 {
+					t.Fatalf("got %+v", got)
+				}
+				n := got.Nodes[0]
+				if n.Kind != "map" || len(n.Children) != 1 || n.Children[0].Name != "FR" || n.Children[0].Value != "165572665" {
+					t.Errorf("node = %+v, want map{FR: 165572665}", n)
+				}
+			},
+		},
+		{
+			name: "an object the node lacks is a missing ref, not an error", query: "&object=" + pid + ":99", status: 200,
+			check: func(t *testing.T, got StateResponse) {
+				if n := got.Nodes[0]; n.Kind != "ref" || n.Unresolved != "missing" {
+					t.Errorf("node = %+v, want a missing ref", n)
+				}
+			},
+		},
+		{
+			name: "several objects share one read, one node each, in order", query: "&object=" + pid + ":99&object=" + pid + ":15", status: 200,
+			check: func(t *testing.T, got StateResponse) {
+				if len(got.Nodes) != 2 || got.Nodes[0].Kind != "ref" || got.Nodes[1].Kind != "map" {
+					t.Errorf("nodes = %+v, want [missing ref, map]", got.Nodes)
+				}
+			},
+		},
+		{name: "too many objects are refused", query: strings.Repeat("&object="+pid+":15", maxStateObjects+1), status: 400},
+		{name: "another realm's object is refused", query: "&object=" + strings.Repeat("a", 40) + ":15", status: 400},
+		{name: "a malformed object id is refused", query: "&object=../../x", status: 400},
+		{name: "a malformed type id is refused", query: "&object=" + pid + ":15&type=a%20b", status: 400},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, _ := newTestAPI(t)
+			srv := stateNode(t, map[string]string{"gno.land/r/x/y": pkg, pid + ":15": obj}, nil)
+			api.networks = []config.NetworkConfig{{ID: "alpha", RPCURL: srv.URL}}
+			api.setRPCVerified("alpha", srv.URL)
+
+			w, got := stateReq(t, api, "r/x/y", "?network=alpha"+tt.query)
+			if w.Code != tt.status {
+				t.Fatalf("status = %d, want %d (body %s)", w.Code, tt.status, w.Body.String())
+			}
+			if tt.check != nil {
+				tt.check(t, got)
+			}
+		})
+	}
+}

@@ -67,7 +67,7 @@ func flattenTree(n Node) (Node, bool) {
 	var partial bool
 	collectEntries(root, &out.Children, &partial)
 
-	out.Value = plural(len(out.Children))
+	out.Value = plural(countEntries(out.Children))
 	if partial {
 		// The walk ran out of budget before reaching every leaf. Saying so is
 		// the whole point: a tree that silently renders 40 of its 65 entries
@@ -94,12 +94,24 @@ func isAVLNode(n Node) bool {
 // per leaf.
 //
 // A node the walker could not resolve (an unfollowed ref, a cycle, a
-// truncation) sets partial rather than being skipped silently.
+// truncation) sets partial rather than being skipped silently. An unfollowed
+// ref is also kept, nameless, at the position its entries would take in key
+// order: it is the handle a reader uses to read just that subtree, and the
+// entries it turns into belong exactly there.
 func collectEntries(n Node, out *[]Node, partial *bool) {
 	switch n.Kind {
 	case KindNil:
 		return
-	case KindRef, KindCycle, KindTruncated:
+	case KindRef:
+		*partial = true
+		if n.ObjectID != "" {
+			hole := n
+			hole.Name = ""
+			hole.Subtree = true
+			*out = append(*out, hole)
+		}
+		return
+	case KindCycle, KindTruncated:
 		*partial = true
 		return
 	}
@@ -127,6 +139,36 @@ func collectEntries(n Node, out *[]Node, partial *bool) {
 
 	collectEntries(left, out, partial)
 	collectEntries(right, out, partial)
+}
+
+// FlattenSubtree turns a decoded avl.Node, read on its own as the target of a
+// ref a partial tree kept, into the entries it holds, so they can take the
+// placeholder's place in the map they belong to. Anything that is not an avl
+// node is returned unchanged.
+func FlattenSubtree(n Node) Node {
+	if !isAVLNode(n) {
+		return n
+	}
+	out := Node{Name: n.Name, Type: n.Type, TypeID: n.TypeID, Kind: KindMap, ObjectID: n.ObjectID, Hash: n.Hash, Size: n.Size}
+	var partial bool
+	collectEntries(n, &out.Children, &partial)
+	out.Value = plural(countEntries(out.Children))
+	if partial {
+		out.Value += ", partially loaded"
+	}
+	return out
+}
+
+// countEntries counts a flattened tree's entries, not the unread subtrees
+// kept beside them, which are not entries and whose size is unknown.
+func countEntries(children []Node) int {
+	n := 0
+	for _, c := range children {
+		if !c.Subtree {
+			n++
+		}
+	}
+	return n
 }
 
 func plural(n int) string {

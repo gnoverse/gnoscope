@@ -578,6 +578,22 @@ html.embed .pagenav { display: none; }
     .state-value { color: var(--blue, #268bd2); white-space: pre-wrap; word-break: break-word; min-width: 0; }
     .state-ref { color: var(--fg2); font-size: 11.5px; font-style: italic; }
     .state-size { color: var(--fg2); font-size: 11px; }
+    /* The link to a value: quiet until the row is hovered, the way the source
+       gutter's line numbers are, and always there for a keyboard. */
+    .state-link { color: var(--fg2); text-decoration: none; opacity: 0; font-size: 11.5px; padding: 0 2px; }
+    .state-head:hover .state-link, .state-link:focus, .state-row-on > .state-head .state-link { opacity: 1; }
+    .state-link:hover { color: var(--accent, #2aa198); }
+    .state-row-on > .state-head { background: color-mix(in srgb, var(--accent, #2aa198) 16%, transparent); }
+    /* What a row cannot show, said at the row: a mark, not a paragraph. */
+    .state-badge { color: var(--yellow, #b58900); font-size: 10.5px; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; line-height: 1.4; flex: none; cursor: help; }
+    .state-read { font: inherit; font-size: 11px; color: var(--accent, #2aa198); background: none; border: 1px solid var(--border, rgba(127,127,127,.3)); border-radius: 3px; padding: 0 6px; cursor: pointer; flex: none; }
+    .state-read:hover { border-color: var(--accent, #2aa198); }
+    .state-reading { opacity: .55; }
+    .state-read-err { color: var(--red, #dc322f); font-size: 11px; }
+    .state-escaped { font-size: 11.5px; }
+    .state-notice { color: var(--yellow, #b58900); font-size: 13px; margin: 8px 0; }
+    .state-filter { display: flex; gap: 8px; align-items: center; margin: 2px 0 4px 25px; font-family: inherit; }
+    .state-filter-input { font: inherit; font-size: 12px; padding: 1px 6px; width: 220px; background: var(--bg2, transparent); color: var(--fg); border: 1px solid var(--border, rgba(127,127,127,.3)); border-radius: 3px; }
 
 .tab-content { display: none; }
 .tab-content.active { display: block; }
@@ -21218,7 +21234,10 @@ function loadRealmState(path, detail, gen, full) {
 }
 
 function renderRealmState(into, d, onLoadFull, path) {
-  const all = d.nodes || [];
+  // The tree is edited in place from here on: a branch read on its own (see
+  // stateReadRows) replaces the ref it was read for. So it is a copy, not
+  // the payload api() handed back, which a concurrent caller may share.
+  const all = structuredClone(d.nodes || []);
   // A type declaration is API, not state, the same way a function is: the
   // decoder already drops functions for that reason, and types belong with
   // them. They are kept rather than dropped because a reader occasionally
@@ -21245,11 +21264,17 @@ function renderRealmState(into, d, onLoadFull, path) {
   // The honesty badge. A state view that quietly shows less than the realm
   // holds is worse than one that shows nothing, because a reader cannot tell
   // the difference between "this realm is empty" and "we gave up".
+  //
+  // The banner is the summary; the rows are the detail. Every branch the
+  // read did not reach is marked where it sits and can be read on its own,
+  // which on a realm too big for any one read is the way forward that
+  // re-reading everything for longer is not.
   if (d.partial) {
     const warn = el('div', {
+      className: 'state-partial',
       style: { color: 'var(--yellow, #b58900)', margin: '8px 0', fontSize: '13px' },
     }, '⚠ partial view: ' + (d.partial_reason || 'not every reference resolved') +
-       '. Unresolved branches are shown as refs. ');
+       '. Each branch the read did not reach says so where it sits, and can be read on its own. ');
     // A partial view with no way forward is a dead end. The wider read is
     // opt-in rather than automatic because it costs the public RPC real work.
     if (d.can_retry_full && onLoadFull) {
@@ -21279,68 +21304,268 @@ function renderRealmState(into, d, onLoadFull, path) {
     .sort((a, b) => b.bytes - a.bytes);
   if (sized.length) into.appendChild(stateSizeMap(sized));
 
+  const ctx = { realm: path, roots: [] };
+  // Where a link that could not be followed all the way explains itself.
+  ctx.notice = el('div', { className: 'state-notice' });
+  ctx.notice.style.display = 'none';
+  into.appendChild(ctx.notice);
+
   const tree = el('div', { className: 'state-tree' });
+  ctx.roots.push(tree);
   // Depth 1 open, deeper closed. Opening everything on a realm with a few
   // hundred entries paints a wall; opening nothing hides the answer.
-  nodes.forEach(n => tree.appendChild(stateRow(n, 0, path)));
+  nodes.forEach(n => tree.appendChild(stateRow(n, 0, ctx, statePathStep(n.name, true), null)));
   into.appendChild(tree);
 
   if (types.length) {
     const wrap = el('div', { style: { marginTop: '14px' } });
     const body = el('div', { className: 'state-tree' });
     body.style.display = 'none';
-    const tw = el('span', { className: 'state-twisty' }, '\u25b8');
+    ctx.roots.push(body);
+    const tw = el('span', { className: 'state-twisty' }, '▸');
     const head = el('div', {
       className: 'state-head',
       style: { cursor: 'pointer', color: 'var(--fg2)', fontSize: '12px' },
       onclick: () => {
         const showing = body.style.display !== 'none';
         body.style.display = showing ? 'none' : '';
-        tw.textContent = showing ? '\u25b8' : '\u25be';
+        tw.textContent = showing ? '▸' : '▾';
       },
     }, tw, el('span', {}, fmtNum(types.length) + ' type declarations'));
-    types.forEach(n => body.appendChild(stateRow(n, 0, path)));
+    types.forEach(n => body.appendChild(stateRow(n, 0, ctx, statePathStep(n.name, true), null)));
     wrap.appendChild(head);
     wrap.appendChild(body);
     into.appendChild(wrap);
   }
+
+  // A link to a value, honoured after the paint: the row did not exist when
+  // the document loaded, the same as a source line's #L anchor.
+  const want = new URLSearchParams(window.location.search).get('value');
+  if (want) stateReveal(ctx, want);
 }
 
-// stateRow builds one row and, for a branch, its collapsible children.
+// --- Links to a value -------------------------------------------------------
+//
+// A value's address is `?tab=state&value=<path>`, and the path is written the
+// way a Go reader would write the expression, one step per level below a
+// top-level variable:
+//
+//   .Name      a struct field whose name is a Go identifier
+//   [3]        a slice or array index, or a field the read could only number
+//   ["key"]    a map key, always, as a JSON string; and any other name that
+//              is neither of the above
+//
+// so pools[0].Creator, players["g1abc…"].Flag and teamPaid["FR"]. Each step
+// names a child by the name the decoder gave it, so a path is exactly as
+// stable as those names: see stateReveal for what happens when the state has
+// changed shape under a link.
+//
+// One syntax, not one per kind, and a JSON string for the escape hatch, so
+// that a map key holding `.`, `]` or `"` (realm state is attacker-controlled,
+// keys included) cannot be read as a second step.
+const STATE_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const STATE_INDEX = /^\[\d+\]$/;
+
+// A map key is always quoted, even one that looks like an identifier, so
+// players["g1abc…"] never reads as a field called g1abc… and teamPaid["FR"]
+// never as one called FR.
+function statePathStep(name, top, inMap) {
+  const s = name == null ? '' : String(name);
+  if (!inMap && STATE_IDENT.test(s)) return top ? s : '.' + s;
+  if (!inMap && STATE_INDEX.test(s)) return s;
+  return '[' + JSON.stringify(s) + ']';
+}
+
+// statePathParse turns a path back into the child names it steps through, or
+// null when it is not a path this syntax can write.
+function statePathParse(p) {
+  const out = [];
+  let i = 0;
+  const top = /^[A-Za-z_][A-Za-z0-9_]*/.exec(p);
+  if (top) { out.push(top[0]); i = top[0].length; }
+  while (i < p.length) {
+    const rest = p.slice(i);
+    let m;
+    if ((m = /^\.([A-Za-z_][A-Za-z0-9_]*)/.exec(rest))) { out.push(m[1]); i += m[0].length; continue; }
+    if ((m = /^\[\d+\]/.exec(rest))) { out.push(m[0]); i += m[0].length; continue; }
+    if (rest.startsWith('["')) {
+      // Scan to the closing quote, honouring backslash escapes, and let
+      // JSON.parse do the unescaping it is specified to do.
+      let j = 2;
+      while (j < rest.length && rest[j] !== '"') j += rest[j] === '\\' ? 2 : 1;
+      if (rest[j + 1] !== ']') return null;
+      let key;
+      try { key = JSON.parse(rest.slice(1, j + 1)); } catch (_) { return null; }
+      out.push(key);
+      i += j + 2;
+      continue;
+    }
+    return null;
+  }
+  return out.length ? out : null;
+}
+
+// stateValueURL is the address of one value, on whichever host and network
+// the reader is on.
+function stateValueURL(p) {
+  const url = new URL(window.location);
+  url.hash = '';
+  url.searchParams.set('tab', 'state');
+  url.searchParams.set('value', p);
+  return url.toString();
+}
+
+// stateReveal opens every ancestor of a linked value, scrolls it into view and
+// marks it.
+//
+// When the state has changed shape under a link, it goes as far as the path
+// still leads and says where it stopped, rather than landing somewhere else
+// silently:
+//   - a step with no child of that name (a map key since deleted, an index
+//     past the end of a slice that shrank) stops at the nearest ancestor;
+//   - a field step into a struct this read could only number names the
+//     reason, because `.Name` cannot be matched against `[1]` without the
+//     declaration that was not read;
+//   - a branch this read did not reach is read on its own and the walk goes
+//     on, up to a few times, so a link deep into a large realm still lands.
+// An index is a position, so a link to pools[3] lands on whatever is at 3
+// now. A slice that had an element inserted before it moves the link with no
+// way to tell: there is no identity to a slice element beyond its position.
+async function stateReveal(ctx, p) {
+  const steps = statePathParse(p);
+  const say = (msg) => {
+    ctx.notice.textContent = msg;
+    ctx.notice.style.display = msg ? '' : 'none';
+  };
+  if (!steps) { say('the linked value ' + p + ' is not a path this page can read'); return; }
+  say('');
+  let rows = ctx.roots.flatMap(r => Array.from(r.children));
+  let row = null;
+  let reads = 0;
+  for (let i = 0; i < steps.length; i++) {
+    const want = steps[i];
+    let hit = rows.find(r => r._state && (r._state.node.name || '') === want);
+    // A branch the read did not reach stands between the reader and the
+    // link: read it, then look again.
+    while (!hit && row && stateUnread(row._state.node) && reads < 4) {
+      reads++;
+      say('reading ' + row._state.path + ', which this view had not reached, to follow the link…');
+      row = await stateReadRows(ctx, [row]);
+      if (!row) { say('could not read ' + p); return; }
+      stateOpen(row);
+      rows = stateChildRows(row);
+      hit = rows.find(r => r._state && (r._state.node.name || '') === want);
+    }
+    if (!hit && row && stateHoles(row._state.node) && reads < 4) {
+      // The entry may be inside a subtree of a large map this view has not
+      // read yet. One read of every unread subtree, then look again.
+      reads++;
+      say('reading the unread entries of ' + row._state.path + ' to follow the link…');
+      await stateReadUnread(ctx, row);
+      rows = stateChildRows(row);
+      hit = rows.find(r => r._state && (r._state.node.name || '') === want);
+    }
+    if (!hit) {
+      const where = row ? row._state.path : 'this realm';
+      const parent = row && row._state.node;
+      let why = 'there is no ' + statePathStep(want, i === 0, parent && parent.kind === 'map') + ' under ' + where + ' in this read';
+      if (parent && parent.positional && STATE_IDENT.test(want)) {
+        why = 'this read could not name the fields of ' + where + ' (' + statePositionalText(parent) + '), so .' + want + ' cannot be found';
+      } else if (parent && stateUnread(parent)) {
+        why = where + ' could not be read: ' + stateUnreadText(parent);
+      }
+      say('the linked value ' + p + ' is not here: ' + why + (row ? '. Showing the nearest part of it that is.' : '.'));
+      break;
+    }
+    row = hit;
+    if (i < steps.length - 1) {
+      stateOpen(row);
+      rows = stateChildRows(row);
+    }
+  }
+  if (!row) return;
+  // Every ancestor open, including a type declarations toggle and any filter
+  // that would hide the row.
+  row.style.display = '';
+  for (let a = row.parentElement; a; a = a.parentElement) {
+    if (a.style && a.style.display === 'none') a.style.display = '';
+    if (a.classList && a.classList.contains('state-row') && a._state) stateOpen(a);
+  }
+  if (reads && ctx.notice.textContent.startsWith('reading')) say('');
+  stateMark(row);
+}
+
+function stateMark(row) {
+  document.querySelectorAll('.state-row-on').forEach(n => n.classList.remove('state-row-on'));
+  row.classList.add('state-row-on');
+  row.firstChild.scrollIntoView({ block: 'center' });
+}
+
+// --- Rows ---------------------------------------------------------------------
+
+// stateRow builds one row. A branch's children are built the first time it is
+// opened, not with the row: a realm decoded to 17,000 values would otherwise
+// paint 17,000 rows to show the reader a dozen, and everything a link or a
+// filter needs is on the node, not in the DOM.
 //
 // Every value goes through a text node. Realm state is entirely
-// attacker-controlled: the variable names, the type names and the values are
-// all chosen by whoever deployed the realm, so this is the most hostile input
-// the app renders. No innerHTML here, ever (AGENTS.md).
-function stateRow(n, depth, path) {
-  const kids = n.children || [];
-  const isBranch = kids.length > 0;
-  const open = depth < 1;
-
+// attacker-controlled: the variable names, the field names, the map keys, the
+// type names and the values are all chosen by whoever deployed the realm, so
+// this is the most hostile input the app renders. No innerHTML here, ever
+// (AGENTS.md).
+function stateRow(n, depth, ctx, p, parent) {
   const row = el('div', { className: 'state-row' });
+  row.setAttribute('data-state-path', p);
+  row._state = { node: n, path: p, depth, parent, ctx, built: false };
   row.style.paddingLeft = (depth * 14) + 'px';
 
+  const kids = n.children || [];
   const head = el('div', { className: 'state-head' });
-  head.title = stateTooltip(n);
-
-  if (isBranch) {
-    const tw = el('span', { className: 'state-twisty' }, open ? '▾' : '▸');
-    head.appendChild(tw);
+  head.title = stateTooltip(n, p);
+  const tw = el('span', { className: 'state-twisty' }, kids.length ? '▸' : ' ');
+  head.appendChild(tw);
+  if (kids.length) {
     head.style.cursor = 'pointer';
-    head.addEventListener('click', () => {
-      const showing = body.style.display !== 'none';
-      body.style.display = showing ? 'none' : '';
-      tw.textContent = showing ? '▸' : '▾';
+    head.addEventListener('click', (e) => {
+      // A link or a button inside the row is its own action.
+      if (e.target.closest('a, button, input')) return;
+      if (row._state.body && row._state.body.style.display !== 'none') stateClose(row);
+      else stateOpen(row);
     });
-  } else {
-    head.appendChild(el('span', { className: 'state-twisty' }, ' '));
   }
 
-  if (n.name) head.appendChild(el('span', { className: 'state-name' }, n.name));
+  const hole = !!n.subtree;
+  if (hole) {
+    // A subtree of a large map the read did not reach: its entries belong
+    // here, in key order, and how many there are is not known.
+    head.appendChild(el('span', { className: 'state-dim' }, 'entries not read'));
+  } else if (parent && parent.kind === 'map' && /^g1[a-z0-9]{38}$/.test(n.name || '')) {
+    // An address key is a link, the same as an address value.
+    const a = addrLink(n.name);
+    a.classList.add('state-name');
+    head.appendChild(a);
+  } else if (parent && parent.kind === 'map') {
+    // A key is shown as it is; only the empty string, which would otherwise
+    // be an invisible key, is spelled out.
+    head.appendChild(el('span', { className: 'state-name' }, n.name ? n.name : '""'));
+  } else if (n.name) {
+    head.appendChild(el('span', { className: 'state-name' }, n.name));
+  }
   if (n.type) head.appendChild(el('span', { className: 'state-type' }, n.type));
 
-  const val = stateValueEl(n, path);
+  const val = stateValueEl(n, ctx.realm);
   if (val) head.appendChild(val);
+  stateBadges(n).forEach(b => head.appendChild(b));
+  if (stateUnread(n)) head.appendChild(stateReadButton(ctx, row, n));
+  // A container holding several branches the read did not reach offers to
+  // read them all at once, which is one request and not one per click.
+  const readAll = el('button', {
+    className: 'state-read state-read-all', type: 'button',
+    onclick: (e) => { e.stopPropagation(); stateReadUnread(ctx, row); },
+  });
+  row._state.readAll = readAll;
+  stateCountUnread(row);
+  head.appendChild(readAll);
 
   // Size and the revision counter sit right-aligned, quietly: they are what
   // you scan a column of, not what you read a row for.
@@ -21351,16 +21576,241 @@ function stateRow(n, depth, path) {
       title: fmtBytes(n.size) + ' on chain, which is what the storage deposit was charged against',
     }, shortBytes(n.size)));
   }
-  if (meta.childNodes.length) head.appendChild(meta);
-  row.appendChild(head);
-
-  const body = el('div');
-  if (!open) body.style.display = 'none';
-  if (isBranch) {
-    kids.forEach(k => body.appendChild(stateRow(k, depth + 1, path)));
-    row.appendChild(body);
+  if (!hole) {
+    // The link affordance, the way the source tab's gutter links a line: a
+    // real href, so open-in-new-tab and copy-link-address work, and a click
+    // that puts the address in the URL bar and on the clipboard.
+    const link = el('a', {
+      className: 'state-link', href: stateValueURL(p),
+      title: 'link to this value: ' + p, 'aria-label': 'link to ' + p,
+    }, '#');
+    link.addEventListener('click', (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      urlSetParams({ tab: 'state', value: p });
+      stateMark(row);
+      const done = (ok) => {
+        link.textContent = ok ? '✓' : '#';
+        setTimeout(() => { link.textContent = '#'; }, 1200);
+      };
+      const href = stateValueURL(p);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(href).then(() => done(true), () => done(legacyCopy(href)));
+      } else {
+        done(legacyCopy(href));
+      }
+    });
+    meta.appendChild(link);
   }
+  head.appendChild(meta);
+  row.appendChild(head);
+  row._state.twisty = tw;
+  if (kids.length && depth < 1) stateOpen(row);
   return row;
+}
+
+// stateCountUnread keeps a container's "read N unread" button true to the
+// children it has now, which change every time one of them is read.
+function stateCountUnread(row) {
+  const b = row && row._state && row._state.readAll;
+  if (!b) return;
+  const unread = (row._state.node.children || []).filter(stateUnread).length;
+  b.style.display = unread > 1 ? '' : 'none';
+  b.textContent = 'read ' + fmtNum(unread) + ' unread';
+  b.title = 'read the ' + fmtNum(unread) + ' branches under here that this view did not reach, ' +
+    fmtNum(Math.min(unread, STATE_READ_MAX)) + ' at a time';
+}
+
+function stateChildRows(row) {
+  stateBuild(row);
+  return row._state.body ? Array.from(row._state.body.querySelectorAll(':scope > .state-row')) : [];
+}
+
+// stateBuild creates a branch's child rows on first need.
+function stateBuild(row) {
+  const s = row._state;
+  if (s.built) return;
+  s.built = true;
+  const kids = s.node.children || [];
+  if (!kids.length) return;
+  const body = el('div', { className: 'state-body' });
+  body.style.display = 'none';
+  // Lists, not records: a struct's fields are a fixed shape to read, not a
+  // collection to search, and a filter bar over Pool's 34 fields is noise.
+  if (kids.length >= STATE_FILTER_MIN && s.node.kind !== 'struct') body.appendChild(stateFilter(row, kids));
+  kids.forEach(k => body.appendChild(stateRow(k, s.depth + 1, s.ctx, stateChildPath(s, k), s.node)));
+  row.appendChild(body);
+  s.body = body;
+}
+
+function stateChildPath(s, k) {
+  return s.path + statePathStep(k.name, false, s.node.kind === 'map');
+}
+
+function stateOpen(row) {
+  const s = row._state;
+  if (!(s.node.children || []).length) return;
+  stateBuild(row);
+  s.body.style.display = '';
+  s.twisty.textContent = '▾';
+}
+
+function stateClose(row) {
+  const s = row._state;
+  if (!s.body) return;
+  s.body.style.display = 'none';
+  s.twisty.textContent = '▸';
+}
+
+// --- Long containers ----------------------------------------------------------
+//
+// Sixty pools, a hundred players or a hundred and fifty commits in a column is
+// a wall. A container that long gets a filter over its entries: it matches an
+// entry's name and value and the names and values a level or two below it, so
+// "speedrun" finds the pool by its Name field and "FR" every player whose Flag
+// it is. It only hides rows: a link into a filtered container clears the
+// filter on the way down (stateReveal opens every ancestor).
+const STATE_FILTER_MIN = 12;
+
+function stateFilter(row, kids) {
+  const bar = el('div', { className: 'state-filter' });
+  const input = el('input', {
+    type: 'search', className: 'state-filter-input',
+    placeholder: 'filter ' + fmtNum(kids.length) + ' entries',
+    'aria-label': 'filter the entries of ' + row._state.path,
+  });
+  const count = el('span', { className: 'state-dim' });
+  const collapse = el('button', { type: 'button', className: 'state-read', title: 'close every open entry under here' }, 'collapse all');
+  collapse.addEventListener('click', (e) => {
+    e.stopPropagation();
+    row._state.body.querySelectorAll('.state-row').forEach(r => { if (r._state) stateClose(r); });
+  });
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    let shown = 0;
+    const rows = row._state.body.querySelectorAll(':scope > .state-row');
+    rows.forEach(r => {
+      const hit = !q || stateHaystack(r._state.node, 2).includes(q);
+      r.style.display = hit ? '' : 'none';
+      if (hit) shown++;
+    });
+    count.textContent = q ? 'showing ' + fmtNum(shown) + ' of ' + fmtNum(rows.length) : '';
+  });
+  input.addEventListener('click', (e) => e.stopPropagation());
+  bar.appendChild(input);
+  bar.appendChild(count);
+  bar.appendChild(collapse);
+  return bar;
+}
+
+function stateHaystack(n, depth) {
+  let s = ((n.name || '') + ' ' + (n.value || '')).toLowerCase();
+  if (depth > 0) (n.children || []).forEach(c => { s += ' ' + stateHaystack(c, depth - 1); });
+  return s;
+}
+
+// --- Reading what the first read did not reach --------------------------------
+//
+// The realm-wide read has a deadline and a large realm does not fit in it:
+// measured 2026-10-27, bubblerumble6 needs ~2,450 stored objects and a read
+// from the public RPC reaches 100 to 400 of them in 12s. The ?full=1 read
+// re-reads all of it for 24s and is still partial. So the way forward is per
+// branch: each ref the read did not follow carries its ObjectID and the type
+// its parent declared, and /api/state reads just that (?object=), under the
+// same deadline. A branch that is still too big comes back partly read and
+// with its own unread refs, so every click gets further.
+const STATE_READ_MAX = 64;
+
+function stateUnread(n) {
+  return n.kind === 'ref' && !!n.object_id;
+}
+
+function stateHoles(n) {
+  return (n.children || []).some(c => c.subtree);
+}
+
+function stateReadButton(ctx, row, n) {
+  const btn = el('button', {
+    className: 'state-read', type: 'button',
+    title: 'read this branch on its own, without re-reading the realm',
+  }, n.unresolved === 'missing' ? 'retry' : 'read it');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    stateReadRows(ctx, [row]).then(r => { if (r) stateOpen(r); });
+  });
+  return btn;
+}
+
+// stateReadUnread reads every unread branch directly under a row.
+async function stateReadUnread(ctx, row) {
+  stateBuild(row);
+  const targets = stateChildRows(row).filter(r => stateUnread(r._state.node)).slice(0, STATE_READ_MAX);
+  if (targets.length) await stateReadRows(ctx, targets);
+  stateOpen(row);
+}
+
+// stateReadRows reads the objects behind some unread rows in one request and
+// puts what came back in their place, in the tree and on the page. It returns
+// the row that replaced the first one, or null when the read failed.
+async function stateReadRows(ctx, rows) {
+  const params = rows.map(r => 'object=' + encodeURIComponent(r._state.node.object_id) +
+    '&type=' + encodeURIComponent(r._state.node.type_id || '')).join('&');
+  rows.forEach(r => r.classList.add('state-reading'));
+  let d;
+  try {
+    d = await api('state/' + String(ctx.realm).replace('gno.land/', '') + '?' + params);
+  } catch (err) {
+    rows.forEach(r => {
+      r.classList.remove('state-reading');
+      const head = r.firstChild;
+      const old = head.querySelector('.state-read-err');
+      if (old) old.remove();
+      head.insertBefore(el('span', { className: 'state-read-err' }, 'could not read: ' + err.message), head.lastChild);
+    });
+    return null;
+  }
+  let first = null;
+  const parents = new Set();
+  rows.forEach((r, i) => {
+    const got = (d.nodes || [])[i];
+    if (!got) return;
+    const body = r.parentElement;
+    if (body && body.parentElement && body.parentElement._state) parents.add(body.parentElement);
+    const replaced = stateReplace(ctx, r, got);
+    if (i === 0) first = replaced;
+  });
+  parents.forEach(stateCountUnread);
+  return first;
+}
+
+// stateReplace swaps one unread row for what reading it returned, in the node
+// tree (so links and filters see it) and on the page. A hole in a large map
+// is replaced by the entries it held, in place, which keeps key order.
+function stateReplace(ctx, row, got) {
+  const s = row._state;
+  const old = s.node;
+  const siblings = s.parent ? s.parent.children : null;
+  const at = siblings ? siblings.indexOf(old) : -1;
+  const container = row.parentElement;
+
+  if (old.subtree && got.kind === 'map') {
+    const entries = got.children || [];
+    const prow = container.parentElement;
+    const base = prow && prow._state ? prow._state.path : '';
+    if (at >= 0) siblings.splice(at, 1, ...entries);
+    entries.forEach(k => container.insertBefore(
+      stateRow(k, s.depth, ctx, base + statePathStep(k.name, false, true), s.parent), row));
+    row.remove();
+    return null;
+  }
+  const next = Object.assign({}, got, { name: old.name });
+  if (!next.type) next.type = old.type;
+  if (!next.type_id) next.type_id = old.type_id;
+  if (at >= 0) siblings[at] = next;
+  const fresh = stateRow(next, s.depth, ctx, s.path, s.parent);
+  container.replaceChild(fresh, row);
+  return fresh;
 }
 
 // subtreeBytes totals the on-chain size of a node and everything under it.
@@ -21392,7 +21842,7 @@ function stateSizeMap(sized) {
   shown.forEach((x, i) => {
     const seg = el('div', {
       className: 'state-seg' + (x.rest ? ' state-seg-rest' : ''),
-      title: x.name + ' — ' + fmtBytes(x.bytes) + ' (' + Math.round(x.bytes / total * 100) + '% of this realm\u2019s state)',
+      title: x.name + ', ' + fmtBytes(x.bytes) + ' (' + Math.round(x.bytes / total * 100) + '% of this realm’s state)',
     });
     seg.style.width = (x.bytes / total * 100) + '%';
     seg.style.opacity = String(1 - (i / Math.max(shown.length, 8)) * 0.55);
@@ -21408,6 +21858,54 @@ function stateSizeMap(sized) {
   });
   wrap.appendChild(legend);
   return wrap;
+}
+
+// --- Saying what a row could not show -----------------------------------------
+//
+// The decoder records why something is missing (gnostate.Miss) instead of
+// filling it in. These turn the code into a sentence, at the row it concerns.
+
+function stateUnreadText(n) {
+  switch (n.unresolved) {
+    case 'missing': return 'the node returned nothing for this object';
+    case 'undecodable': return 'the node returned this object in a shape this page cannot decode';
+    default: return 'the read ended before reaching it';
+  }
+}
+
+function statePositionalText(n) {
+  const t = n.type_id || n.type || 'this type';
+  switch (n.positional) {
+    case 'unreached': return 'the read ended before the declaration of ' + t + ' was fetched';
+    case 'missing': return 'the node returned no declaration for ' + t;
+    case 'untyped': return 'the value carries no type to look its fields up by';
+    case 'mismatch': return 'the declaration of ' + t + ' has a different number of fields from the stored value, so naming them would mislabel some';
+    case 'keys': return 'the keys of this map are not scalars and have no text form, so entries are numbered in the order the map holds them';
+    case 'undecodable': return 'the entries arrived in a shape this page cannot decode';
+    default: return String(n.positional);
+  }
+}
+
+// stateBadges are the small marks after a value that say it is not the whole
+// story.
+function stateBadges(n) {
+  const out = [];
+  const badge = (text, title) => {
+    const b = el('span', { className: 'state-badge' }, text);
+    b.title = title;
+    out.push(b);
+  };
+  if (n.positional) {
+    const label = n.kind === 'map' ? (n.positional === 'undecodable' ? 'entries unreadable' : 'keys by position') : 'fields by position';
+    badge(label, statePositionalText(n));
+  }
+  if (n.lossy) {
+    badge('bytes lost',
+      fmtNum(n.lossy) + ' character' + (n.lossy === 1 ? ' is' : 's are') + ' U+FFFD, which is what the node’s JSON ' +
+      'writes in place of each byte that is not valid UTF-8. This is almost certainly binary data (a hash, a ' +
+      'commitment), and its original bytes are not in this answer. A string that really holds U+FFFD looks the same.');
+  }
+  return out;
 }
 
 // stateValueEl renders the right-hand side of a row, linking what can be
@@ -21433,11 +21931,17 @@ function stateValueEl(n, path) {
     return el('span', { className: 'state-value state-dim' }, label + '()');
   }
 
-  if (n.kind === 'ref' && n.object_id) {
-    return el('span', { className: 'state-ref' }, 'ref ' + n.object_id);
+  // A branch the read did not follow is not a value, and the bare ObjectID it
+  // used to show read like one. It says why it is here instead; the ObjectID
+  // is in the tooltip for whoever wants it.
+  if (n.kind === 'ref') {
+    return el('span', { className: 'state-ref' }, 'not read: ' + stateUnreadText(n));
   }
   if (n.kind === 'cycle') {
-    return el('span', { className: 'state-ref' }, 'cycle');
+    return el('span', { className: 'state-ref' }, 'cycle: refers back to a value above it');
+  }
+  if (n.kind === 'truncated') {
+    return el('span', { className: 'state-ref' }, 'not read: the read’s size limit stopped here');
   }
   if (n.kind === 'nil') {
     return el('span', { className: 'state-dim' }, 'nil');
@@ -21453,19 +21957,32 @@ function stateValueEl(n, path) {
   // A container's own value is its length. "len 0" is a fact about an empty
   // collection and reads better as the word: a reader scanning for what a
   // realm holds wants "empty" to disappear, not to be counted.
+  //
+  // It is only a fact when the container was read. A map whose entries could
+  // not be decoded says so through its badge and never claims to be empty.
   const lenMatch = /^len (\d+)$/.exec(v);
   if (lenMatch) {
-    return Number(lenMatch[1]) === 0
+    const count = Number(lenMatch[1]);
+    const unit = n.kind === 'map' ? ' entr' + (count === 1 ? 'y' : 'ies') : ' item' + (count === 1 ? '' : 's');
+    return count === 0
       ? el('span', { className: 'state-dim' }, 'empty')
-      : el('span', { className: 'state-value' }, lenMatch[1] + ' item' + (lenMatch[1] === '1' ? '' : 's'));
+      : el('span', { className: 'state-value' }, fmtNum(count) + unit);
   }
   const entriesMatch = /^0 entries/.test(v);
   if (entriesMatch) {
     return el('span', { className: 'state-dim' }, v.replace(/^0 entries/, 'empty'));
   }
 
-  if (/^g1[a-z0-9]{38}$/.test(v)) return addrLink(v);
-  if (/^gno\.land\/[rp]\//.test(v)) return realmPathEl(v);
+  if (n.kind === 'primitive' && /^g1[a-z0-9]{38}$/.test(v)) return addrLink(v);
+  if (n.kind === 'primitive' && /^gno\.land\/[rp]\//.test(v)) return realmPathEl(v);
+
+  // Binary held in a string: shown escaped, so a control byte is visible as
+  // \u000f rather than as nothing, and a lost byte stays a visible U+FFFD
+  // with a badge (stateBadges) that says what it is.
+  // eslint-disable-next-line no-control-regex
+  if (n.kind === 'primitive' && (n.lossy || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(v))) {
+    return el('span', { className: 'state-value state-escaped' }, JSON.stringify(v));
+  }
 
   return el('span', { className: 'state-value' }, v);
 }
@@ -21476,12 +21993,17 @@ function stateValueEl(n, path) {
 // own logical counter at the moment the object was last written, not a clock:
 // it orders changes within one realm and cannot be turned into a date, an age
 // or a number of updates. Labelling it "last modified" would invent a fact.
-function stateTooltip(n) {
+function stateTooltip(n, p) {
   const lines = [];
-  if (n.name) lines.push(n.name);
+  if (p) lines.push(p);
   if (n.type) lines.push('type: ' + n.type + (n.type_id && n.type_id !== n.type ? '  (' + n.type_id + ')' : ''));
   lines.push('kind: ' + n.kind);
   if (n.value && n.kind === 'primitive') lines.push('value: ' + n.value);
+  if (n.type_id === 'time.Time' && n.value) {
+    lines.push('instant: ' + n.value + ', read from the stored sec and nsec (seconds since year 1, UTC, as gno’s time package counts them)');
+  }
+  if (n.positional) lines.push('fields by position: ' + statePositionalText(n));
+  if (n.kind === 'ref') lines.push('not read: ' + stateUnreadText(n));
   if (n.object_id) lines.push('object: ' + n.object_id);
   if (n.owner_id) lines.push('owned by: ' + n.owner_id);
   if (n.size) lines.push('size: ' + fmtBytes(n.size));
@@ -22817,8 +23339,9 @@ function switchTab(name, tabEl) {
       renderDepGraph(_depGraph.imports, _depGraph.dependents, _depGraph.center);
     }
   }
-  // Update URL with tab param without triggering navigation
-  urlSetParam('tab', name === 'info' ? '' : name);
+  // Update URL with tab param without triggering navigation. A link to a
+  // state value means nothing on another tab, so it goes when the tab does.
+  urlSetParams(name === 'state' ? { tab: name } : { tab: name === 'info' ? '' : name, value: '' });
 }
 
 // --- Activity windows ------------------------------------------------------

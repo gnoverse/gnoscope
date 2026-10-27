@@ -16,6 +16,11 @@ type roundFetcher struct {
 	fetched   int
 	requested int // keys asked of the chain, whether or not they resolved
 	failAll   bool
+	// skipAfter, when positive, answers only the first skipAfter object
+	// requests and leaves the rest out of the map, the way a fetcher whose
+	// deadline passed mid-round does.
+	skipAfter int
+	skippedAt int // the first round that skipped a key
 }
 
 func (r *roundFetcher) Objects(oids []string) (map[string][]byte, error) {
@@ -27,8 +32,15 @@ func (r *roundFetcher) Objects(oids []string) (map[string][]byte, error) {
 	r.requested += len(oids)
 	out := map[string][]byte{}
 	for _, o := range oids {
-		if b, _ := r.f.Object(o); len(b) > 0 {
-			out[o] = b
+		if r.skipAfter > 0 && r.requested-len(oids)+len(out) >= r.skipAfter {
+			if r.skippedAt == 0 {
+				r.skippedAt = r.rounds
+			}
+			break
+		}
+		b, _ := r.f.Object(o)
+		out[o] = b // asked: nil when the node had nothing
+		if len(b) > 0 {
 			r.fetched++
 		}
 	}
@@ -38,9 +50,8 @@ func (r *roundFetcher) Objects(oids []string) (map[string][]byte, error) {
 func (r *roundFetcher) Types(tids []string) (map[string][]byte, error) {
 	out := map[string][]byte{}
 	for _, t := range tids {
-		if b, _ := r.f.Type(t); len(b) > 0 {
-			out[t] = b
-		}
+		b, _ := r.f.Type(t)
+		out[t] = b
 	}
 	return out, nil
 }
@@ -106,6 +117,53 @@ func TestPrefetchTerminatesOnMissingObjects(t *testing.T) {
 	n := find(tree.Nodes, "a")
 	if n == nil || n.Kind != KindRef {
 		t.Errorf("unresolvable ref rendered as %v, want a followable ref row", n)
+	}
+	if n != nil && n.Unresolved != MissNotFound {
+		t.Errorf("Unresolved = %q, want %q: the node was asked and had nothing", n.Unresolved, MissNotFound)
+	}
+}
+
+// TestPrefetchDeadlineLeavesUnreachedRefs is the other absence: a fetcher whose
+// deadline passed skips keys rather than answering them. Those refs must say
+// unreached, which is what lets the UI offer to read just that branch, and the
+// tree must be marked truncated, because it is.
+func TestPrefetchDeadlineLeavesUnreachedRefs(t *testing.T) {
+	f := load(t, "blog.json")
+	rf := &roundFetcher{f: f, skipAfter: 20}
+	tree, err := DecodePackageWith([]byte(f.Package), rf, Limits{MaxDepth: 64, MaxNodes: 200000, MaxFetch: 200000})
+	if err != nil {
+		t.Fatalf("DecodePackageWith: %v", err)
+	}
+	if !tree.Stats.Truncated {
+		t.Error("Stats.Truncated is not set on a read whose fetcher skipped keys")
+	}
+	if rf.skippedAt == 0 {
+		t.Fatal("the fixture never reached the skip point; raise its size or lower skipAfter")
+	}
+	if rf.rounds != rf.skippedAt {
+		t.Errorf("asked for round %d after skipping in round %d: a fetcher past its deadline should end the read", rf.rounds, rf.skippedAt)
+	}
+	var unreached, missing int
+	var walk func([]Node)
+	walk = func(ns []Node) {
+		for _, n := range ns {
+			if n.Kind == KindRef {
+				switch n.Unresolved {
+				case MissUnreached:
+					unreached++
+				case MissNotFound:
+					missing++
+				}
+			}
+			walk(n.Children)
+		}
+	}
+	walk(tree.Nodes)
+	if unreached == 0 {
+		t.Error("no ref is marked unreached after the fetcher skipped keys")
+	}
+	if missing != 0 {
+		t.Errorf("%d refs marked missing: a skipped key was never asked, so it is not missing", missing)
 	}
 }
 
