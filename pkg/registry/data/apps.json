@@ -111,6 +111,61 @@
       "description": "Free 3D mini-golf in the browser: every hole is data published on chain, anyone can add holes of their own, and the realm computes every shot, so nobody can fake a score. Playing needs no wallet; recording a round is a transaction, and only players with a gno.land name are ranked.",
       "url": "https://gnogolf.xyz",
       "checked": "2026-10-05"
+    },
+    {
+      "path": "gno.land/r/samcrew/connect4",
+      "name": "Connect 4",
+      "category": "games",
+      "description": "Staked Connect 4: both players put up the same GNOT and the winner takes the pot, minus the house fee each offer fixes when it is posted. Who moves first is drawn from a two-sided commit-reveal, so neither player can rig the start, and every move runs on a 90 second clock that anybody may settle once it expires. The board is playable in gnoweb, where each move is a transaction you sign; the arcade front-end plays it with a session key instead, which may only move, reveal, claim a timeout or cancel.",
+      "url": "https://memba.club/os/arcade/connect4?w=arcade.g.connect4",
+      "checked": "2026-10-30"
+    },
+    {
+      "path": "gno.land/r/samcrew/memba_feed_v1",
+      "name": "Memba Feed",
+      "category": "social",
+      "description": "The open social feed behind Memba: any wallet may post, with no membership gate and no funds held by the realm. An author soft-deletes their own posts and anyone may sweep the tombstones; open writing is kept usable by a per-address cooldown that is stricter for young accounts, a daily flag budget, and a flag threshold that hides a post automatically.",
+      "url": "https://memba.club"
+    },
+    {
+      "path": "gno.land/r/samcrew/memba_reviews_v2",
+      "name": "Memba Reviews",
+      "category": "social",
+      "description": "Ratings and reviews for anything the chain can name: a validator, a candidate, an address, or an org's realm path. One editable review per wallet per subject, plus likes, one level of replies and flags, and an author's net likes as a running reputation. The text is permanent on chain, and hiding a review only omits it from reads.",
+      "url": "https://memba.club"
+    },
+    {
+      "path": "gno.land/r/samcrew/memba_quest_attestation_v1",
+      "name": "Memba Quests",
+      "category": "social",
+      "description": "Turns a Memba quest completion and the XP it earned into a fact anyone can check. The backend signs a voucher with a key that never touches the chain, the player broadcasts it and pays the gas, and the realm verifies the signature, refuses a reused nonce and records the XP. The signature is the authority rather than the caller, so there is no hot server key that can write here.",
+      "url": "https://memba.club"
+    },
+    {
+      "path": "gno.land/r/nym-vikbez000/telescope",
+      "name": "vik telescope",
+      "category": "content",
+      "description": "A real smart telescope, driven from the chain and publishing what it sees. Its owner grants an address access for a number of days, an authorised caller queues a capture by right ascension, declination and exposure, and the controller that owns the hardware pops that queue and records the resulting image back on chain. The realm renders its own status, queue and capture history, and registers itself with NightSky, the telescope network at r/nym-vikbez000/nightsky/v1.",
+      "checked": "2026-10-30"
+    },
+    {
+      "path": "gno.land/r/nym-alexiscolin000/gnoradio/home/v2",
+      "name": "GnoRadio",
+      "category": "content",
+      "description": "Community radio on chain: everyone tuned to a station hears the same track at the same second, computed from block time, with no streaming server in the middle. There is a station per genre plus the newest tracks and the ones listeners picked, and listeners can program a track into a station's schedule. Artists publish their own tracks beside openly licensed and imported ones, and a tip lands in the artist's wallet in the same transaction. This realm is the site; the catalog and radio realms hold the rules and the data realm holds every record.",
+      "url": "https://gnoradio.xyz",
+      "covers": [
+        "gno.land/r/nym-alexiscolin000/gnoradio/*"
+      ],
+      "checked": "2026-10-30"
+    },
+    {
+      "path": "gno.land/r/nym-sixseven067/markets/v2",
+      "name": "67",
+      "category": "defi",
+      "description": "Prediction markets on sport and on world events, priced in GNOT: a share in the outcome that happens pays one GNOT, and every share is fully collateralised, so a market can never owe more than it holds. Prices come from the lister's own two-sided quotes, which expire rather than hang around stale. The result comes from the oracle each market pins, and a proposed outcome waits a day, in which a guardian may cancel it, before anyone can make it final; a market nobody resolves can be voided by anyone two months after trading ends, and every holder refunded.",
+      "url": "https://the67.click",
+      "checked": "2026-10-30"
     }
   ]
 }
