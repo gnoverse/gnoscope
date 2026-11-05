@@ -1981,6 +1981,7 @@ circle[data-hl].hl-active { stroke: #4ecdc4; stroke-width: 3; stroke-opacity: 1;
   <div class="view" id="view-nfts"><main><div id="nfts-content"></div></main></div>
   <div class="view" id="view-holders"><main><div id="holders-content"></div></main></div>
   <div class="view" id="view-asset-detail"><main><div id="asset-detail-content"></div></main></div>
+  <div class="view" id="view-nft-item"><main><div id="nft-item-content"></div></main></div>
   <div class="view" id="view-validators"><main><div class="section"><div class="section-title">validators</div>
     <div id="validators-content"></div></div></main></div>
   <div class="view" id="view-govdao"><main><div id="govdao-content"></div></main></div>
@@ -5309,6 +5310,7 @@ function route() {
   else if (path === '/defi') { view = 'defi'; }
   else if (path === '/coins') { view = 'coins'; }
   else if (path === '/nfts' || path === '/grc721') { view = 'nfts'; }
+  else if (path.startsWith('/nft/')) { view = 'nft-item'; navId = 'nfts'; data = path.slice(5); }
   else if (path === '/holders') { view = 'holders'; }
   // /tokens was this page's URL when it was one page carrying both the bank
   // figures and the GRC20 ledger. It answers as the GRC20 half, which is the
@@ -5478,6 +5480,7 @@ function route() {
     case 'nfts': loadNFTs(); break;
     case 'holders': loadHolders(); break;
     case 'asset-detail': loadAssetDetail(data); break;
+    case 'nft-item': loadNFTItem(data); break;
     case 'validators': loadValidators(); break;
     case 'govdao': loadGovDAO(); break;
     case 'govdao-proposals': loadGovDAOProposals(); break;
@@ -8973,6 +8976,7 @@ function renderAssetPage(container, data, token) {
   // label it supply.
   if (a.fungible && a.kind !== 'native') container.appendChild(assetSupplySection(data));
   container.appendChild(assetFlowSection(data));
+  if (a.kind === 'grc721' && a.pkg_path) container.appendChild(nftLookupSection(a));
   container.appendChild(assetHoldersSection(data));
   container.appendChild(assetTransfersSection(data));
 
@@ -8980,6 +8984,222 @@ function renderAssetPage(container, data, token) {
     || ['← all grc20 tokens', '/grc20'];
   container.appendChild(el('div', { style: { margin: '16px 0' } },
     link(back[0], () => navigate(back[1]))));
+}
+
+// --- /nft/<collection>/<id>: one item of a grc721 collection (#405) ----------
+//
+// The ledger knows a collection and a count, never which item moved, so this
+// page reads the item live from the realm that issued it. For a GnoSwap
+// position NFT the id is the whole object, and an id on its own says nothing
+// about a pool, a price band or whether the position earns anything; the
+// position card is what makes one readable.
+//
+// The collection is a realm path and is not encoded (its characters are held
+// to [a-z0-9_/] on the server); the id is the last segment.
+function nftItemPath(collection, id) { return '/nft/' + collection + '/' + encodeURIComponent(id); }
+
+let _nftGen = 0;
+
+async function loadNFTItem(rest) {
+  const container = clear('nft-item-content');
+  const gen = ++_nftGen;
+  const i = rest.lastIndexOf('/');
+  const collection = i > 0 ? rest.slice(0, i) : rest;
+  const id = i > 0 ? decodeURIComponent(rest.slice(i + 1)) : '';
+  skeletonBlock(container);
+  let data;
+  try {
+    data = await api('nft/' + collection + '?id=' + encodeURIComponent(id));
+  } catch (err) {
+    if (gen !== _nftGen) return;
+    failBlock(container, err, () => loadNFTItem(rest));
+    return;
+  }
+  if (gen !== _nftGen) return;
+  container.textContent = '';
+  renderNFTItem(container, data);
+}
+
+// nftImageEl draws the token URI when it is an image, and nothing otherwise.
+// An <img> runs no script whatever it points at, an svg data URI included,
+// which is why this is the only shape of on-chain URI drawn rather than linked.
+function nftImageEl(uri) {
+  if (!uri) return null;
+  const isImage = /^data:image\/(png|jpeg|gif|webp|svg\+xml)[;,]/i.test(uri)
+    || /^https:\/\/[^\s]+\.(png|jpe?g|gif|webp|svg)(\?[^\s]*)?$/i.test(uri);
+  if (!isImage) return null;
+  return el('img', {
+    src: uri, alt: '', referrerpolicy: 'no-referrer', loading: 'lazy',
+    style: { width: '135px', height: '135px', borderRadius: '8px', flex: 'none' },
+  });
+}
+
+// nftAmount is a base-unit amount, scaled to whole tokens only where the
+// registry curated the decimals; the raw figure stays beside it either way.
+function nftAmount(v, decimals, symbol) {
+  if (v === undefined || v === null || v === '') return el('span', { style: { color: 'var(--fg2)' } }, '—');
+  const n = typeof v === 'number' ? v : Number(v);
+  const span = el('span', {}, fmtNum(n) + ' ' + (decimals ? '' : 'base units of ') + symbol);
+  if (decimals) {
+    span.textContent = fmtCompact(n / Math.pow(10, decimals)) + ' ' + symbol;
+    span.title = fmtNum(n) + ' base units, from a curated decimals of ' + decimals;
+  }
+  return span;
+}
+
+// nftPriceBandEl draws the position's range as a bar with the pool's price
+// marked on it. Log scale, because ticks are: a band from 0.4 to 40 is
+// symmetric around 4 and drawn linearly it would put the price at the far left.
+function nftPriceBandEl(p) {
+  const scale = p.price_scale || 1;
+  const unit = p.price_scale ? p.token1_symbol + ' per ' + p.token0_symbol
+    : 'base units of ' + p.token1_symbol + ' per base unit of ' + p.token0_symbol;
+  const fmtP = (x) => (x * scale).toPrecision(5).replace(/\.?0+$/, '');
+  const wrap = el('div', { style: { maxWidth: '520px' } });
+  const bar = el('div', {
+    style: { position: 'relative', height: '10px', background: 'var(--bg3, rgba(127,127,127,.15))', borderRadius: '5px', margin: '22px 0 6px' },
+  });
+  const lo = p.tick_lower, hi = p.tick_upper;
+  const now = typeof p.tick_current === 'number' ? p.tick_current : null;
+  // The band is drawn inside a window wider than itself, so a price outside it
+  // has somewhere to sit that is visibly outside.
+  const minT = Math.min(lo, now === null ? lo : now), maxT = Math.max(hi, now === null ? hi : now);
+  const pad = Math.max(1, (maxT - minT) * 0.1);
+  const pos = (t) => ((t - (minT - pad)) / ((maxT + pad) - (minT - pad))) * 100;
+  bar.appendChild(el('div', {
+    style: {
+      position: 'absolute', left: pos(lo) + '%', width: (pos(hi) - pos(lo)) + '%', top: 0, bottom: 0,
+      background: p.in_range ? 'var(--green, #98c379)' : 'var(--amber, #ffd93d)', opacity: '.55', borderRadius: '5px',
+    },
+  }));
+  if (now !== null) {
+    const mark = el('div', {
+      style: { position: 'absolute', left: pos(now) + '%', top: '-18px', bottom: '-2px', borderLeft: '2px solid var(--fg)' },
+    });
+    mark.appendChild(el('span', {
+      style: { position: 'absolute', top: '-2px', left: '4px', fontSize: '11px', whiteSpace: 'nowrap' },
+    }, 'now ' + fmtP(p.price_current)));
+    bar.appendChild(mark);
+  }
+  wrap.appendChild(bar);
+  wrap.appendChild(el('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--fg2)' } },
+    el('span', {}, 'min ' + fmtP(p.price_lower)), el('span', {}, 'max ' + fmtP(p.price_upper))));
+  wrap.appendChild(el('div', { style: { fontSize: '11px', color: 'var(--fg2)', marginTop: '2px' } },
+    unit + ' · ticks ' + fmtNum(lo) + ' to ' + fmtNum(hi) + (now !== null ? ', pool at ' + fmtNum(now) : '')));
+  return wrap;
+}
+
+function renderNFTItem(container, d) {
+  const p = d.position;
+  const head = el('div', { style: { display: 'flex', gap: '16px', alignItems: 'flex-start', margin: '16px 0 8px', flexWrap: 'wrap' } });
+  const img = nftImageEl(d.token_uri);
+  if (img) head.appendChild(img);
+  const titles = el('div');
+  const titleRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
+    el('h2', { style: { margin: 0 } }, (d.symbol || d.collection.split('/').pop()) + ' #' + d.id));
+  titleRow.appendChild(assetKindBadge('grc721'));
+  if (p) {
+    if (p.burned) {
+      const b = el('span', { className: 'badge badge-fail' }, 'closed');
+      b.title = 'the liquidity was withdrawn and the position burned. the nft still exists as a record of it';
+      titleRow.appendChild(b);
+    } else if (p.in_range === true) {
+      const b = el('span', { className: 'badge badge-ok' }, 'in range');
+      b.title = 'the pool price sits inside this position’s band, so its liquidity is being traded against and it earns fees';
+      titleRow.appendChild(b);
+    } else if (p.in_range === false) {
+      const b = el('span', { className: 'badge badge-fail' }, 'out of range: earns nothing');
+      b.title = 'the pool price is outside this position’s band. its liquidity is all in one token and earns no fees until the price comes back';
+      titleRow.appendChild(b);
+    }
+    if (p.staked) {
+      const b = el('span', { className: 'badge' }, 'staked');
+      b.title = 'deposited in the gnoswap staker, which holds the nft while it earns GNS emissions';
+      titleRow.appendChild(b);
+    }
+  }
+  titles.appendChild(titleRow);
+  if (d.name) titles.appendChild(el('div', { style: { color: 'var(--fg2)', marginTop: '4px' } }, d.name));
+  titles.appendChild(el('div', { className: 'section-sub', style: { marginTop: '2px' } }, d.collection + ' · id ' + d.id));
+  head.appendChild(titles);
+  container.appendChild(head);
+
+  const tbl = el('table');
+  const row = (label, value, title) => {
+    const tr = el('tr', {}, el('td', { style: { color: 'var(--fg2)', width: '160px' }, title: title || '' }, label));
+    const td = el('td');
+    if (typeof value === 'string') td.textContent = value;
+    else if (value) td.appendChild(value);
+    tr.appendChild(td);
+    tbl.appendChild(tr);
+  };
+  if (d.owner) row(p && p.staked ? 'depositor' : 'owner', addrLink(d.owner, d.network));
+  if (d.custodian) {
+    row('held by', el('span', {}, addrLink(d.custodian, d.network),
+      el('span', { style: { color: 'var(--fg2)', marginLeft: '8px', fontSize: '11px' } },
+        'the staker realm, in custody: OwnerOf answers this address for every staked position')),
+    'who the collection itself says owns the item');
+  }
+  if (p) {
+    row('pool', el('span', {},
+      realmPathEl(p.token0.slice(0, p.token0.lastIndexOf('.')), d.network),
+      document.createTextNode(' / '),
+      realmPathEl(p.token1.slice(0, p.token1.lastIndexOf('.')), d.network),
+      el('span', { style: { color: 'var(--fg2)', marginLeft: '8px' } }, p.token0_symbol + ' / ' + p.token1_symbol)));
+    row('fee tier', (p.fee / 10000) + '%');
+    row('price band', nftPriceBandEl(p),
+      'the range this position provides liquidity over, against the pool’s current price');
+    row('liquidity', fmtNum(Number(p.liquidity || 0)), 'the position’s liquidity in pool units, which is what its share of fees is proportional to');
+    row(p.token0_symbol, nftAmount(p.amount0, p.token0_decimals, p.token0_symbol), 'what the position would return in this token if closed now');
+    row(p.token1_symbol, nftAmount(p.amount1, p.token1_decimals, p.token1_symbol), 'what the position would return in this token if closed now');
+    if (p.unclaimed_fee0 !== undefined || p.unclaimed_fee1 !== undefined) {
+      row('unclaimed fees', el('span', {},
+        nftAmount(p.unclaimed_fee0, p.token0_decimals, p.token0_symbol),
+        document.createTextNode(' + '),
+        nftAmount(p.unclaimed_fee1, p.token1_decimals, p.token1_symbol)));
+    }
+    if (p.staked && typeof p.claimable_reward === 'number') {
+      row('claimable reward', nftAmount(p.claimable_reward, 0, 'GNS'), 'GNS emissions the depositor could collect now');
+    }
+  }
+  if (d.token_uri && !img) {
+    row('token uri', /^https:\/\//i.test(d.token_uri)
+      ? el('a', { href: d.token_uri, target: '_blank', rel: 'noopener noreferrer' }, d.token_uri)
+      : d.token_uri.slice(0, 200));
+  }
+  row('read', el('span', {}, timeEl(d.read_at),
+    el('span', { style: { color: 'var(--fg2)', marginLeft: '8px', fontSize: '11px' } }, 'live from the realm, not from this index')));
+  const info = el('div', { className: 'section' });
+  info.appendChild(tbl);
+  container.appendChild(info);
+
+  const errs = Object.entries(d.errors || {});
+  if (errs.length) {
+    container.appendChild(el('div', { className: 'section-sub', style: { marginTop: '8px' } },
+      'not answered by the realm: ' + errs.map(([k, v]) => k + ' (' + v + ')').join(', ')));
+  }
+  container.appendChild(el('div', { style: { margin: '16px 0' } },
+    link('← the collection', () => navigate('/nfts'))));
+}
+
+// nftLookupSection is the way into an item from its collection's page. The
+// ledger cannot list items (no id rides the event), so an id is typed.
+function nftLookupSection(a) {
+  const sec = el('div', { className: 'section' });
+  sec.appendChild(el('div', { className: 'section-title' }, 'open one item'));
+  const input = el('input', { type: 'text', placeholder: 'token id, e.g. 1', inputmode: 'numeric', 'data-track': 'nft-lookup', style: { width: '160px' } });
+  const go = () => {
+    const id = input.value.trim();
+    if (id) navigate(nftItemPath(a.pkg_path, id));
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  sec.appendChild(el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+    input, el('button', { className: 'watch-btn', onclick: go }, 'open')));
+  sec.appendChild(el('div', { className: 'section-sub', style: { marginTop: '6px' } },
+    a.pkg_path === 'gno.land/r/gnoswap/gnft'
+      ? 'a gnoswap position: its pool, price band, whether it is in range, its amounts, fees and staking, read live from the chain.'
+      : 'its owner and token uri, read live from the realm.'));
+  return sec;
 }
 
 // assetFlowSection draws how much moved and how often, per day.
