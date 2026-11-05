@@ -577,10 +577,11 @@ export function seed(dbPath) {
       (network, tx_hash, event_index, pkg_path, block_height, block_time, kind, bytes_delta, fee)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const PRICE = 100;
-    const store = (network, txHash, path, h, bytes, kind) => {
-      storage.run(network, txHash, 0, path, h, blockTime(h), kind || (bytes > 0 ? 'deposit' : 'unlock'),
+    const store = (network, txHash, path, h, bytes, kind, at) => {
+      const t = at || blockTime(h);
+      storage.run(network, txHash, 0, path, h, t, kind || (bytes > 0 ? 'deposit' : 'unlock'),
         bytes, bytes * PRICE);
-      tx.run(network, txHash, h, blockTime(h), 90000, 150000, 800);
+      tx.run(network, txHash, h, t, 90000, 150000, 800);
     };
 
     // One realm holding most of the disk, deployed by its own creator: the
@@ -592,8 +593,14 @@ export function seed(dbPath) {
     // caller pays" branch, plus a negative delta.
     call.run('alpha', 'store-hub-grow', 4001, blockTime(4001), STORAGE_PAYER, HUB, 'Write');
     store('alpha', 'store-hub-grow', HUB, 4001, 6 * 1024 * 1024);
-    call.run('alpha', 'store-hub-free', 4002, blockTime(4002), STORAGE_PAYER, HUB, 'Clear');
-    store('alpha', 'store-hub-free', HUB, 4002, -2 * 1024 * 1024);
+    //
+    // Stamped relative to now and not to GENESIS_MS: the storage panel test
+    // needs this release outside 30d and inside 90d, and a genesis-relative
+    // stamp walks out of 90d on its own. It did on 2026-11-02, and every PR's
+    // e2e went red on a test none of them touched.
+    const hubFreeAt = recentTime(60 * 24 * 60);
+    call.run('alpha', 'store-hub-free', 4002, hubFreeAt, STORAGE_PAYER, HUB, 'Clear');
+    store('alpha', 'store-hub-free', HUB, 4002, -2 * 1024 * 1024, undefined, hubFreeAt);
 
     // A cross-realm write: the call targets one realm, another one grows. Only
     // the "any caller on this transaction" fallback can attribute it.
