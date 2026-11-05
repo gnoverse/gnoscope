@@ -985,14 +985,15 @@ test('the dice draws something else, says what it drew, and the link goes back t
     const view = await page.locator('.carto-pick button.on b').innerText();
     const said = await page.locator('#carto-said').innerText();
     expect(said).toContain(`The ${view}:`);
-    // Every variant the bar is showing is in the sentence, label and value, and
-    // so are the window, the metric and the scale. .carto-variant is the mark
+    // Every variant the bar is showing is in the sentence, by the text of its
+    // chip (OPTIONS' `says` clauses carry it verbatim), and so are the window,
+    // the metric and the scale. .carto-variant is the mark
     // controls() puts on the OPTIONS-backed groups; the bespoke controls beside
     // them (roads, compass, plan, tilt, light) are the reader's framing rather
     // than a rule about what is drawn, and the sentence says so by omission.
     const rules = await page.locator('#carto-bar .carto-variant').evaluateAll(gs =>
-      gs.map(g => [g.querySelector('span').innerText, g.querySelector('button.on').innerText]));
-    for (const [label, value] of rules) expect(said).toContain(`${label} ${value}`);
+      gs.map(g => g.querySelector('button.on').innerText));
+    for (const value of rules) expect(said).toContain(value);
     for (const g of ['window', 'size by', 'scale']) {
       const on = page.locator('#carto-bar .carto-grp', { has: page.locator(`span:text-is("${g}")`) })
         .locator('button.on');
@@ -1064,12 +1065,18 @@ test('the dice will not roll the one view this chain cannot draw', async ({ page
 test('the sentence under the bar follows the controls, not the roll that set them', async ({ page }) => {
   await open(page, 'honeycomb');
   await expect(page.locator('#carto-said')).toContainText('The honeycomb:');
-  await expect(page.locator('#carto-said')).toContainText('centre is land value');
+  await expect(page.locator('#carto-said')).toContainText('the highest land value in the middle');
 
   // A variant click goes through restate(), which rebuilds the bar and not the
   // page: the sentence has to come with it.
   await page.locator('#carto-bar button', { hasText: 'most called' }).click();
-  await expect(page.locator('#carto-said')).toContainText('centre is most called');
+  await expect(page.locator('#carto-said')).toContainText('the most called in the middle');
+  // A chip heading is not a clause: the bar says "colour" over "zone", the
+  // sentence has to say what is coloured by it.
+  await page.locator('#carto-bar .carto-variant', { has: page.locator('span:text-is("colour")') })
+    .locator('button', { hasText: 'zone' }).click();
+  await expect(page.locator('#carto-said')).toContainText('cells coloured by zone');
+  await expect(page.locator('#carto-said')).not.toContainText('colour zone');
   await page.locator('#carto-bar button', { hasText: 'storage' }).click();
   await expect(page.locator('#carto-said')).toContainText('Sized by storage');
   await page.locator('#carto-bar button', { hasText: 'linear' }).click();
@@ -1080,7 +1087,7 @@ test('the sentence under the bar follows the controls, not the roll that set the
   await page.locator('.carto-pick button', { hasText: 'hexes' }).click();
   await expect(page.locator('#carto-said')).toContainText('Every shape the same size');
   await page.locator('.carto-pick button', { hasText: 'old town' }).click();
-  await expect(page.locator('#carto-said')).toContainText('walls eras');
+  await expect(page.locator('#carto-said')).toContainText('walls between eras');
   await page.locator('#carto-bar button', { hasText: 'land value' }).click();
   await expect(page.locator('#carto-said')).not.toContainText('walls');
   await expect(page).not.toHaveURL(/oldtown\.walls/);

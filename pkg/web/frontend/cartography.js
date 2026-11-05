@@ -190,47 +190,78 @@ var WINDOWS = ['24h', '7d', '30d', '90d', 'all'];
 // `when` hides a control that has no effect under the current choice of
 // another, for the reason given at the metric picker: a control that is there
 // and moves nothing reads as a broken page.
+//
+// `says` is the same rule as a clause, for describe(): `label` is a chip
+// heading and only reads beside its chip, so "colour zone" is fine on the bar
+// and wrong in a sentence. A string is a head the chip's value follows; an
+// object is the whole clause per value, for the rows whose values are not one
+// part of speech. Every clause contains its chip's text verbatim, so a reader
+// can match the sentence to the bar, and the dice test holds that line.
 var OPTIONS = {
   metropolis: [
     { key: 'centre', label: 'downtown is', values: [['land value', 'lv'], ['most called', 'calls'],
-      ['most imported', 'imp'], ['oldest', 'old'], ['newest', 'new']] },
-    { key: 'paint', label: 'colour', values: [['zone', 'zone'], ['namespace', 'ns']] },
+      ['most imported', 'imp'], ['oldest', 'old'], ['newest', 'new']],
+      says: { lv: 'downtown where land value is highest', calls: 'the most called packages downtown',
+        imp: 'the most imported packages downtown', old: 'the oldest packages downtown',
+        new: 'the newest packages downtown' } },
+    { key: 'paint', label: 'colour', values: [['zone', 'zone'], ['namespace', 'ns']],
+      says: 'buildings coloured by' },
   ],
   boroughs: [
     { key: 'order', label: 'centre is', values: [['busiest', 'metric'], ['biggest', 'size'],
-      ['oldest', 'old'], ['most imported', 'imp']] },
+      ['oldest', 'old'], ['most imported', 'imp']],
+      says: { metric: 'the busiest borough in the centre', size: 'the biggest borough in the centre',
+        old: 'the oldest borough in the centre', imp: 'the most imported borough in the centre' } },
   ],
   hexes: [
     { key: 'place', label: 'neighbours by', values: [['imports', 'imp'], ['busiest out', 'calls'],
-      ['biggest out', 'size'], ['oldest out', 'old']] },
+      ['biggest out', 'size'], ['oldest out', 'old']],
+      says: { imp: 'neighbours placed by imports', calls: 'the board ranked busiest out from the middle',
+        size: 'the board ranked biggest out from the middle', old: 'the board ranked oldest out from the middle' } },
   ],
   frontier: [
-    { key: 'who', label: 'players are', values: [['deployers', 'creator'], ['namespaces', 'ns']] },
-    { key: 'order', label: 'settle', values: [['in deploy order', 'deploy'], ['biggest first', 'size']] },
+    { key: 'who', label: 'players are', values: [['deployers', 'creator'], ['namespaces', 'ns']],
+      says: { creator: 'deployers as the players', ns: 'namespaces as the players' } },
+    { key: 'order', label: 'settle', values: [['in deploy order', 'deploy'], ['biggest first', 'size']],
+      says: 'players settling' },
   ],
   oldtown: [
     { key: 'rings', label: 'rings by', values: [['deploy order', 'deploy'], ['land value', 'lv'],
-      ['calls', 'calls'], ['imported', 'imp']] },
+      ['calls', 'calls'], ['imported', 'imp']],
+      says: { deploy: 'rings laid in deploy order', lv: 'rings ranked by land value',
+        calls: 'rings ranked by calls', imp: 'rings ranked by how often imported' } },
     { key: 'walls', label: 'walls', values: [['eras', 'era'], ['weeks', 'week'], ['days', 'day']],
+      says: 'walls between',
       when: function () { return opt('rings') === 'deploy'; } },
   ],
   honeycomb: [
     { key: 'centre', label: 'centre is', values: [['land value', 'lv'], ['most called', 'calls'],
-      ['most imported', 'imp'], ['oldest', 'old'], ['by namespace', 'ns']] },
-    { key: 'paint', label: 'colour', values: [['namespace', 'ns'], ['zone', 'zone']] },
+      ['most imported', 'imp'], ['oldest', 'old'], ['by namespace', 'ns']],
+      says: { lv: 'the highest land value in the middle', calls: 'the most called in the middle',
+        imp: 'the most imported in the middle', old: 'the oldest in the middle',
+        ns: 'cells grouped by namespace around the biggest' } },
+    { key: 'paint', label: 'colour', values: [['namespace', 'ns'], ['zone', 'zone']],
+      says: 'cells coloured by' },
   ],
   skyline: [
     { key: 'shape', label: 'arrange', values: [['peak in the middle', 'peak'], ['by namespace', 'ns'],
-      ['in deploy order', 'deploy']] },
-    { key: 'paint', label: 'colour', values: [['namespace', 'ns'], ['zone', 'zone']] },
+      ['in deploy order', 'deploy']],
+      says: { peak: 'the tallest towers making a peak in the middle', ns: 'towers grouped by namespace',
+        deploy: 'towers in deploy order' } },
+    { key: 'paint', label: 'colour', values: [['namespace', 'ns'], ['zone', 'zone']],
+      says: 'towers coloured by' },
   ],
   lights: [
-    { key: 'roads', label: 'roads', values: [['faint', 'on'], ['off', 'off']] },
+    { key: 'roads', label: 'roads', values: [['faint', 'on'], ['off', 'off']],
+      says: { on: 'the roads drawn faint', off: 'the roads off' } },
   ],
   archipelago: [
     { key: 'centre', label: 'centre island', values: [['most imported', 'imp'], ['biggest', 'size'],
-      ['busiest', 'calls']] },
-    { key: 'routes', label: 'ferries', values: [['on', 'on'], ['off', 'off']] },
+      ['busiest', 'calls']],
+      says: { imp: 'the most imported island in the centre', size: 'the biggest island in the centre',
+        calls: 'the busiest island in the centre' } },
+    { key: 'routes', label: 'ferries', values: [['on', 'on'], ['off', 'off']],
+      says: 'the ferries' },
   ],
 };
 
@@ -917,7 +948,7 @@ function controls(root) {
 // goes and finds out for them, and the sentence under the bar says in words
 // what they are looking at.
 //
-// The sentence is assembled from VIEWS' blurbs and OPTIONS' labels, which are
+// The sentence is assembled from VIEWS' blurbs and OPTIONS' clauses, which are
 // the tables that already define every one of those drawings. That is the whole
 // point of building it this way: a fifteenth view, or a third variant on an
 // existing one, is described correctly the moment it is added, by whoever added
@@ -939,7 +970,9 @@ function describe() {
   var tail = [];
   (OPTIONS[S.view] || []).forEach(function (o) {
     if (o.when && !o.when()) return;         // a rule with no effect is not worth a clause
-    tail.push(o.label + ' ' + optLabel(o.key));
+    var chip = optLabel(o.key);
+    tail.push(typeof o.says === 'string' ? o.says + ' ' + chip
+      : (o.says && o.says[opt(o.key)]) || o.label + ' ' + chip);   // no clause yet: the chip heading
   });
   var sized = isSized(S.view);
   var sentence = 'The ' + v.name + ': ' + v.blurb + '. ' +
