@@ -22,7 +22,13 @@ type liveFeed struct {
 	running   bool
 	indexer   liveSource
 	networkID string
+	// lastBlock is the height the tip frame announces. pollStep is its only
+	// writer and takes mu to change it, because liveTip reads it from request
+	// goroutines. checkedAt is when a poll last heard the indexer's tip, so a
+	// reader of liveTip can tell a current height from one left behind when
+	// the last subscriber went away and the loop stopped.
 	lastBlock int
+	checkedAt time.Time
 	// recent is the tail of what was broadcast, replayed to each new client.
 	recent [][]byte
 }
@@ -260,6 +266,9 @@ func (f *liveFeed) pollStep(parent context.Context) {
 	if err != nil {
 		return
 	}
+	f.mu.Lock()
+	f.checkedAt = time.Now().UTC()
+	f.mu.Unlock()
 
 	switch {
 	case f.lastBlock == 0 || height < f.lastBlock:
@@ -267,14 +276,14 @@ func (f *liveFeed) pollStep(parent context.Context) {
 		// blocks already there are the ones the page painted on load. Before
 		// the reset arm existed a rewound chain wedged the feed for good, since
 		// height could never again exceed a lastBlock from the old chain.
-		f.lastBlock = height
+		f.setLastBlock(height)
 		// Whoever subscribed to this cold feed got no tip on replay, and the
 		// next block is up to a block time away. Tell them where the chain is
 		// now. On a reset this is also how a browser learns the height went
 		// backwards instead of holding the old chain's number.
 		f.broadcastTip(height)
 	case height-f.lastBlock > maxLiveCatchup:
-		f.lastBlock = height - maxLiveCatchup
+		f.setLastBlock(height - maxLiveCatchup)
 	}
 
 	if height <= f.lastBlock {
@@ -299,7 +308,7 @@ func (f *liveFeed) pollStep(parent context.Context) {
 		}
 		f.broadcast(liveEvent("block", f.networkID, "getBlocks", b))
 		if b.Height > f.lastBlock {
-			f.lastBlock = b.Height
+			f.setLastBlock(b.Height)
 		}
 	}
 
@@ -318,6 +327,33 @@ func (f *liveFeed) pollStep(parent context.Context) {
 			f.broadcast(liveEvent("tx", f.networkID, "getTransactions", tx))
 		}
 	}
+}
+
+func (f *liveFeed) setLastBlock(h int) {
+	f.mu.Lock()
+	f.lastBlock = h
+	f.mu.Unlock()
+}
+
+// liveTip is the height the /api/live tip frame carries for a network, and
+// when the feed last confirmed the indexer's tip. It is the one place the site
+// knows the chain head without asking for it, so anything else that wants to
+// say how far along the chain is reads it here rather than keeping a counter
+// of its own or putting an indexer round trip in front of a request.
+//
+// A zero height means the feed has not polled since the process started,
+// which is unknown and not block zero. The time matters as much as the
+// height: the loop only runs while somebody is subscribed, so the height can
+// be as old as the last subscriber's departure, and checkedAt is how a reader
+// sees that.
+func liveTip(network string) (height int, checkedAt time.Time) {
+	f, ok := liveFeeds[network]
+	if !ok {
+		return 0, time.Time{}
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.lastBlock, f.checkedAt
 }
 
 func LiveFeedHandler() http.HandlerFunc {

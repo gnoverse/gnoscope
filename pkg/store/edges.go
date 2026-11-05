@@ -210,24 +210,56 @@ type GraphEdge struct {
 type TransferGraph struct {
 	Nodes []GraphNode `json:"nodes"`
 	Edges []GraphEdge `json:"edges"`
+	// Dropped is how many addresses an ego expansion reached inside its hop
+	// radius and left out because topN was spent, and StoppedAt the hop after
+	// which it stopped walking for the same reason, zero when it reached its
+	// radius. Not serialised from here: the handler decides when the numbers
+	// are meaningful.
+	Dropped   int `json:"-"`
+	StoppedAt int `json:"-"`
 }
 
-func (d *DB) GetTransferGraph(network string, days, topN int, minValue int64, ego string) (TransferGraph, error) {
+const (
+	// DefaultTransferTopN and DefaultCallerTopN are what each graph answers
+	// with when the caller names no size, and MaxGraphTopN what neither will
+	// exceed. Exported so the handlers can echo the size actually used.
+	DefaultTransferTopN = 100
+	DefaultCallerTopN   = 200
+	MaxGraphTopN        = 1000
+
+	// MaxTransferHops bounds an ego neighbourhood's radius. Five hops on a
+	// chain where most addresses touch the faucet is already most of the
+	// chain; topN is what actually keeps the answer small.
+	MaxTransferHops = 5
+)
+
+// GraphTopN resolves a requested graph size to the one a query will use.
+func GraphTopN(topN, def int) int {
+	if topN <= 0 {
+		return def
+	}
+	if topN > MaxGraphTopN {
+		return MaxGraphTopN
+	}
+	return topN
+}
+
+// GetTransferGraph is the top-N transfer graph, or with ego set, the
+// neighbourhood of one address out to `hops` hops. hops <= 1 is the immediate
+// counterparties, which is what ego always meant before hops existed.
+func (d *DB) GetTransferGraph(network string, days, topN int, minValue int64, ego string, hops int) (TransferGraph, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
 	start := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
 
 	if ego != "" {
-		return d.egoTransferGraph(network, start, ego, minValue)
+		if hops <= 1 {
+			return d.egoTransferGraph(network, start, ego, minValue)
+		}
+		return d.egoTransferNeighbourhood(network, start, ego, minValue, hops, GraphTopN(topN, DefaultTransferTopN))
 	}
-	if topN <= 0 {
-		topN = 100
-	}
-	if topN > 1000 {
-		topN = 1000
-	}
-	return d.topNTransferGraph(network, start, topN, minValue)
+	return d.topNTransferGraph(network, start, GraphTopN(topN, DefaultTransferTopN), minValue)
 }
 
 func (d *DB) topNTransferGraph(network, start string, topN int, minValue int64) (TransferGraph, error) {
@@ -341,6 +373,152 @@ func (d *DB) egoTransferGraph(network, start, ego string, minValue int64) (Trans
 	return TransferGraph{Nodes: nodes, Edges: edges}, nil
 }
 
+// egoTransferNeighbourhood walks out from ego one hop at a time, and topN is
+// the node budget for the whole walk, not per hop.
+//
+// The first hop is never cut: it is exactly what ego answered before hops
+// existed, and an address with more counterparties than topN gets all of them,
+// as it always did. From the second hop on, each ring's new addresses are
+// ranked by the value linking them to what is already kept, the budget takes
+// the top of that list, and the rest are counted in Dropped.
+//
+// Once the budget is spent the walk stops and StoppedAt says after which hop.
+// It does not go on to count what lies further out: that count is the same
+// query as fetching it, over a frontier the budget no longer bounds, and the
+// budget exists to keep that query from running. So Dropped is what the walk
+// saw and cut, and StoppedAt is how a reader knows there was more past it.
+//
+// An edge is returned when both its ends are kept and at least one end is
+// nearer than the radius, the same rule hops=1 follows: the ego's edges, and
+// not the edges between two counterparties. So a node's volume is the sum of the
+// edges returned for it, as it is at one hop.
+//
+// Every ring is one query over the frontier, and a ring is only walked while
+// fewer than topN nodes are kept, so no frontier holds more than topN
+// addresses: at most MaxTransferHops queries of at most MaxGraphTopN
+// addresses each, whatever the chain looks like. That includes an ego whose
+// first hop alone is over budget: it gets its first hop and nothing more.
+// The rows a ring reads are the frontier's degree, which at worst is every
+// edge in the window: the same read topNTransferGraph makes to rank its nodes
+// on every overview request. A LIMIT on the ring would bound it further only
+// by cutting edges without counting them, which is what Dropped exists to
+// prevent.
+func (d *DB) egoTransferNeighbourhood(network, start, ego string, minValue int64, hops, budget int) (TransferGraph, error) {
+	if hops > MaxTransferHops {
+		hops = MaxTransferHops
+	}
+	kept := map[string]bool{ego: true}
+	dropped := 0
+	type pair struct{ from, to string }
+	seen := map[pair]bool{}
+	edges := []GraphEdge{}
+
+	stoppedAt := 0
+	frontier := []string{ego}
+	for hop := 1; hop <= hops && len(frontier) > 0; hop++ {
+		ring, err := d.transferEdgesTouching(network, start, frontier, minValue)
+		if err != nil {
+			return TransferGraph{}, err
+		}
+
+		link := map[string]int64{}
+		for _, e := range ring {
+			for _, end := range [2]string{e.From, e.To} {
+				if !kept[end] {
+					link[end] += e.Value
+				}
+			}
+		}
+		next := make([]string, 0, len(link))
+		for addr := range link {
+			next = append(next, addr)
+		}
+		sort.Slice(next, func(i, j int) bool {
+			if link[next[i]] != link[next[j]] {
+				return link[next[i]] > link[next[j]]
+			}
+			return next[i] < next[j]
+		})
+		// A ring past the first is only walked with room left, so room is at
+		// least one here, and a cut spends the budget and ends the walk below.
+		if room := budget - len(kept); hop > 1 && len(next) > room {
+			dropped += len(next) - room
+			next = next[:room]
+		}
+		for _, addr := range next {
+			kept[addr] = true
+		}
+
+		for _, e := range ring {
+			k := pair{e.From, e.To}
+			if kept[e.From] && kept[e.To] && !seen[k] {
+				seen[k] = true
+				edges = append(edges, e)
+			}
+		}
+		if hop < hops && len(kept) >= budget {
+			stoppedAt = hop
+			break
+		}
+		frontier = next
+	}
+
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Value != edges[j].Value {
+			return edges[i].Value > edges[j].Value
+		}
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		return edges[i].To < edges[j].To
+	})
+
+	vol := map[string]int64{}
+	for _, e := range edges {
+		vol[e.From] += e.Value
+		if e.To != e.From {
+			vol[e.To] += e.Value
+		}
+	}
+	others := make([]string, 0, len(kept))
+	for addr := range kept {
+		if addr != ego {
+			others = append(others, addr)
+		}
+	}
+	sort.Slice(others, func(i, j int) bool {
+		if vol[others[i]] != vol[others[j]] {
+			return vol[others[i]] > vol[others[j]]
+		}
+		return others[i] < others[j]
+	})
+	nodes := []GraphNode{{ID: ego, Volume: vol[ego]}}
+	for _, addr := range others {
+		nodes = append(nodes, GraphNode{ID: addr, Volume: vol[addr]})
+	}
+	return TransferGraph{Nodes: nodes, Edges: edges, Dropped: dropped, StoppedAt: stoppedAt}, nil
+}
+
+// transferEdgesTouching is every windowed edge with at least one end in addrs.
+func (d *DB) transferEdgesTouching(network, start string, addrs []string, minValue int64) ([]GraphEdge, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(addrs)), ",")
+	args := make([]any, 0, 3+2*len(addrs))
+	args = append(args, network, start)
+	for _, a := range addrs {
+		args = append(args, a)
+	}
+	for _, a := range addrs {
+		args = append(args, a)
+	}
+	args = append(args, minValue)
+	return scanTransferEdges(d.db.Query(fmt.Sprintf(`
+		SELECT from_address, to_address, SUM(total_value), SUM(tx_count)
+		FROM transfer_edges
+		WHERE network = ? AND day >= ? AND (from_address IN (%s) OR to_address IN (%s))
+		GROUP BY from_address, to_address
+		HAVING SUM(total_value) >= ?`, placeholders, placeholders), args...))
+}
+
 func scanTransferEdges(rows *sql.Rows, err error) ([]GraphEdge, error) {
 	if err != nil {
 		return nil, err
@@ -373,6 +551,9 @@ type CallerGraphEdge struct {
 type CallerGraph struct {
 	Nodes []CallerGraphNode `json:"nodes"`
 	Edges []CallerGraphEdge `json:"edges"`
+	// Dropped is how many neighbours an ego graph left out because topN was
+	// spent. Same reason as TransferGraph.Dropped for not serialising it.
+	Dropped int `json:"-"`
 }
 
 // GetCallerGraph is the address-to-realm graph over the last `days` days.
@@ -391,19 +572,8 @@ func (d *DB) GetCallerGraphUntil(network string, days int, until time.Time, topN
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	if topN <= 0 {
-		topN = 200
-	}
-	if topN > 1000 {
-		topN = 1000
-	}
-	end := until
-	if end.IsZero() {
-		end = time.Now()
-	}
-	end = end.UTC()
-	start := end.AddDate(0, 0, -days).Format("2006-01-02")
-	last := end.Format("2006-01-02")
+	topN = GraphTopN(topN, DefaultCallerTopN)
+	start, last := callerWindow(days, until)
 
 	callerRows, err := d.db.Query(`
 		SELECT caller, SUM(calls) FROM caller_edges WHERE network = ? AND day >= ? AND day <= ?
@@ -486,4 +656,83 @@ func (d *DB) GetCallerGraphUntil(network string, days int, until time.Time, topN
 		nodes = append(nodes, CallerGraphNode{ID: pkg, Type: "realm", Calls: realmCalls[pkg]})
 	}
 	return CallerGraph{Nodes: nodes, Edges: edges}, nil
+}
+
+// callerWindow is the [start, last] day range of a caller graph: `days` days
+// ending on until, or on today when until is zero.
+func callerWindow(days int, until time.Time) (string, string) {
+	end := until
+	if end.IsZero() {
+		end = time.Now()
+	}
+	end = end.UTC()
+	return end.AddDate(0, 0, -days).Format("2006-01-02"), end.Format("2006-01-02")
+}
+
+// GetCallerEgoGraph is one node of the caller graph and its direct
+// neighbours: the realms an address called, or the addresses that called a
+// realm. Which side ego is on is read from its shape, since a realm is a path
+// and an address never contains a slash.
+//
+// One hop only, and topN is the neighbour budget: a realm everybody calls has
+// thousands of callers, and the ones past the budget are counted in Dropped
+// rather than returned. The ego's own count is every call it made or took in
+// the window, dropped neighbours included, because that number is known
+// exactly and leaving part of it out would understate it for no reason.
+func (d *DB) GetCallerEgoGraph(network string, days int, until time.Time, ego string, topN, minCalls int) (CallerGraph, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	topN = GraphTopN(topN, DefaultCallerTopN)
+	start, last := callerWindow(days, until)
+
+	isRealm := strings.Contains(ego, "/")
+	col := "caller"
+	if isRealm {
+		col = "pkg_path"
+	}
+	rows, err := d.db.Query(`
+		SELECT caller, pkg_path, SUM(calls)
+		FROM caller_edges
+		WHERE network = ? AND day >= ? AND day <= ? AND `+col+` = ?
+		GROUP BY caller, pkg_path
+		HAVING SUM(calls) >= ?
+		ORDER BY SUM(calls) DESC, caller, pkg_path`, network, start, last, ego, minCalls)
+	if err != nil {
+		return CallerGraph{}, err
+	}
+	defer rows.Close()
+
+	edges := []CallerGraphEdge{}
+	total, dropped := 0, 0
+	for rows.Next() {
+		var e CallerGraphEdge
+		if err := rows.Scan(&e.Caller, &e.PkgPath, &e.Calls); err != nil {
+			return CallerGraph{}, err
+		}
+		total += e.Calls
+		if len(edges) < topN {
+			edges = append(edges, e)
+		} else {
+			dropped++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return CallerGraph{}, err
+	}
+
+	egoType, otherType := "caller", "realm"
+	if isRealm {
+		egoType, otherType = "realm", "caller"
+	}
+	// The ego is drawn even with no edges, as the transfer ego is.
+	nodes := []CallerGraphNode{{ID: ego, Type: egoType, Calls: total}}
+	for _, e := range edges {
+		other := e.PkgPath
+		if isRealm {
+			other = e.Caller
+		}
+		nodes = append(nodes, CallerGraphNode{ID: other, Type: otherType, Calls: e.Calls})
+	}
+	return CallerGraph{Nodes: nodes, Edges: edges, Dropped: dropped}, nil
 }
