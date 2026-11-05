@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -553,6 +554,17 @@ func collapseSuperseded(order []*AppCard) []*AppCard {
 			old.Previous = nil
 			into := survivor(newer)
 			into.Previous = append(into.Previous, old)
+			// A `covers` is about the app, not about one deploy of it, so it
+			// goes to the survivor as well. Left on the old card it stopped
+			// working the day a newer generation shipped: the covering card
+			// went into Previous and every realm it covered was a card again,
+			// with nothing on the page to say why. GnoSwap at a v2 router is
+			// one transaction away from that.
+			for _, pat := range old.Covers {
+				if !slices.Contains(into.Covers, pat) {
+					into.Covers = append(into.Covers, pat)
+				}
+			}
 		}
 	}
 	out := make([]*AppCard, 0, len(order))
@@ -606,7 +618,13 @@ func foldCovered(cards []*AppCard) []*AppCard {
 		if parent := parentOf[c.Path]; parent != nil {
 			part := *c
 			// Flat, like Previous: the reader wants "and the realms it is made
-			// of", not a tree.
+			// of", not a tree. A part's own older generations are the app's
+			// older generations, so they move up to the card rather than being
+			// dropped with the nesting. GnoRadio is the case: catalog and radio
+			// each have a v1 behind their v2, and a v1 nilled here was a live
+			// realm reachable from nowhere on the page, and missing from the
+			// card's folded_realms besides.
+			parent.Previous = append(parent.Previous, part.Previous...)
 			part.Parts, part.Previous = nil, nil
 			parent.Parts = append(parent.Parts, part)
 			continue

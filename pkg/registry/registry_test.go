@@ -171,6 +171,14 @@ func TestAppValidationRejects(t *testing.T) {
 	if err := validateApps([]App{mutate(func(a *App) { a.Checked = "2026-09-21" })}); err != nil {
 		t.Errorf("rejected a well-formed dated entry: %v", err)
 	}
+	// A `covers` belongs on the newest generation. The hub carries one forward
+	// when a newer deploy ships, but a file that writes it on a generation it
+	// also says is replaced is stating the fold on the wrong card.
+	covering := mutate(func(a *App) { a.Covers = []string{"gno.land/r/x/*"} })
+	newer := App{Path: "gno.land/r/x/y2", Supersedes: []string{"gno.land/r/x/y"}}
+	if err := validateApps([]App{covering, newer}); err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Errorf("covers on a superseded entry gave %v, want it rejected", err)
+	}
 }
 
 // Token keys mirror whatever the Transfer event emits, verbatim.
