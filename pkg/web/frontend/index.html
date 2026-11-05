@@ -577,6 +577,7 @@ html.embed .pagenav { display: none; }
        allowed to wrap and to take the remaining width. */
     .state-value { color: var(--blue, #268bd2); white-space: pre-wrap; word-break: break-word; min-width: 0; }
     .state-ref { color: var(--fg2); font-size: 11.5px; font-style: italic; }
+    .state-expand-bar { margin: 8px 0 4px; display: flex; align-items: center; }
     .state-size { color: var(--fg2); font-size: 11px; }
 
 .tab-content { display: none; }
@@ -21283,6 +21284,7 @@ function renderRealmState(into, d, onLoadFull, path) {
   // Depth 1 open, deeper closed. Opening everything on a realm with a few
   // hundred entries paints a wall; opening nothing hides the answer.
   nodes.forEach(n => tree.appendChild(stateRow(n, 0, path)));
+  into.appendChild(expandAllBar(tree));
   into.appendChild(tree);
 
   if (types.length) {
@@ -21312,10 +21314,36 @@ function renderRealmState(into, d, onLoadFull, path) {
 // attacker-controlled: the variable names, the type names and the values are
 // all chosen by whoever deployed the realm, so this is the most hostile input
 // the app renders. No innerHTML here, ever (AGENTS.md).
+// _stateObjects caches one expanded object per id, so collapsing and reopening
+// a branch costs nothing and expand-all never asks for the same object twice.
+// An object's contents cannot change under a reader: this view reads the
+// chain's current state, and a new state is a new page load.
+const _stateObjects = new Map();
+
+// expandRef fetches one stored object and returns its children.
+//
+// type_id is what this row already knew. A stored object arrives from the
+// chain with no type attached, so without it a struct's fields have no names
+// and an avl.Tree is unrecognizable: the opened branch would disagree with the
+// row it was opened from.
+async function expandRef(n) {
+  const key = n.object_id + '|' + (n.type_id || '');
+  if (_stateObjects.has(key)) return _stateObjects.get(key);
+  const p = api('state/object/' + n.object_id +
+    (n.type_id ? '?type_id=' + encodeURIComponent(n.type_id) : ''))
+    .then(res => (res && res.node && res.node.children) || []);
+  _stateObjects.set(key, p);
+  return p;
+}
+
 function stateRow(n, depth, path) {
   const kids = n.children || [];
-  const isBranch = kids.length > 0;
-  const open = depth < 1;
+  // A ref is a branch whose children have not been fetched yet. Rendering it
+  // as a leaf is what made this a dump rather than an explorer: the reader
+  // could see something was there and had no way to open it.
+  const isLazy = n.kind === 'ref' && !!n.object_id;
+  const isBranch = kids.length > 0 || isLazy;
+  const open = depth < 1 && !isLazy;
 
   const row = el('div', { className: 'state-row' });
   row.style.paddingLeft = (depth * 14) + 'px';
@@ -21331,6 +21359,7 @@ function stateRow(n, depth, path) {
       const showing = body.style.display !== 'none';
       body.style.display = showing ? 'none' : '';
       tw.textContent = showing ? '▸' : '▾';
+      if (!showing && isLazy) fill();
     });
   } else {
     head.appendChild(el('span', { className: 'state-twisty' }, ' '));
@@ -21360,6 +21389,38 @@ function stateRow(n, depth, path) {
     kids.forEach(k => body.appendChild(stateRow(k, depth + 1, path)));
     row.appendChild(body);
   }
+
+  // fill resolves a lazy branch once, and is idempotent: expand-all and a
+  // reader clicking the same row race each other by design.
+  let filled = false;
+  async function fill() {
+    if (filled || !isLazy) return;
+    filled = true;
+    const note = (text) => {
+      const d = el('div', { className: 'state-row state-dim' }, text);
+      d.style.paddingLeft = ((depth + 1) * 14) + 'px';
+      return d;
+    };
+    const wait = note('reading ' + n.object_id + '…');
+    body.appendChild(wait);
+    try {
+      const children = await expandRef(n);
+      body.removeChild(wait);
+      if (!children.length) {
+        body.appendChild(note('nothing stored under this reference'));
+        return;
+      }
+      children.forEach(k => body.appendChild(stateRow(k, depth + 1, path)));
+    } catch (err) {
+      // Named rather than swallowed: an object that cannot be read is a fact
+      // about the node, and a row that silently stays empty reads as "this
+      // reference points at nothing".
+      body.removeChild(wait);
+      filled = false;
+      body.appendChild(note('could not read ' + n.object_id + ': ' + err.message));
+    }
+  }
+  if (isLazy) row._stateFill = fill;
   return row;
 }
 
@@ -21410,6 +21471,73 @@ function stateSizeMap(sized) {
   return wrap;
 }
 
+// expandAllBar offers the whole graph, opened a layer at a time.
+//
+// The alternative this replaces is ?full=1: re-walk the entire realm on the
+// server with a wider budget and send one answer. That is all-or-nothing, and
+// on r/gnoland/blog it is ~1,250 objects and ~39s, which does not fit inside
+// the server's 30s WriteTimeout — so the realms that most need it are exactly
+// the ones it cannot serve.
+//
+// Here the reader gets rows as they land, can read the top of the tree while
+// the bottom is still arriving, and can stop. Nothing is wasted if they do:
+// every object opened stays open and cached.
+function expandAllBar(tree) {
+  const bar = el('div', { className: 'state-expand-bar' });
+  const btn = el('button', { className: 'watch-btn' }, 'expand all');
+  const status = el('span', { className: 'state-dim', style: { marginLeft: '8px', fontSize: '12px' } });
+  let stop = false;
+
+  btn.addEventListener('click', async () => {
+    if (btn.textContent === 'stop') { stop = true; return; }
+    stop = false;
+    btn.textContent = 'stop';
+    let opened = 0;
+
+    // Breadth first, because an object's children are themselves refs: each
+    // round opens what the last one revealed. Bounded, for the same reason
+    // stateFetchWorkers is: this runs against a public RPC nobody is paying
+    // for.
+    for (let round = 0; round < expandAllMaxRounds && !stop; round++) {
+      const pending = Array.from(tree.querySelectorAll('.state-row'))
+        .filter(r => r._stateFill).slice(0, expandAllMaxObjects - opened);
+      if (!pending.length) break;
+
+      for (let i = 0; i < pending.length && !stop; i += expandAllWidth) {
+        const batch = pending.slice(i, i + expandAllWidth);
+        await Promise.all(batch.map(r => {
+          const fill = r._stateFill;
+          r._stateFill = null; // claimed, so the next round does not re-open it
+          return fill().catch(() => {});
+        }));
+        opened += batch.length;
+        status.textContent = 'opened ' + fmtNum(opened) + ' object' + (opened === 1 ? '' : 's') + '…';
+      }
+      if (opened >= expandAllMaxObjects) {
+        status.textContent = 'opened ' + fmtNum(opened) + ', stopping here: expand a branch by hand to go deeper';
+        break;
+      }
+    }
+    btn.textContent = 'expand all';
+    if (!status.textContent.includes('stopping')) {
+      status.textContent = stop
+        ? 'stopped after ' + fmtNum(opened) + ' object' + (opened === 1 ? '' : 's')
+        : 'opened ' + fmtNum(opened) + ' object' + (opened === 1 ? '' : 's');
+    }
+  });
+
+  bar.appendChild(btn);
+  bar.appendChild(status);
+  return bar;
+}
+
+// How far expand-all will go on its own. A reader who wants more opens a
+// branch by hand, which is a deliberate act against somebody else's node
+// rather than a button that walks a realm without limit.
+const expandAllWidth = 8;
+const expandAllMaxRounds = 24;
+const expandAllMaxObjects = 2000;
+
 // stateValueEl renders the right-hand side of a row, linking what can be
 // linked.
 //
@@ -21434,7 +21562,13 @@ function stateValueEl(n, path) {
   }
 
   if (n.kind === 'ref' && n.object_id) {
-    return el('span', { className: 'state-ref' }, 'ref ' + n.object_id);
+    // The row's twisty does the opening; this only says what is behind it. It
+    // used to be the one address in realm state left as dead text while a g1
+    // address, a package path and a function declaration all became links.
+    return el('span', {
+      className: 'state-ref',
+      title: 'stored object ' + n.object_id + ', read when you expand this row',
+    }, n.object_id);
   }
   if (n.kind === 'cycle') {
     return el('span', { className: 'state-ref' }, 'cycle');
