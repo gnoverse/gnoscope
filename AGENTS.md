@@ -151,6 +151,16 @@ Break these and things go wrong in ways that are hard to see:
   it owns and clears its container, or `libBlock(into, 'echarts', draw)` when
   its caller appends siblings after it and the block has to hold its place. Do
   not add a fifth `<script src>`.
+- **The app is written inline and served as files.** The `<style
+  data-bundle>` and `<script data-bundle>` blocks in `index.html` are cut out at
+  startup and served from `/assets/` under their content hash, `immutable` for
+  a year (`pkg/web/assets.go`). Whatever sits outside those two blocks ships in
+  every document and is re-sent on every cold tab, so app code goes inside them;
+  the small inline script in `<head>` is outside on purpose, because it has to
+  run before first paint. A title is written twice, by `pageThing` in
+  `pkg/web/title.go` and `pageThing` in `index.html`, and
+  `e2e/tests/title.spec.js` fails if they disagree: a new route that deserves a
+  title needs both.
 - **Never commit the built binary.** `gnoscope` and `*.db` are gitignored.
 
 ## Conventions

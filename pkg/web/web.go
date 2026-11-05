@@ -14,6 +14,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/andybalholm/brotli"
 )
 
 //go:embed frontend
@@ -112,12 +115,12 @@ func validateFrameAncestors(v string) error {
 	return nil
 }
 
-// Handler serves the frontend: a static file when the path names one, and
-// index.html for everything else.
+// Handler serves the frontend: the hashed bundle under AssetPrefix, a static
+// file when the path names one, and the app's document for everything else.
 //
 // The fallback is what makes deep links work. The frontend is a single-page app
 // that routes on the URL, so /realm/gno.land/r/demo/boards has to arrive at the
-// same HTML as / — serving a 404 there would break every link anyone shares.
+// same app as /; serving a 404 there would break every link anyone shares.
 //
 // The static attempt comes first and is an existence check rather than a path
 // prefix: anything actually embedded is served as itself, and only genuine
@@ -128,14 +131,16 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 		return nil, fmt.Errorf("frontend fs: %w", err)
 	}
 	static := http.FileServer(http.FS(sub))
-	index, err := fs.ReadFile(frontendFS, "frontend/index.html")
+	split, err := bundle()
 	if err != nil {
-		return nil, fmt.Errorf("read index.html: %w", err)
+		return nil, err
 	}
+	index := split.doc
+	rail := railTitles(index)
 
-	// Before the ETag and the gzip below, so both describe what is actually
-	// sent: turning analytics on changes the body, and a reader holding the
-	// previous build's tag has to be told so.
+	// Before the ETag below, so it describes what is actually sent: turning
+	// analytics on changes the body, and a reader holding the previous build's
+	// tag has to be told so.
 	index, err = withAnalytics(index, opts.AnalyticsScript)
 	if err != nil {
 		return nil, err
@@ -145,29 +150,24 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 		return nil, err
 	}
 
-	// The app is a single 450 KB HTML file, and every deep link serves the
-	// whole thing again. It is also immutable for the life of the process — it
-	// is compiled in — so its ETag can be computed once here, and a reader
-	// navigating the site pays for it exactly once per deploy instead of once
-	// per cold tab. `no-cache` is deliberate rather than a max-age: it means
-	// "revalidate", so a new build is picked up on the next request, while an
-	// unchanged one costs a 304 with no body.
+	// The document is a template with one hole, where index.html says
+	// <title>gnoscope</title>: each request fills it with its own title and
+	// link preview. Near the top of <head> on purpose, since a crawler that
+	// reads only the first few KB of a page still finds its card.
+	const placeholder = "<title>gnoscope</title>\n"
+	hole := bytes.Index(index, []byte(placeholder))
+	if hole < 0 {
+		return nil, fmt.Errorf("no %q in index.html", strings.TrimSpace(placeholder))
+	}
+	index = append(index[:hole:hole], index[hole+len(placeholder):]...)
+
+	// The template never changes for the life of the process, and it names
+	// the bundle by hash, so this tag moves whenever a byte of the app does.
+	// `no-cache` is deliberate rather than a max-age: it means "revalidate",
+	// so a new build is picked up on the next request, while an unchanged one
+	// costs a 304 with no body.
 	sum := sha256.Sum256(index)
 	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
-
-	// And compressed once, at the best ratio rather than the fastest, for the
-	// same reason: this body never changes, so the cost is paid at startup and
-	// the saving is paid back on every cold page load. 466 KB -> ~110 KB, where
-	// the generic middleware's BestSpeed pass gets ~155 KB and spends a few
-	// milliseconds of CPU per request to do it.
-	indexGzip := gzipBytes(index)
-
-	// Split once, so a per-path document is two appends rather than a search
-	// through 450 KB on every crawler hit.
-	headEnd := bytes.Index(index, []byte("</head>"))
-	if headEnd < 0 {
-		return nil, fmt.Errorf("no </head> in index.html")
-	}
 
 	if err := validateFrameAncestors(opts.WidgetFrameAncestors); err != nil {
 		return nil, err
@@ -185,6 +185,10 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 		if widgetCSP != "" && r.URL.Path == WidgetPath {
 			w.Header().Set("Content-Security-Policy", widgetCSP)
 		}
+		if strings.HasPrefix(r.URL.Path, AssetPrefix) {
+			serveAsset(w, r, split.byPath)
+			return
+		}
 		if r.URL.Path != "/" {
 			if f, err := sub.Open(r.URL.Path[1:]); err == nil {
 				f.Close()
@@ -192,81 +196,70 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 				return
 			}
 		}
-		// A realm gets its own document, and only a realm. Every other route
-		// takes the precomputed one below, byte for byte as before.
-		//
-		// The cost is real and bounded to this branch: a per-path ETag and a
-		// BestSpeed gzip per request, instead of one of each for the life of
-		// the process. It buys the only thing a crawler can act on, since it
-		// does not run the SPA and the SPA is where every other answer lives.
-		if pkgPath := realmPathFromURL(r.URL.Path); pkgPath != "" {
-			serveRealmDocument(w, r, index, headEnd, etag, pkgPath, opts.Shots)
-			return
+		origin := requestOrigin(r)
+		title := titleOf(pageThing(r.URL.Path, rail))
+		var tags []byte
+		switch {
+		// A realm's preview is its capture, and a cartography link's is that
+		// drawing. Every other route gets a card with no picture.
+		case realmPathFromURL(r.URL.Path) != "":
+			tags = ogTags(origin, realmPathFromURL(r.URL.Path), r, opts.Shots)
+		case r.URL.Path == "/cartography":
+			v, _ := cartographyViewFromRequest(r)
+			tags = cartographyTags(origin, v, r)
+		default:
+			tags = pageTags(origin, title, r)
 		}
-		// A cartography link names a drawing, and its preview is that drawing.
-		if v, ok := cartographyViewFromRequest(r); ok {
-			serveTaggedDocument(w, r, index, headEnd, etag, cartographyTags(requestOrigin(r), v, networkParam(r)))
-			return
-		}
-
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "no-cache")
-		// Set, not Add: WithCompression has already added one on the way in,
-		// and two identical values in a Vary header is noise a shared cache
-		// has to parse.
-		w.Header().Set("Vary", "Accept-Encoding")
-		if matchesETag(r.Header.Get("If-None-Match"), etag) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		body := index
-		if indexGzip != nil && acceptsGzip(r) {
-			w.Header().Set("Content-Encoding", "gzip")
-			body = indexGzip
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		w.Write(body)
+		serveDocument(w, r, index, hole, etag, append([]byte(titleTag(title)), tags...))
 	}, nil
 }
 
-// serveRealmDocument writes index.html with a realm's link-preview block spliced
-// into its head.
+// serveDocument writes the template with a request's head block in its hole.
 //
-// The ETag is derived from the base one plus the injected block, so it moves
-// when the build moves *and* when the realm being described changes, and two
-// realms never share a tag.
-func serveRealmDocument(w http.ResponseWriter, r *http.Request, index []byte, headEnd int,
-	baseETag, pkgPath string, withImage bool,
+// The ETag is derived from the template's plus the block, so it moves when the
+// build moves *and* when the page being described changes, and two pages never
+// share a tag.
+//
+// Built and compressed per request. That used to be the expensive branch, kept
+// to realms alone, because the body was 1.6 MB; with the bundle served on its
+// own it is 44 KB. That is not free either: measured on lyra on 2026-11-05
+// (BenchmarkDocument, a shared 40-core box, so read the spread), brotli at
+// level 5 made it 3.0 to 4.3 ms of handler work per document and gzip 1.0 to
+// 1.9 ms, with 1.9 MB allocated per request, where the precompressed page this
+// replaced cost 0.3 ms. A good part of that was not compressing but building
+// an encoder, about 880 KB of brotli tables per call. Level 1 from a pool is
+// 0.6 to 0.8 ms for either encoding and 90 KB allocated, for about 2 KB of
+// ratio (13.2 KB against 10.9 KB at level 5), which a 44 KB page can afford.
+func serveDocument(w http.ResponseWriter, r *http.Request, index []byte, hole int,
+	baseETag string, block []byte,
 ) {
-	serveTaggedDocument(w, r, index, headEnd, baseETag, ogTags(requestOrigin(r), pkgPath, networkParam(r), withImage))
-}
-
-// serveTaggedDocument is index.html with a preview block spliced into its head,
-// for any route that has one: a realm, or a cartography view.
-func serveTaggedDocument(w http.ResponseWriter, r *http.Request, index []byte, headEnd int,
-	baseETag string, tags []byte,
-) {
-	sum := sha256.Sum256(append([]byte(baseETag), tags...))
+	sum := sha256.Sum256(append([]byte(baseETag), block...))
 	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "no-cache")
+	// Set, not Add: WithCompression has already added one on the way in,
+	// and two identical values in a Vary header is noise a shared cache
+	// has to parse.
 	w.Header().Set("Vary", "Accept-Encoding")
 	if matchesETag(r.Header.Get("If-None-Match"), etag) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 
-	body := make([]byte, 0, len(index)+len(tags))
-	body = append(body, index[:headEnd]...)
-	body = append(body, tags...)
-	body = append(body, index[headEnd:]...)
+	body := make([]byte, 0, len(index)+len(block))
+	body = append(body, index[:hole]...)
+	body = append(body, block...)
+	body = append(body, index[hole:]...)
 
-	// BestSpeed, not BestCompression: this body is built per request, so the
-	// seconds the startup pass can afford are milliseconds a reader waits.
-	if acceptsGzip(r) {
+	switch {
+	case acceptsEncoding(r, "br"):
+		if br := brotliBytesFast(body); br != nil {
+			w.Header().Set("Content-Encoding", "br")
+			body = br
+		}
+	case acceptsEncoding(r, "gzip"):
 		if gz := gzipBytesFast(body); gz != nil {
 			w.Header().Set("Content-Encoding", "gzip")
 			body = gz
@@ -276,14 +269,39 @@ func serveTaggedDocument(w http.ResponseWriter, r *http.Request, index []byte, h
 	w.Write(body)
 }
 
+// Encoders for the per-request document, reused rather than built per call.
+// See serveDocument for why: at 44 KB the setup cost more than the work.
+var (
+	docBrotli = sync.Pool{New: func() any { return brotli.NewWriterLevel(nil, 1) }}
+	docGzip   = sync.Pool{New: func() any {
+		zw, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
+		return zw
+	}}
+)
+
+// brotliBytesFast is brotliBytes at its cheapest level, from docBrotli, for
+// a body that is compressed once per request rather than once per process.
+func brotliBytesFast(b []byte) []byte {
+	zw := docBrotli.Get().(*brotli.Writer)
+	defer docBrotli.Put(zw)
+	var buf bytes.Buffer
+	zw.Reset(&buf)
+	if _, err := zw.Write(b); err != nil {
+		return nil
+	}
+	if err := zw.Close(); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
 // gzipBytesFast is gzipBytes at the other end of the ratio/latency trade, for
 // a body that is compressed once per request rather than once per process.
 func gzipBytesFast(b []byte) []byte {
+	zw := docGzip.Get().(*gzip.Writer)
+	defer docGzip.Put(zw)
 	var buf bytes.Buffer
-	zw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
-	if err != nil {
-		return nil
-	}
+	zw.Reset(&buf)
 	if _, err := zw.Write(b); err != nil {
 		return nil
 	}
@@ -312,25 +330,12 @@ func gzipBytes(b []byte) []byte {
 	return buf.Bytes()
 }
 
-// acceptsGzip reports whether the client advertised gzip. Same rule as the
-// httpapi middleware, duplicated rather than imported because pkg/web must not
-// depend on pkg/httpapi — it is the leaf the whole binary can serve without.
-func acceptsGzip(r *http.Request) bool {
-	for _, v := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
-		name, _, _ := strings.Cut(strings.TrimSpace(v), ";")
-		if strings.EqualFold(name, "gzip") {
-			return true
-		}
-	}
-	return false
-}
-
 // matchesETag reports whether an If-None-Match header names the given tag.
 //
 // The header is a comma-separated list and a revalidating browser may send the
 // tag back weakened (`W/"..."`) even though it was issued strong, so a plain
 // string comparison against the whole header misses the match and re-sends
-// 450 KB for nothing.
+// the body for nothing.
 func matchesETag(inm, etag string) bool {
 	if inm == "" {
 		return false
