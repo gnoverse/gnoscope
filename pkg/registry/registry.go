@@ -273,6 +273,16 @@ func loadApps() ([]App, error) {
 
 func validateApps(apps []App) error {
 	seen := map[string]bool{}
+	// What some other entry says it replaces, so a `covers` can be refused on
+	// it below. The hub carries a covers forward to the newest generation
+	// either way, but one written on a card this same file retires is the fold
+	// stated on the wrong card, and the next edit to it is a guess.
+	superseded := map[string]string{}
+	for _, a := range apps {
+		for _, old := range a.Supersedes {
+			superseded[old] = a.Path
+		}
+	}
 	for _, a := range apps {
 		// An entry that only asserts a relation is complete without a name, a
 		// category or a sentence.
@@ -328,6 +338,9 @@ func validateApps(apps []App) error {
 				return fmt.Errorf("apps.json: %s covers %q, which is not a gno.land path or prefix", a.Path, part)
 			case part == a.Path:
 				return fmt.Errorf("apps.json: %s covers itself", a.Path)
+			case superseded[a.Path] != "":
+				return fmt.Errorf("apps.json: %s covers %q but is superseded by %s; move covers to the newest generation",
+					a.Path, part, superseded[a.Path])
 			}
 		}
 		seen[a.Path] = true
