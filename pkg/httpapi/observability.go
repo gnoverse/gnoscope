@@ -43,6 +43,12 @@ func WithServerTiming(next http.Handler) http.Handler {
 		// three times in four, at 36.8s, 50.1s and 67.0s — reported by every
 		// client-side measurement as "slow" rather than as the error page it
 		// was. The one channel left for a request that dies is this one.
+		// A stream is long by design, not slow: /api/live held open for 30
+		// seconds is the feature working. Logging those drowns the requests
+		// this exists to catch, which is what the first deploy of it did.
+		if w.Header().Get("Content-Type") == "text/event-stream" {
+			return
+		}
 		if d := time.Since(start); d >= slowHandlerThreshold {
 			log.Printf("slow %s %s in %s%s", r.Method, r.URL.RequestURI(), d.Round(time.Millisecond), rec.header())
 		}

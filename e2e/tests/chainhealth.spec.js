@@ -153,8 +153,8 @@ test('with no node configured the page says it cannot ask', async ({ page }) => 
 // refunded. A "recovered" figure sourced from the wrong one would be a
 // constant zero that looked like a fact.
 //
-// The fixture releases 2 MiB on alpha (store-hub-free), at a timestamp 50-odd
-// days old, so this also pins the two halves of the empty state: the default
+// The fixture releases 2 MiB on alpha (store-hub-free), stamped 60 days
+// before now, so this also pins the two halves of the empty state: the default
 // 30d window has nothing to draw and has to say so, and 90d finds it.
 test('the storage panel reports bytes recovered, and says when it has none', async ({ page }) => {
   await page.goto('/sanity?network=alpha');

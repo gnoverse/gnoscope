@@ -154,3 +154,31 @@ func TestAFastHandlerLogsNothing(t *testing.T) {
 		t.Errorf("log = %q, want nothing", got)
 	}
 }
+
+// A stream is long by design, not slow. /api/live held open for thirty seconds
+// is the feature working, and logging those drowns the requests the slow log
+// exists to catch — which is what its first deploy did:
+//
+//	slow GET /api/live?network=mainnet in 30.001s
+//	slow GET /api/live?network=mainnet in 30s
+//	slow GET /api/live?network=mainnet in 17.867s
+func TestAStreamIsNotLoggedAsSlow(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	restore := slowHandlerThreshold
+	slowHandlerThreshold = 10 * time.Millisecond
+	t.Cleanup(func() { slowHandlerThreshold = restore })
+
+	h := WithServerTiming(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(": open\n\n"))
+		time.Sleep(20 * time.Millisecond)
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/live?network=mainnet", nil))
+
+	if got := buf.String(); got != "" {
+		t.Errorf("log = %q, want nothing for a stream", got)
+	}
+}
