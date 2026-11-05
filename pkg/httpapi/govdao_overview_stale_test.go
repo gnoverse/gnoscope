@@ -5,16 +5,18 @@ import (
 	"time"
 )
 
-// The three gov/dao memos a reader can end up waiting on must all serve stale.
+// The gov/dao memos a reader can end up waiting on must all serve stale.
 //
 // Each one was found the same way: a cold page measured against production,
 // then the same page measured again a minute later with a very different
 // number. A memo without a grace recomputes on whoever arrives after its TTL,
 // and on an explorer this quiet that is most readers.
 //
-// This is a table rather than three assertions so that a fourth expensive
-// gov/dao cache added later has an obvious place to be listed, and no place to
-// hide if it is not.
+// This is a table rather than one assertion each so that the next expensive
+// gov/dao cache has an obvious place to be listed, and no place to hide if it
+// is not. It has already earned that once: govDAOProposalCache was the fourth,
+// found when the overview stayed slow after the first three were fixed,
+// because it reads one of these per proposal.
 func TestTheExpensiveGovDAOCachesServeStale(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -24,6 +26,7 @@ func TestTheExpensiveGovDAOCachesServeStale(t *testing.T) {
 		{"the call list", govDAOTxCache.staleGrace, govDAOTxCache.ttl},
 		{"the creation index", creationsCache.staleGrace, creationsCache.ttl},
 		{"the overview", govDAOOverviewCache.staleGrace, govDAOOverviewCache.ttl},
+		{"one proposal's render", govDAOProposalCache.staleGrace, govDAOProposalCache.ttl},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.grace == 0 {

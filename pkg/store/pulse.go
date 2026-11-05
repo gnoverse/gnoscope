@@ -255,6 +255,30 @@ func (d *DB) GetPulse(p PulseParams) (*Pulse, error) {
 	return out, nil
 }
 
+// GetPulseCounts is GetPulse's two counter blocks without its six ranked lists.
+//
+// The lists are most of the cost and none of the answer for a caller that only
+// wants to know how much moved: the cockpit roll-up reads this, and drawing a
+// top-ten of anything is not something it does. HasPrev is false when
+// PrevSince is empty, exactly as on Pulse.
+func (d *DB) GetPulseCounts(p PulseParams) (window, prev PulseCounts, hasPrev bool, err error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	nf := d.networkFilter("network", p.Network)
+	if window, err = d.pulseCounts(nf, p.Since, ""); err != nil {
+		return
+	}
+	if p.PrevSince == "" {
+		return
+	}
+	if prev, err = d.pulseCounts(nf, p.PrevSince, p.Since); err != nil {
+		return
+	}
+	hasPrev = true
+	return
+}
+
 func (d *DB) pulseCounts(nf, since, until string) (PulseCounts, error) {
 	var c PulseCounts
 

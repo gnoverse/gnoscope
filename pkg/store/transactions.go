@@ -1102,3 +1102,31 @@ func (d *DB) TxMemo(network, txHash string) (string, error) {
 	}
 	return memo, err
 }
+
+// IndexedTip is the newest block this instance has stored for a network, which
+// is what "how far behind are we" is measured from.
+//
+// Not MaxBlockHeight: that one reads `transactions`, so a chain producing empty
+// blocks looks frozen at whichever height last carried one. Not
+// GetBlockCoverage either, which answers a different question (is the backfill
+// finished) and pays for a MIN as well. One row off the (network, height)
+// primary key.
+//
+// ok is false when nothing is stored for the network, which is a real state —
+// a fresh database, or an instance started with block storage switched off —
+// and not the same as height zero.
+func (d *DB) IndexedTip(network string) (height int, blockTime string, ok bool, err error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	err = d.db.QueryRow(
+		`SELECT height, time FROM blocks WHERE network = ? ORDER BY height DESC LIMIT 1`,
+		network).Scan(&height, &blockTime)
+	if err == sql.ErrNoRows {
+		return 0, "", false, nil
+	}
+	if err != nil {
+		return 0, "", false, err
+	}
+	return height, blockTime, true, nil
+}

@@ -70,6 +70,11 @@ var warmTargets = []string{
 	// Home.
 	"/api/analytics",
 	"/api/sanity/overview",
+	// The cockpit roll-up. On the list for a different reason from everything
+	// else here: it is not visited, it is polled by a wall display that nobody
+	// is standing in front of, and the point of warming it is that the display
+	// never shows a figure it had to wait for.
+	"/api/cockpit",
 	"/api/blocks",
 	"/api/bankstats",
 	"/api/labels",
@@ -90,6 +95,15 @@ var warmTargets = []string{
 	"/api/contracts/map",
 	"/api/storage/map",
 	"/api/allevents",
+	// Not a landing page, and here anyway: a price refresh is dozens of
+	// sequential-ish RPC reads and the quote cache's grace is five minutes, so
+	// on a quiet site the grace lapses between visitors and the next one pays.
+	// Measured against production on 2026-10-25, /api/holders took 18.9s on
+	// the first request after a silence and 0.83s on the three behind it, and
+	// the whole difference was the price leg. The address defi tab reads the
+	// same quotes. Warming it is what makes the visitor before the first
+	// visitor exist, which is this list's entire job.
+	"/api/prices",
 }
 
 // networkScopedWarmTargets are the subset worth warming per network as well as
@@ -100,6 +114,21 @@ var networkScopedWarmTargets = []string{
 	"/api/govdao/overview",
 	"/api/govdao",
 	"/api/govdao/voters",
+	// Per network as well as network-wide, because the two spellings are two
+	// different quote caches and only one of them is the one a reader needs.
+	//
+	// HandlePrices resolves its network with networkParam, which answers ""
+	// when the parameter is absent. HandleHolders uses singleNetwork, which
+	// falls back to networks[0], so it asks for "mainnet". Warming the bare
+	// path fills the "" key and leaves the one holders reads cold, which is
+	// what #507 did and why it did not work.
+	//
+	// Measured against production on 2026-10-26, after #507 was deployed: the
+	// first /api/holders after six minutes of quiet spent 36.8s to first byte
+	// and Caddy answered 502, then the next one took 1.5s with
+	// prices;dur=0.0. A reader meeting that endpoint after a lull was not
+	// getting a slow page, they were getting an error page.
+	"/api/prices",
 }
 
 // WarmPlan is the full list of request paths one pass issues.

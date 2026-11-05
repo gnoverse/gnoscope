@@ -570,7 +570,11 @@ const VARIANTS = {
 };
 const PER_PACKAGE = ['metropolis', 'boroughs', 'frontier', 'oldtown', 'honeycomb', 'skyline', 'archipelago', 'lights'];
 
+// One test, 46 page loads: it took 41s of the 60s default in CI on 2026-11-05
+// and timed out on a loaded lyra in five runs out of six. The budget scales
+// with the variant count, not with any one page being slow, so give it room.
 test('every variant of every view draws, and none drops a package', async ({ page }) => {
+  test.setTimeout(180_000);
   const w = watch(page);
   await open(page, 'metropolis');
   const all = Number((await page.locator('.carto-note').innerText()).match(/all (\d+) packages compete/)[1]);

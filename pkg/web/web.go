@@ -47,6 +47,69 @@ type Options struct {
 	// arrives after the first load has already picked a chain. Empty leaves
 	// the frontend's own fallback in place.
 	DefaultNetwork string
+
+	// WidgetFrameAncestors is the `frame-ancestors` source list sent with
+	// /widget, and only with /widget.
+	//
+	// Configurable at runtime, never compiled in. A widget exists to be put in
+	// somebody else's page, and the host cannot find out whether it is allowed
+	// to: cross-origin, a refused frame still fires `load`, so what a viewer
+	// gets is the browser's grey error page covering the tile that would have
+	// named the tool. moul/ghoblin#63 is the precedent — a compiled-in
+	// `frame-ancestors 'none'` cost that tool a dead tile on a wall for a week,
+	// and nobody could tell from either side why.
+	//
+	// The default is `*`, which is also why this is sent at all rather than
+	// left absent. An absent directive permits framing too, but it permits it
+	// by saying nothing, so anything upstream that adds an `X-Frame-Options`
+	// to every response — a reverse proxy's security-header block is the usual
+	// one — silently takes the widget with it. A present `frame-ancestors`
+	// overrides `X-Frame-Options` in every browser that implements both, so
+	// declaring permission is the only form of permission that survives a
+	// proxy nobody remembers configuring.
+	//
+	// Permissive is the right default on a read-only public explorer: every
+	// byte this page can show is already at gnoscope.com for anyone who asks.
+	// Narrowing it is a line in the deployment's own config, where the
+	// origins being named are the operator's business and not published to
+	// everyone who curls the site. Empty sends no header at all.
+	WidgetFrameAncestors string
+}
+
+// WidgetPath is the one route that carries a framing policy. A constant
+// because two places have to agree on it: the handler that sets the header and
+// the test that checks no other route gets one.
+const WidgetPath = "/widget"
+
+// DefaultWidgetFrameAncestors is what /widget sends when nothing says
+// otherwise. See Options.WidgetFrameAncestors for why it is permissive and why
+// it is sent rather than omitted.
+const DefaultWidgetFrameAncestors = "*"
+
+// validateFrameAncestors refuses a source list that could do more than name
+// origins.
+//
+// The value goes straight into a response header, so a newline is header
+// injection and a `;` or a `,` is a second directive or a second policy
+// smuggled into a field that should only ever hold hosts. Rejected at startup
+// rather than at request time, the same way withAnalytics refuses a bad script
+// URL: a misconfigured flag should stop the process, not ship a broken policy
+// to every reader.
+func validateFrameAncestors(v string) error {
+	if v == "" {
+		return nil
+	}
+	for _, r := range v {
+		switch {
+		case r == ';' || r == ',':
+			return fmt.Errorf("frame-ancestors %q: %q would start another directive or policy", v, r)
+		case r < 0x20 || r == 0x7f:
+			return fmt.Errorf("frame-ancestors %q: contains a control character", v)
+		case r > 0x7e:
+			return fmt.Errorf("frame-ancestors %q: contains a non-ASCII character", v)
+		}
+	}
+	return nil
 }
 
 // Handler serves the frontend: a static file when the path names one, and
@@ -106,7 +169,22 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 		return nil, fmt.Errorf("no </head> in index.html")
 	}
 
+	if err := validateFrameAncestors(opts.WidgetFrameAncestors); err != nil {
+		return nil, err
+	}
+	widgetCSP := ""
+	if opts.WidgetFrameAncestors != "" {
+		widgetCSP = "frame-ancestors " + opts.WidgetFrameAncestors
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
+		// One route, named, before anything else writes a header. Everything
+		// else here stays exactly as unframeable as whatever is in front of
+		// it: a policy that leaked onto every path would be a site-wide
+		// decision taken by a widget.
+		if widgetCSP != "" && r.URL.Path == WidgetPath {
+			w.Header().Set("Content-Security-Policy", widgetCSP)
+		}
 		if r.URL.Path != "/" {
 			if f, err := sub.Open(r.URL.Path[1:]); err == nil {
 				f.Close()

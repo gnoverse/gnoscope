@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -102,5 +105,80 @@ func TestServerTimingIsUnchangedWithoutPhases(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "app;dur=") {
 		t.Errorf("Server-Timing = %q, want it to lead with app", got)
+	}
+}
+
+// A handler that outlives WriteTimeout never calls WriteHeader, so its phases
+// never reach a header and the reader gets a 502 with nothing in it. The log is
+// the only channel left, and it has to carry the phases or it says no more than
+// the 502 did.
+func TestASlowHandlerLogsItsPhases(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	restore := slowHandlerThreshold
+	slowHandlerThreshold = 10 * time.Millisecond
+	t.Cleanup(func() { slowHandlerThreshold = restore })
+
+	h := WithServerTiming(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		time.Sleep(20 * time.Millisecond)
+		Phase(r.Context(), "positions", started)
+		// Deliberately never writes: that is what a handler killed by
+		// WriteTimeout looks like from in here.
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/holders?network=mainnet", nil))
+
+	got := buf.String()
+	for _, want := range []string{"slow GET", "/api/holders?network=mainnet", "positions;dur="} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log %q carries no %q", got, want)
+		}
+	}
+}
+
+// An ordinary request stays out of the log, or the log is noise and nobody
+// reads it when it matters.
+func TestAFastHandlerLogsNothing(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	h := WithServerTiming(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/version", nil))
+
+	if got := buf.String(); got != "" {
+		t.Errorf("log = %q, want nothing", got)
+	}
+}
+
+// A stream is long by design, not slow. /api/live held open for thirty seconds
+// is the feature working, and logging those drowns the requests the slow log
+// exists to catch — which is what its first deploy did:
+//
+//	slow GET /api/live?network=mainnet in 30.001s
+//	slow GET /api/live?network=mainnet in 30s
+//	slow GET /api/live?network=mainnet in 17.867s
+func TestAStreamIsNotLoggedAsSlow(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	restore := slowHandlerThreshold
+	slowHandlerThreshold = 10 * time.Millisecond
+	t.Cleanup(func() { slowHandlerThreshold = restore })
+
+	h := WithServerTiming(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(": open\n\n"))
+		time.Sleep(20 * time.Millisecond)
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/live?network=mainnet", nil))
+
+	if got := buf.String(); got != "" {
+		t.Errorf("log = %q, want nothing for a stream", got)
 	}
 }

@@ -548,7 +548,22 @@ func FetchGovDAOOverview(ctx context.Context, network, rpcURL string) GovDAOOver
 	})
 }
 
-var govDAOProposalCache = newMemo[GovDAOProposalDetail](govDAOCacheTTL, govDAOFailureTTL)
+// govDAOProposalStaleGrace is the fourth and last of the gov/dao caches to get
+// one, and it is the one a reader meets most directly.
+//
+// Each proposal is its own key with a 30s TTL and nothing behind it, so on a
+// site this quiet almost every lapse was met by a reader rather than by the
+// one before them. It compounds on the overview, which reads one of these per
+// proposal: measured against production on 2026-10-25, the first request after
+// a quiet spell took 42.4s and the three behind it took 56ms, 62ms and 80ms.
+//
+// Ten minutes, matching the other three. A proposal's render changes when
+// somebody votes, and a vote that takes ten minutes to appear on a page is a
+// trade worth making against a reader waiting 42 seconds for one that has not
+// happened.
+const govDAOProposalStaleGrace = 10 * time.Minute
+
+var govDAOProposalCache = newStaleWhileRevalidateMemo[GovDAOProposalDetail](govDAOCacheTTL, govDAOFailureTTL, govDAOProposalStaleGrace)
 
 // FetchGovDAOProposal returns one proposal's detail + votes, best-effort and
 // cached. Related on-chain activity (calls, msg runs) is looked up by the

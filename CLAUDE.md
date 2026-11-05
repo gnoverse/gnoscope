@@ -10,6 +10,7 @@ See [AGENTS.md](AGENTS.md) for repo conventions and invariants, and
 - [`docs/tags.md`](docs/tags.md): code tags, what each one is earned by, how they were calibrated, where they are stored and shown
 - [`docs/rename.md`](docs/rename.md) — what the 2026-09-28 rename moved, and what kept working
 - [`docs/badges.md`](docs/badges.md) — the embeddable `/_badges/*` SVG cards
+- [`docs/cockpit.md`](docs/cockpit.md) — `/cockpit` and `/widget`: the health roll-up, how it is graded, and who may frame it
 - [`docs/development.md`](docs/development.md) — local development
 - [`docs/deployment.md`](docs/deployment.md) — running it for real
 
