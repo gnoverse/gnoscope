@@ -1285,6 +1285,7 @@ incomparable.
 | `GET /api/assets/search` | `?q=` over the event key, for the search box. `limit` (default 8, at most 100). No balance reconstruction |
 | `GET /api/prices` | every asset priced in USD, with the route, the measured depth and the caveats. See below |
 | `GET /api/asset/{token...}` | one asset: top holders, recent transfers, a daily supply series, the other assets its realm issues, the issuing package, and the ledger window every figure was computed over. Single network |
+| `GET /api/nft/{collection...}?id=` | one GRC721 item, **read live from the realm** (nothing is stored: no id rides the Transfer event). `owner`, `name`, `symbol`, `token_uri`, and `errors` keyed by the getter that did not answer. `kind` is `gnoswap-position` for `gno.land/r/gnoswap/gnft`, which adds `position`: pool, fee tier, ticks and the 1.0001^tick price band with the pool's current price, liquidity, token amounts, unclaimed fees, `in_range`, `burned`, `staked` and `claimable_reward`. A staked position's `owner` is the depositor (`staker.GetDepositOwner`) and `custodian` is the staker realm `OwnerOf` answers. 404 when the item does not exist. Cached 30s. Single network |
 
 Built from the `Transfer` events the chain already emits, which were flowing
 through the sync walk unstored. An empty `from` is a mint and an empty `to` a
@@ -1795,6 +1796,10 @@ says nobody holds it. `TopHolders` and `AllPositions` count legs in minus legs o
 when the token's every transfer is amountless, and set `fungible: false` so the
 caller renders a count. Ties break on the address, because on an NFT collection
 they are the common case rather than the edge.
+
+Which item a holder has is not in the ledger at all, for the same reason. One
+item is read from the chain instead, by `GET /api/nft/{collection}?id=` and the
+`/nft/<collection>/<id>` page.
 
 ### Holders
 

@@ -1159,6 +1159,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/holders", a.HandleHolders)
 	mux.HandleFunc("GET /api/assets/activity", a.HandleAssetActivity)
 	mux.HandleFunc("GET /api/asset/{token...}", a.HandleAsset)
+	mux.HandleFunc("GET /api/nft/{collection...}", a.HandleNFT)
 	mux.HandleFunc("GET /api/contracts/map", a.HandleContractsMap)
 	mux.HandleFunc("GET /api/contracts/edges", a.HandleContractsEdges)
 	mux.HandleFunc("GET /api/shot", a.HandleShot)
