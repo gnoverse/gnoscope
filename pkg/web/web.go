@@ -14,6 +14,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/andybalholm/brotli"
 )
 
 //go:embed frontend
@@ -219,8 +222,14 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 //
 // Built and compressed per request. That used to be the expensive branch, kept
 // to realms alone, because the body was 1.6 MB; with the bundle served on its
-// own it is about 40 KB, and brotli at a middle level does it in about a
-// millisecond.
+// own it is 44 KB. That is not free either: measured on lyra on 2026-11-05
+// (BenchmarkDocument, a shared 40-core box, so read the spread), brotli at
+// level 5 made it 3.0 to 4.3 ms of handler work per document and gzip 1.0 to
+// 1.9 ms, with 1.9 MB allocated per request, where the precompressed page this
+// replaced cost 0.3 ms. A good part of that was not compressing but building
+// an encoder, about 880 KB of brotli tables per call. Level 1 from a pool is
+// 0.6 to 0.8 ms for either encoding and 90 KB allocated, for about 2 KB of
+// ratio (13.2 KB against 10.9 KB at level 5), which a 44 KB page can afford.
 func serveDocument(w http.ResponseWriter, r *http.Request, index []byte, hole int,
 	baseETag string, block []byte,
 ) {
@@ -246,7 +255,7 @@ func serveDocument(w http.ResponseWriter, r *http.Request, index []byte, hole in
 
 	switch {
 	case acceptsEncoding(r, "br"):
-		if br := brotliBytes(body, 5); br != nil {
+		if br := brotliBytesFast(body); br != nil {
 			w.Header().Set("Content-Encoding", "br")
 			body = br
 		}
@@ -260,14 +269,39 @@ func serveDocument(w http.ResponseWriter, r *http.Request, index []byte, hole in
 	w.Write(body)
 }
 
+// Encoders for the per-request document, reused rather than built per call.
+// See serveDocument for why: at 44 KB the setup cost more than the work.
+var (
+	docBrotli = sync.Pool{New: func() any { return brotli.NewWriterLevel(nil, 1) }}
+	docGzip   = sync.Pool{New: func() any {
+		zw, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
+		return zw
+	}}
+)
+
+// brotliBytesFast is brotliBytes at its cheapest level, from docBrotli, for
+// a body that is compressed once per request rather than once per process.
+func brotliBytesFast(b []byte) []byte {
+	zw := docBrotli.Get().(*brotli.Writer)
+	defer docBrotli.Put(zw)
+	var buf bytes.Buffer
+	zw.Reset(&buf)
+	if _, err := zw.Write(b); err != nil {
+		return nil
+	}
+	if err := zw.Close(); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
 // gzipBytesFast is gzipBytes at the other end of the ratio/latency trade, for
 // a body that is compressed once per request rather than once per process.
 func gzipBytesFast(b []byte) []byte {
+	zw := docGzip.Get().(*gzip.Writer)
+	defer docGzip.Put(zw)
 	var buf bytes.Buffer
-	zw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
-	if err != nil {
-		return nil
-	}
+	zw.Reset(&buf)
 	if _, err := zw.Write(b); err != nil {
 		return nil
 	}

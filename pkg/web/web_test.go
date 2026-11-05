@@ -904,3 +904,32 @@ func TestRenameNoticeExpires(t *testing.T) {
 			until.Format("2006-01-02"), latest.Format("2006-01-02"))
 	}
 }
+
+// BenchmarkDocument is the per-request cost of the app document, the number
+// serveDocument's comment quotes. Through httptest, so it includes copying
+// the body into a recorder.
+func BenchmarkDocument(b *testing.B) {
+	h, err := Handler(Options{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, tc := range []struct{ name, path, ae string }{
+		{"page/br", "/packages", "br, gzip"},
+		{"page/gzip", "/packages", "gzip"},
+		{"page/identity", "/packages", ""},
+		{"realm/br", "/realm/gno.land/r/demo/boards", "br, gzip"},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				r := httptest.NewRequest("GET", tc.path, nil)
+				r.Header.Set("Accept-Encoding", tc.ae)
+				w := httptest.NewRecorder()
+				h(w, r)
+				if w.Code != 200 {
+					b.Fatal(w.Code)
+				}
+			}
+		})
+	}
+}
