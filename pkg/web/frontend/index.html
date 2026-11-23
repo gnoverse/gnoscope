@@ -11470,7 +11470,7 @@ async function loadIndexerBudget(body) {
   } else {
     const ct = el('table');
     const chr = el('tr');
-    ['pool', 'hit rate', 'hits', 'misses', 'entries', 'held', 'evicted', 'expired', 'purges']
+    ['pool', 'hits / lookups', 'hits', 'misses', 'entries', 'held', 'evicted', 'expired', 'purges']
       .forEach(h => chr.appendChild(el('th', {}, h)));
     ct.appendChild(el('thead', {}, chr));
     const ctb = el('tbody');
@@ -11491,7 +11491,10 @@ async function loadIndexerBudget(body) {
     cacheBox.appendChild(ct);
   }
   cacheBox.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px', marginTop: '4px', whiteSpace: 'normal', lineHeight: '1.5' } },
-    data.cache_note || ''));
+    'the rate in this table is hits over lookups, and a lookup happens before the breaker is '
+    + 'consulted, so a miss during a stand-down is one that could never have been a request. the '
+    + '"cached" column above is the one that says what share of outbound demand the cache removed. '
+    + (data.cache_note || '')));
   body.appendChild(cacheBox);
 
   const b = data.bounds || {};

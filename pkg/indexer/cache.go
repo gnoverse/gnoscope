@@ -123,7 +123,7 @@ func countBlocks(data json.RawMessage) int {
 //
 // Keyed by body and not by (endpoint, body), unlike the singleflight key one
 // layer down. The endpoints of one pool are interchangeable members proven to
-// serve the same chain — selectEndpoint excludes any that disagrees — so a
+// serve the same chain (selectEndpoint excludes any that disagrees), so a
 // finalised block fetched from one is the same bytes from another, and leaving
 // the URL out means a failover does not re-pay for history it already has.
 // Queries that are pinned to an endpoint for its schema carry different field

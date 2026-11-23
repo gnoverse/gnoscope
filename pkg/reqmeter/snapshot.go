@@ -199,6 +199,15 @@ type CacheStats struct {
 	MaxEntries int   `json:"max_entries"`
 	MaxBytes   int64 `json:"max_bytes"`
 
+	// Hits and Misses count *lookups*, which is not the same denominator as
+	// the budget. A lookup happens before the circuit breaker is consulted, on
+	// purpose (an answer that cannot change is still true during a blackout),
+	// so a miss during a stand-down is a miss that could never have become a
+	// request. Measured on a rate-limited catch-up run: 40,108 lookups behind
+	// 11,485 requests that actually reached the meter. HitPercent is therefore
+	// the cache's own hit rate over everything it was asked, and
+	// GroupUsage.ServedPercent is the one that says what share of *outbound
+	// demand* the cache removed. Read the second for the budget.
 	Hits   int64 `json:"hits"`
 	Misses int64 `json:"misses"`
 	Stores int64 `json:"stores"`
@@ -213,6 +222,7 @@ type CacheStats struct {
 	Purges    int64  `json:"purges"`
 	LastPurge string `json:"last_purge,omitempty"`
 
+	// HitPercent is Hits over lookups. See the note on Hits.
 	HitPercent float64 `json:"hit_percent"`
 }
 

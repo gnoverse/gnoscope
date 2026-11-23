@@ -1260,7 +1260,16 @@ outsider writes.
 `caches` in the response is what the real cache did: `hits`, `misses`,
 `entries`, `bytes`, `evictions`, `expired`, `purges`, and the bounds each of
 those is measured against. `served` and `served_percent` on every group are the
-same saving attributed to the query that earned it. **An empty `caches` list on
+same saving attributed to the query that earned it.
+
+**The two rates have different denominators, and the second is the one about the
+budget.** `hit_percent` under `caches` is hits over *lookups*, and a lookup
+happens before the circuit breaker is consulted, on purpose: an answer that
+cannot change is still true during a blackout. So a miss during a stand-down is
+a miss that could never have become a request. Measured on a rate-limited
+catch-up run, 40,108 lookups sat behind 11,485 requests that reached the meter.
+`served_percent` on a group is hits over *demand that would otherwise have gone
+to the wire*, which is what the ceiling counts. **An empty `caches` list on
 an instance that is making requests is a wiring fault, not a hit rate of zero**,
 and `cache_note` and `summary` both say so in words rather than leaving a reader
 to notice.
