@@ -50,6 +50,13 @@ type Snapshot struct {
 
 	Endpoints []EndpointUsage `json:"endpoints"`
 
+	// Caches is what the response caches actually did, beside the simulation
+	// of the cache that did not exist. An empty list on a running instance
+	// means no cache is registered, which is a wiring fault and not a hit rate
+	// of zero; CacheNote says so in words.
+	Caches    []CacheStats `json:"caches"`
+	CacheNote string       `json:"cache_note"`
+
 	// TTLSeconds names the cache lifetimes the would-have-hit figures answer
 	// for, in the order they appear in every Hits array below.
 	TTLSeconds []int `json:"ttl_seconds"`
@@ -77,16 +84,23 @@ type Usage struct {
 	// Asked is logical requests: callers wanting an answer. Sent is the ones
 	// that reached the wire. Collapsed is the difference, which is what
 	// singleflight already saves.
-	Asked     int64 `json:"asked"`
-	Sent      int64 `json:"sent"`
+	Asked int64 `json:"asked"`
+	Sent  int64 `json:"sent"`
+	// Served is demand answered from the response cache. Asked is Sent plus
+	// Served plus Collapsed, so the three savings never overlap and the
+	// arithmetic can be checked from the response itself.
+	Served    int64 `json:"served"`
 	Collapsed int64 `json:"collapsed"`
 	Refused   int64 `json:"refused"`
 	Failed    int64 `json:"failed"`
 	Bytes     int64 `json:"bytes"`
 
 	// CollapsedPercent is Collapsed over Asked: the share of demand that never
-	// cost a request.
+	// cost a request because an identical one was already in flight.
+	// ServedPercent is the same for demand the cache answered, and is the real
+	// hit rate the WouldHit figures below were a simulation of.
 	CollapsedPercent float64 `json:"collapsed_percent"`
+	ServedPercent    float64 `json:"served_percent"`
 
 	Last60s  int64 `json:"last_60s"`
 	Last300s int64 `json:"last_300s"`
@@ -136,13 +150,18 @@ type GroupUsage struct {
 	Label     string `json:"label"`
 	Asked     int64  `json:"asked"`
 	Sent      int64  `json:"sent"`
+	Served    int64  `json:"served"`
 	Collapsed int64  `json:"collapsed"`
 	Refused   int64  `json:"refused"`
 	Failed    int64  `json:"failed"`
 	Bytes     int64  `json:"bytes"`
 
 	// SentPercent is this group's share of the endpoint's wire requests.
-	SentPercent float64 `json:"sent_percent"`
+	// ServedPercent is the cache's measured hit rate for this operation, which
+	// is the figure WouldHitPercent below was predicting before the cache
+	// existed. Reading the two side by side is the point.
+	SentPercent   float64 `json:"sent_percent"`
+	ServedPercent float64 `json:"served_percent"`
 
 	// WouldHit is, per entry of TTLSeconds, how many of this group's wire
 	// requests a response cache of that lifetime would have answered instead.
@@ -166,6 +185,44 @@ type Bounds struct {
 	SimEvictions  int64  `json:"cache_sim_evictions"`
 	Note          string `json:"note"`
 }
+
+// CacheStats is one response cache's own reading of itself: what it holds,
+// what bounds it, and what it has done.
+type CacheStats struct {
+	// Name is the pool the cache belongs to, by the host of its first
+	// endpoint.
+	Name    string `json:"name"`
+	Entries int    `json:"entries"`
+	Bytes   int64  `json:"bytes"`
+	// MaxEntries and MaxBytes are the eviction bounds, restated here so the
+	// memory story is readable off the response rather than out of the source.
+	MaxEntries int   `json:"max_entries"`
+	MaxBytes   int64 `json:"max_bytes"`
+
+	Hits   int64 `json:"hits"`
+	Misses int64 `json:"misses"`
+	Stores int64 `json:"stores"`
+	// Evictions is entries dropped to stay inside the bounds; Expired is
+	// entries dropped because their lifetime ran out. Separate because they
+	// say different things: evictions mean the cache is too small for the
+	// working set, expiries mean it is doing what it was told.
+	Evictions int64 `json:"evictions"`
+	Expired   int64 `json:"expired"`
+	// Purges is how many times the chain under this cache changed identity and
+	// took the cache with it. See ResponseCache.Purge.
+	Purges    int64  `json:"purges"`
+	LastPurge string `json:"last_purge,omitempty"`
+
+	HitPercent float64 `json:"hit_percent"`
+}
+
+const cacheNote = "a finalised block is immutable, so block answers are kept indefinitely and " +
+	"evicted by least-recent-use rather than by age; a chain reset purges the cache that was " +
+	"keyed on the old chain's heights. The chain tip is deliberately never cached, and neither " +
+	"is block 1, which is the fingerprint the reset check reads."
+
+const noCacheNote = "no response cache is registered on this instance, so every figure above is " +
+	"uncached traffic. This is a wiring fault, not a hit rate of zero."
 
 const budgetNote = "one Cloudflare rule, per IP, counting every indexer hostname under gno.land " +
 	"together rather than per hostname or per network. Going one over costs a 300 second blackout, " +
@@ -210,6 +267,14 @@ func (m *Meter) Snapshot() Snapshot {
 	for _, ttl := range TTLs {
 		snap.TTLSeconds = append(snap.TTLSeconds, int(ttl.Seconds()))
 	}
+	snap.Caches = make([]CacheStats, 0, len(m.cacheSrcs))
+	for _, src := range m.cacheSrcs {
+		snap.Caches = append(snap.Caches, src())
+	}
+	snap.CacheNote = cacheNote
+	if len(snap.Caches) == 0 {
+		snap.CacheNote = noCacheNote
+	}
 
 	var all, shared totals
 	for _, key := range m.order {
@@ -240,6 +305,7 @@ func (m *Meter) Snapshot() Snapshot {
 func (t *totals) add(o totals) {
 	t.asked += o.asked
 	t.sent += o.sent
+	t.served += o.served
 	t.collapsed += o.collapsed
 	t.refused += o.refused
 	t.failed += o.failed
@@ -256,6 +322,7 @@ func usageOf(t totals, w *window, now time.Time) Usage {
 	u := Usage{
 		Asked:     t.asked,
 		Sent:      t.sent,
+		Served:    t.served,
 		Collapsed: t.collapsed,
 		Refused:   t.refused,
 		Failed:    t.failed,
@@ -278,6 +345,7 @@ func usageOf(t totals, w *window, now time.Time) Usage {
 	}
 	if t.asked > 0 {
 		u.CollapsedPercent = round2(100 * float64(t.collapsed) / float64(t.asked))
+		u.ServedPercent = round2(100 * float64(t.served) / float64(t.asked))
 	}
 	if peakMin > 0 {
 		u.PeakMinuteAt = peakMinAt.Format(time.RFC3339)
@@ -298,6 +366,7 @@ func groupsOf(ep *endpointCounts) []GroupUsage {
 			Label:     g.label,
 			Asked:     g.totals.asked,
 			Sent:      g.totals.sent,
+			Served:    g.totals.served,
 			Collapsed: g.totals.collapsed,
 			Refused:   g.totals.refused,
 			Failed:    g.totals.failed,
@@ -305,6 +374,9 @@ func groupsOf(ep *endpointCounts) []GroupUsage {
 		}
 		if ep.totals.sent > 0 {
 			gu.SentPercent = round2(100 * float64(g.totals.sent) / float64(ep.totals.sent))
+		}
+		if g.totals.asked > 0 {
+			gu.ServedPercent = round2(100 * float64(g.totals.served) / float64(g.totals.asked))
 		}
 		for i := range TTLs {
 			gu.WouldHit = append(gu.WouldHit, g.hits[i])
@@ -359,9 +431,15 @@ func summarize(s Snapshot) string {
 	if s.Shared.Refused > 0 {
 		lead += fmt.Sprintf(". %d refusals so far", s.Shared.Refused)
 	}
+	if s.Shared.Served > 0 {
+		lead += fmt.Sprintf(". %.0f%% of demand was answered from the response cache", s.Shared.ServedPercent)
+	}
 	if s.Shared.Collapsed > 0 {
 		lead += fmt.Sprintf(". %.0f%% of demand never reached the wire, collapsed into a request already in flight",
 			s.Shared.CollapsedPercent)
+	}
+	if len(s.Caches) == 0 {
+		lead += ". No response cache is registered, which is a wiring fault"
 	}
 	return lead
 }

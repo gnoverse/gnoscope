@@ -22,6 +22,13 @@ One static binary and one SQLite file. No runtime dependencies.
 | `-health-db` | none | SQLite path for the per-network availability history, e.g. `gnoscope-health.db`. Empty records nothing, and `/sanity`'s availability strip says so |
 | `-health-retention-days` | `30` | days of health samples to keep. `0` keeps them forever |
 
+**No flag turns the response cache or the outbound request meter on.** The
+indexer response cache is unconditional, in memory, and bounded at 20,000
+entries or 32 MB per endpoint pool; there is nothing to add to a unit file and
+nothing to size. Its hit rate, its bounds and its purges are reported under
+`caches` in `GET /api/indexer/usage`, and an empty `caches` list there is a
+wiring fault rather than a cold cache.
+
 **No flag turns the outbound request meter on.** `GET /api/indexer/usage` and the
 indexer budget section on `/sanity` are unconditional and entirely in memory:
 they start counting on the first outbound request and need no database, no

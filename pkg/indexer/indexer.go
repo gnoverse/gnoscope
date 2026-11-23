@@ -60,12 +60,34 @@ type Client struct {
 	// and every configured network share one Cloudflare bucket. Nil in a
 	// Client built as a literal, and every call on it is a no-op then.
 	meter *reqmeter.Meter
+
+	// cache holds answers that cannot change, shared with every other Client
+	// built on the same endpoints. Nil in a Client built as a literal, and
+	// every call on it misses then. See cache.go.
+	cache *ResponseCache
 }
 
 // SetMeter points this client at a request meter. Exported for tests, which
 // want a meter of their own rather than the process-wide one; the constructors
 // wire the default.
 func (c *Client) SetMeter(m *reqmeter.Meter) { c.meter = m }
+
+// SetCache points this client at a response cache. Exported for tests, which
+// want one of their own rather than the pool's shared instance; the
+// constructors wire the default.
+func (c *Client) SetCache(rc *ResponseCache) { c.cache = rc }
+
+// Cache returns the response cache this client reads, which is the pool's and
+// not this client's alone.
+func (c *Client) Cache() *ResponseCache { return c.cache }
+
+// PurgeCache drops every cached answer for this pool.
+//
+// The one caller is the syncer's chain-reset check. A cache keyed on block
+// heights outlives a chain that comes back with different blocks at the same
+// heights, and nothing about the stale answers looks wrong; see
+// ResponseCache.Purge.
+func (c *Client) PurgeCache() { c.cache.Purge() }
 
 // ErrUnavailable is returned while the breaker is open.
 var ErrUnavailable = errors.New("indexer unavailable, not retried yet")
@@ -217,6 +239,7 @@ func newIndexerClient(urls []string, timeout time.Duration) *Client {
 		urls:   normalized,
 		client: &http.Client{Timeout: timeout, Transport: indexerTransport},
 		meter:  reqmeter.Default(),
+		cache:  cacheForPool(normalized),
 	}
 }
 
@@ -766,15 +789,52 @@ func answered(err error) bool {
 		strings.HasPrefix(err.Error(), "graphql error:")
 }
 
+// query asks the pool, caching nothing. Most read paths want this: whether an
+// answer may be kept is a statement about the question, and the default answer
+// to "may this be kept" has to be no.
 func (c *Client) query(ctx context.Context, query string, vars map[string]any, result any) error {
+	return c.queryCached(ctx, cacheRule{}, query, vars, result)
+}
+
+// queryCached is query with a caller-supplied rule about what may be kept.
+//
+// The cache is read before the breaker on purpose. An answer that cannot change
+// is just as true during a 300-second blackout as outside one, and refusing to
+// serve it would turn a rate-limit penalty into an outage on pages whose whole
+// content is finalised block data. A cache hit is also not an observation of
+// the indexer, so it reaches neither recordResult nor selectEndpoint: a cache
+// that healed the breaker would hide the very condition it exists to survive.
+func (c *Client) queryCached(ctx context.Context, rule cacheRule, query string, vars map[string]any, result any) error {
+	var key string
+	if rule.on() {
+		body, err := json.Marshal(gqlRequest{Query: query, Variables: vars})
+		if err != nil {
+			return err
+		}
+		key = string(body)
+		if data, ok := c.cache.get(key); ok {
+			// Attributed to the endpoint we would have asked, which is not
+			// necessarily the one the answer came from: the cache is shared
+			// across a pool whose members are proven to serve one chain. A hit
+			// spends no budget either way, so "where this would have cost us"
+			// is the useful reading of the per-endpoint breakdown.
+			url := c.activeURL()
+			label := reqmeter.Label(query)
+			// Counted as demand first and as a cache hit second, in that
+			// order and never as a collapse: see Meter.Served.
+			c.meter.Asked(url, label)
+			c.meter.Served(url, label)
+			return json.Unmarshal(data, result)
+		}
+	}
 	if c.breakerOpen() {
 		return ErrUnavailable
 	}
 	c.selectEndpoint(ctx)
-	err := c.doQuery(ctx, c.activeURL(), query, vars, result)
+	err := c.doQueryRule(ctx, rule, key, c.activeURL(), query, vars, result)
 	if err != nil && !answered(err) {
 		if next, ok := c.failOver(); ok {
-			err = c.doQuery(ctx, next, query, vars, result)
+			err = c.doQueryRule(ctx, rule, key, next, query, vars, result)
 		}
 	}
 	// Caller-side cancellation, a capped result set and a miss all say nothing
@@ -812,6 +872,16 @@ func (c *Client) query(ctx context.Context, query string, vars map[string]any, r
 // upstream error rather than each earning their own, which is exactly the
 // behaviour wanted from something whose job is to stop asking.
 func (c *Client) doQuery(ctx context.Context, url, query string, vars map[string]any, result any) error {
+	return c.doQueryRule(ctx, cacheRule{}, "", url, query, vars, result)
+}
+
+// doQueryRule is doQuery with a cache rule and the cache key queryCached
+// already computed. cacheKey is empty when the rule caches nothing.
+//
+// The answer is stored inside the flight rather than after it, so exactly one
+// of N collapsed callers writes it, and so a caller whose own context expired
+// while waiting still leaves the answer behind for the next one.
+func (c *Client) doQueryRule(ctx context.Context, rule cacheRule, cacheKey, url, query string, vars map[string]any, result any) error {
 	body, err := json.Marshal(gqlRequest{Query: query, Variables: vars})
 	if err != nil {
 		return err
@@ -844,7 +914,11 @@ func (c *Client) doQuery(ctx context.Context, url, query string, vars map[string
 			fctx, cancel = context.WithTimeout(fctx, c.client.Timeout)
 			defer cancel()
 		}
-		return c.fetch(fctx, url, body, label), nil
+		out := c.fetch(fctx, url, body, label)
+		if cacheKey != "" && out.err == nil && rule.keeps(out.data) {
+			c.cache.put(cacheKey, out.data, rule.ttl)
+		}
+		return out, nil
 	})
 
 	var out *queryOutcome
@@ -1721,6 +1795,15 @@ func (c *Client) GetRecentBlocks(ctx context.Context, limit int) ([]Block, error
 }
 
 // GetBlocksInRange fetches all blocks between fromHeight and toHeight inclusive.
+//
+// Cached indefinitely, but only when the range came back whole.
+//
+// That condition is what makes an indefinite lifetime safe here without the
+// caller knowing where the tip is. Blocks are contiguous, so a range that
+// returned every height it asked for lies entirely below the tip and is
+// final; one that returned fewer is either running past the tip and will grow,
+// or sitting under a pruned floor another endpoint may still answer for.
+// Neither is kept. See rangeComplete.
 func (c *Client) GetBlocksInRange(ctx context.Context, fromHeight, toHeight int) ([]Block, error) {
 	var result struct {
 		GetBlocks []Block `json:"getBlocks"`
@@ -1731,7 +1814,11 @@ func (c *Client) GetBlocksInRange(ctx context.Context, fromHeight, toHeight int)
 			order: { height: ASC }
 		) { %s }
 	}`, fromHeight-1, toHeight+1, blockFields)
-	err := c.query(ctx, q, nil, &result)
+	// Heights start at 1, so a caller asking from 0 is asking for one height
+	// that cannot exist and the range can never read as complete. Counting
+	// from 1 is what keeps the bottom of the chain cacheable like the rest.
+	want := toHeight - max(fromHeight, 1) + 1
+	err := c.queryCached(ctx, cacheRule{ttl: cacheForever, store: rangeComplete(want)}, q, nil, &result)
 	return result.GetBlocks, err
 }
 
@@ -1811,6 +1898,24 @@ func (c *Client) GetBlocksByHeights(ctx context.Context, heights []int) (map[int
 // that need to tell "confirmed absent" apart from "could not ask" (network
 // error, indexer down) rely on this distinction; do not collapse it back into
 // a single error.
+// Cached indefinitely when a block came back, and never when one did not.
+//
+// This is the single query the cache exists for: #529 measured getBlocks at
+// 92% of all outbound traffic, and GetBlocksByHeights turns one caller's set
+// of heights into one of these per height. A finalised block cannot change, so
+// the right lifetime is "until the chain under it does", which is what Purge
+// is for.
+//
+// ⚠️ Height 1 is never cached, and that is not an optimisation detail. Block 1
+// is the chain's fingerprint: Syncer.chainFingerprint and API.VerifyRPCChains
+// both read it to decide whether the indexer is still serving the chain the
+// stored data came from. Cached, the reset check would be answered forever by
+// the chain it is supposed to notice the end of, and a reset would become
+// undetectable rather than merely late. That is the same failure #525 recorded
+// one layer down, where a stale node defines a pool's identity and locks the
+// real endpoints out as impostors.
+//
+// An empty answer is never kept either; see blocksFound.
 func (c *Client) GetBlock(ctx context.Context, height int) (*Block, error) {
 	var result struct {
 		GetBlocks []Block `json:"getBlocks"`
@@ -1820,7 +1925,11 @@ func (c *Client) GetBlock(ctx context.Context, height int) (*Block, error) {
 			where: { height: { eq: %d } }
 		) { %s }
 	}`, height, blockFields)
-	err := c.query(ctx, q, nil, &result)
+	rule := cacheRule{ttl: cacheForever, store: blocksFound}
+	if height <= 1 {
+		rule = cacheRule{}
+	}
+	err := c.queryCached(ctx, rule, q, nil, &result)
 	if err != nil {
 		return nil, err
 	}

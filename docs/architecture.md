@@ -42,11 +42,12 @@ silent fallback, because an instance pointed at the wrong chain looks healthy.
 **`pkg/indexer`** — GraphQL client. One instance per network. Every query the
 explorer needs lives here: transactions by various filters, blocks, latest height.
 
-Two things sit between a caller and the wire. Concurrent *identical* requests
+Three things sit between a caller and the wire. A **response cache** answers
+from memory anything that has already been asked and cannot have changed since
+(`pkg/indexer/cache.go`). Concurrent *identical* requests
 collapse into one round trip (`singleflight`, keyed by endpoint plus the exact
 bytes we would send), so the fan-out of a merged page or a crawler walking one
-realm costs the upstream once. It is in-flight deduplication only: nothing is
-cached after an answer is delivered. And a `429` is handled apart from every
+realm costs the upstream once. And a `429` is handled apart from every
 other failure. It carries the wait the server asked for, read from the
 `Retry-After` header when there is one and from the error message body
 otherwise, which is where gno.land's rate limiter actually puts it; the breaker
@@ -56,12 +57,25 @@ cooldown brought us back inside a 300 second penalty window and re-armed it: 277
 upstream 429s in 24 hours on one network, measured 2026-11-23. See
 `pkg/indexer/ratelimit.go`.
 
+The response cache is **opt-in per call site and holds block data only**. A
+finalised block is immutable and Tendermint2 finalises in one slot, so
+`GetBlock` at a height above 1 and `GetBlocksInRange` over a range that came
+back whole are kept with no expiry, bounded by an LRU over 20,000 entries and
+32 MB. Everything else goes to the wire, and two queries are excluded on
+purpose: `latestBlockHeight`, because a stale tip makes the explorer lag with
+nothing reporting it, and block 1, because that is the fingerprint
+`Syncer.chainFingerprint` and `API.VerifyRPCChains` read to notice a chain
+reset. One cache per endpoint pool, shared by that network's serve and sync
+clients, emptied when the reset check fires. See
+[`api.md`](api.md#outbound-request-budget).
+
 **`pkg/reqmeter`** is the outbound request meter, fed from `Client.fetch` because
 that is the one place a GraphQL request leaves the binary. Per endpoint and per
 GraphQL operation: requests sent, requests collapsed in flight, refusals, errors,
-bytes, a rolling rate and the peak over one budget window in the last day, plus a
-simulation of the response cache that does not exist yet. It answers the question
-the three paragraphs above left open, which is how much of the 3,100-per-300-seconds
+bytes, a rolling rate and the peak over one budget window in the last day, plus
+what the response cache actually answered (`served`) and what a short-TTL cache
+would still save on top of it (`would_hit`). It answers the question
+the paragraphs above left open, which is how much of the 3,100-per-300-seconds
 per-IP budget this explorer actually spends and on which queries. Everything is in
 fixed memory and nothing is persisted. Served at `GET /api/indexer/usage` and drawn
 on `/sanity`; see [`api.md`](api.md#outbound-request-budget).

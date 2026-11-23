@@ -1184,7 +1184,7 @@ What this process spends at the indexers, against the one rule they sit behind.
 
 | endpoint | description |
 |---|---|
-| `GET /api/indexer/usage` | the outbound request meter: cumulative counters, rolling rates, the peak over one budget window in the last day, a per-operation breakdown, and what a short-TTL response cache would have saved. No parameters, and no flag to enable it |
+| `GET /api/indexer/usage` | the outbound request meter: cumulative counters, rolling rates, the peak over one budget window in the last day, a per-operation breakdown, what the response cache actually answered, and what a short-TTL cache would still have saved on top. No parameters, and no flag to enable it |
 
 ### Why this exists, and what it is measuring against
 
@@ -1207,11 +1207,14 @@ and it is produced permanently rather than once.
 request leaves the binary. A counter at a call site is a counter somebody
 forgets to add to the forty-first call site.
 
-Two figures, not one. `asked` is counted in `doQuery`, before singleflight has
-decided whether a caller costs a round trip; `sent` is counted in `fetch`, which
-runs once per flight. `collapsed` is the difference, which is the saving #526 is
-already making and the reason a cache's upside has to be measured against `sent`
-rather than against raw demand.
+Three figures, not one. `asked` is counted in `doQuery`, before anything has
+decided whether a caller costs a round trip; `served` is counted when the
+response cache answers; `sent` is counted in `fetch`, which runs once per
+flight. `collapsed` is what is left over, which is the saving #526 is already
+making. The three never overlap, so `sent + served + collapsed == asked` and the
+arithmetic can be checked off the response itself. They are kept apart because
+they are different machinery: `collapsed` is "N callers wanted this at the same
+instant", `served` is "we already knew the answer".
 
 ### The rate, and why the peak is the figure
 
@@ -1252,13 +1255,86 @@ interpolate a package path or an address into a `where` clause, those values are
 attacker-controlled, and a naive scan would key the group table by something an
 outsider writes.
 
-### What a cache would have saved, without building the cache
+### The response cache, and what it is allowed to keep
 
-Every wire request is run past a simulation of a response cache that does not
-exist, at 5, 30 and 300 seconds. `would_hit` and `would_hit_percent` per group
-are the hit rate that cache would have had. **This is the figure #525 is waiting
-on**: a cache that covers the top three groups may be the whole fix, and the
-decision does not need the cache to be built first.
+`caches` in the response is what the real cache did: `hits`, `misses`,
+`entries`, `bytes`, `evictions`, `expired`, `purges`, and the bounds each of
+those is measured against. `served` and `served_percent` on every group are the
+same saving attributed to the query that earned it. **An empty `caches` list on
+an instance that is making requests is a wiring fault, not a hit rate of zero**,
+and `cache_note` and `summary` both say so in words rather than leaving a reader
+to notice.
+
+The cache is opt-in per call site, and the default is to cache nothing. Two
+queries opt in:
+
+| query | lifetime | why, and what is checked before it is kept |
+|---|---|---|
+| `GetBlock(height)`, height > 1 | indefinite | a finalised block is immutable, and Tendermint2 finalises in one slot, so there is no reorg to invalidate against. Kept only when a block actually came back: an empty `getBlocks` is also what a height above the tip, a replica still catching up, and a pruned floor look like, and the first of those becomes a real block seconds later |
+| `GetBlocksInRange(from, to)` | indefinite | same reason, kept only when **every** height in the range came back. Blocks are contiguous, so a whole range lies below the tip and is final; a short one is either running past the tip and will grow, or under a pruned floor another endpoint may yet answer for. That check is what makes an indefinite lifetime safe without the caller knowing where the tip is |
+
+Everything else goes to the wire. Named explicitly, because a cache that serves
+stale chain data is a regression and not a fix:
+
+- **`latestBlockHeight` is never cached.** A stale tip makes the explorer
+  silently lag, which is a worse failure than a 429 because nothing reports it.
+  It was 2.6% of mainnet's traffic when this was measured, so there is nothing
+  worth buying with it.
+- **`GetBlock(1)` is never cached.** Block 1 is the chain's fingerprint:
+  `Syncer.chainFingerprint` and `API.VerifyRPCChains` both read it to decide
+  whether the indexer is still serving the chain the stored rows came from.
+  Cached, a reset would stop being late and start being undetectable, which is
+  the same failure #525 recorded one layer down where a stale node defines a
+  pool's identity and locks the real endpoints out as impostors.
+- **`GetRecentBlocks` is never cached.** It reads the tip and then asks for a
+  window below it, so it is a tip query wearing a range's clothes.
+- **`getTransactions` in all its forms is never cached**, including
+  `GetTransactionsByBlock` and `GetTransactionsInRange`, which are immutable by
+  exactly the same argument as a finalised block. They were 2.8% and 5.3% of
+  their endpoints' requests but 96% of the bytes, and the budget counts
+  requests. Caching them would spend the memory bound on the traffic that is not
+  the problem.
+- **Schema introspection (`__type`) is never cached here.** It already has its
+  own memo in `Client.typeSupport`.
+
+A cached answer is served even while the circuit breaker is shut, on purpose: an
+answer that cannot change is as true during a 300 second blackout as outside
+one, and a page whose whole content is finalised block data should not go down
+with the budget. A cache hit is not an observation of the indexer, so it reaches
+neither the breaker nor the endpoint probe.
+
+**Memory, eviction, and a chain that comes back different.** One cache per
+endpoint pool, shared by that network's serve client and sync client, looked up
+by endpoint list rather than wired by hand so there is no constructor to forget.
+Bounded by 20,000 entries *and* 32 MB, whichever binds first, with least-recently-used
+eviction; any single answer over 256 KB is refused rather than stored, which
+also keeps a 5,000-block backfill page (~684 KB, walked exactly once) from
+flushing thousands of single-block answers that are asked for again and again.
+In practice the entry bound binds first on the traffic that matters: a
+single-block answer measured 310 bytes on production, so 20,000 of them is
+about 6 MB and the byte bound is the backstop for ranges. Worst case is 32 MB
+per pool, flat, and a pool is a network: three configured networks is at most
+~96 MB, and the registry refuses to grow past sixteen pools. Nothing is
+persisted and nothing is swept by a goroutine. A chain reset keeps its
+heights and changes what is at them, so `Syncer.checkChainReset` purges the
+cache before it discards the rows; `purges` and `last_purge` in the response are
+how an operator sees that happened. There is no reorg case to handle: single-slot
+finality means a height never changes hands.
+
+The purge rides the syncer, so an instance started with `-sync=false` has
+nothing that would empty it. That is not a new gap: such an instance has no
+reset detection at all and its *stored rows* already outlive a reset by the same
+amount. It is worth knowing that the cache now inherits it.
+
+### What a short-TTL cache would still save, on top
+
+Every wire request is run past a simulation of a response cache, at 5, 30 and
+300 seconds. `would_hit` and `would_hit_percent` per group
+are the hit rate such a cache would have had on the requests that *still* reach
+the wire. Before the response cache existed this was the figure #525 was waiting
+on; now it reads as the headroom left over, so a group still showing a high
+`would_hit` beside a low `served` is one whose immutability nobody has argued
+for yet.
 
 What is simulated is a cache and not a memory, and the distinction decides the
 number. Requests at t=0, t=4 and t=8 under a 5 second lifetime are one hit and a
@@ -1276,7 +1352,8 @@ a cache cannot claim a saving that has already been made.
 a ring of 300 one-second and 1,440 one-minute slots per endpoint rather than a
 timestamp per request, at most 16 endpoints and 48 operation groups each with
 the overflow folded into a named bucket, and an LRU of 8,192 request digests for
-the simulation. Nothing is keyed by anything an outsider controls.
+the simulation. Nothing is keyed by anything an outsider controls. The response
+cache reports its own bounds separately, under `caches`.
 
 Everything is in memory and nothing is persisted, so a restart starts over.
 `since` and `uptime_seconds` are in the response for that reason: "peak over the

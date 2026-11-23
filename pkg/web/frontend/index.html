@@ -11323,8 +11323,9 @@ function indexerBudgetSection() {
   wrap.appendChild(el('div', { className: 'section-sub' },
     'what this process spends at the upstream indexers, against the one per-IP rule they sit behind. '
     + 'the peak is the figure that matters: the budget is spent in bursts, and a quiet day with one '
-    + 'burst over the ceiling costs a 300 second blackout just the same. "would hit" is what a '
-    + 'short-lived response cache would have saved, measured rather than guessed.'));
+    + 'burst over the ceiling costs a 300 second blackout just the same. "cached" is what the '
+    + 'response cache actually answered; "would hit" is what a short-lived cache would still save '
+    + 'on top of it, measured rather than guessed.'));
 
   const body = el('div');
   wrap.appendChild(body);
@@ -11367,6 +11368,9 @@ async function loadIndexerBudget(body) {
     usageVerdictEl(shared.verdict, '● ' + (shared.peak_percent || 0).toFixed(0) + '% of budget')));
   cards.appendChild(stat('peak minute', fmtNum(shared.peak_minute || 0),
     el('span', { style: { color: 'var(--fg2)' } }, (shared.peak_minute_per_sec || 0) + '/s')));
+  cards.appendChild(stat('cached', (shared.served_percent || 0).toFixed(0) + '%',
+    el('span', { style: { color: 'var(--fg2)' } },
+      fmtNum(shared.served || 0) + ' of ' + fmtNum(shared.asked || 0) + ' answered from memory')));
   cards.appendChild(stat('collapsed', (shared.collapsed_percent || 0).toFixed(0) + '%',
     el('span', { style: { color: 'var(--fg2)' } },
       fmtNum(shared.collapsed || 0) + ' of ' + fmtNum(shared.asked || 0) + ' never sent')));
@@ -11407,7 +11411,7 @@ async function loadIndexerBudget(body) {
 
     const table = el('table');
     const hr = el('tr');
-    ['query', 'sent', 'share', 'collapsed', '429s', 'errors', 'bytes']
+    ['query', 'sent', 'share', 'cached', 'collapsed', '429s', 'errors', 'bytes']
       .forEach(h => hr.appendChild(el('th', {}, h)));
     ttls.forEach(t => hr.appendChild(el('th', {}, 'would hit ' + t + 's')));
     table.appendChild(el('thead', {}, hr));
@@ -11424,6 +11428,12 @@ async function loadIndexerBudget(body) {
       row.appendChild(el('td', { 'data-usage-group': g.label }, g.label));
       row.appendChild(el('td', {}, fmtNum(g.sent || 0)));
       row.appendChild(el('td', {}, (g.sent_percent || 0).toFixed(0) + '%'));
+      // The measured hit rate, in the same column shape as the simulated one
+      // four columns over, so the two can be read against each other.
+      const served = g.served || 0, servedPct = g.served_percent || 0;
+      const servedColour = servedPct >= 50 ? '#51cf66' : servedPct >= 20 ? '#ffd43b' : 'var(--fg2)';
+      row.appendChild(el('td', { 'data-usage-served': g.label },
+        el('span', { style: { color: servedColour } }, fmtNum(served) + ' (' + servedPct.toFixed(0) + '%)')));
       row.appendChild(el('td', {}, fmtNum(g.collapsed || 0)));
       row.appendChild(el('td', {}, fmtNum(g.refused || 0)));
       row.appendChild(el('td', {}, fmtNum(g.failed || 0)));
@@ -11447,6 +11457,42 @@ async function loadIndexerBudget(body) {
     }
     body.appendChild(block);
   }
+
+  // What the real cache holds, and what bounds it. An empty list here is a
+  // wiring fault and says so: a cache nobody registered reports a hit rate of
+  // zero, which reads exactly like a cache that is working and cold.
+  const caches = data.caches || [];
+  const cacheBox = el('div', { id: 'sanity-indexer-cache', style: { marginBottom: '12px' } });
+  cacheBox.appendChild(el('div', { style: { fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' } }, 'response cache'));
+  if (!caches.length) {
+    cacheBox.appendChild(el('div', { style: { color: '#ff6b6b', fontSize: '12px' } },
+      'no response cache is registered on this instance'));
+  } else {
+    const ct = el('table');
+    const chr = el('tr');
+    ['pool', 'hit rate', 'hits', 'misses', 'entries', 'held', 'evicted', 'expired', 'purges']
+      .forEach(h => chr.appendChild(el('th', {}, h)));
+    ct.appendChild(el('thead', {}, chr));
+    const ctb = el('tbody');
+    for (const c of caches) {
+      const row = el('tr');
+      row.appendChild(el('td', { 'data-cache-pool': c.name || '' }, c.name || '?'));
+      row.appendChild(el('td', {}, (c.hit_percent || 0).toFixed(0) + '%'));
+      row.appendChild(el('td', {}, fmtNum(c.hits || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.misses || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.entries || 0) + ' / ' + fmtNum(c.max_entries || 0)));
+      row.appendChild(el('td', {}, shortBytes(c.bytes || 0) + ' / ' + shortBytes(c.max_bytes || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.evictions || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.expired || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.purges || 0) + (c.last_purge ? ' (' + c.last_purge + ')' : '')));
+      ctb.appendChild(row);
+    }
+    ct.appendChild(ctb);
+    cacheBox.appendChild(ct);
+  }
+  cacheBox.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px', marginTop: '4px', whiteSpace: 'normal', lineHeight: '1.5' } },
+    data.cache_note || ''));
+  body.appendChild(cacheBox);
 
   const b = data.bounds || {};
   body.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px', marginTop: '4px', whiteSpace: 'normal', lineHeight: '1.5' } },

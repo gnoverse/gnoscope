@@ -86,6 +86,9 @@ const (
 	// the budget allows, the working set for the longest TTL (300s) is at most
 	// about 3,100 distinct requests, so this holds it with room over.
 	maxSimKeys = 8192
+	// maxCacheSources caps the registered response caches. One per endpoint
+	// pool, so the same backstop as maxEndpoints.
+	maxCacheSources = 16
 
 	overflowEndpoint = "(other endpoints)"
 	overflowGroup    = "(other)"
@@ -145,6 +148,12 @@ type Meter struct {
 	sharedWin window
 
 	sim *cacheSim
+
+	// caches are the live response caches this process runs, reported rather
+	// than asserted. A registered source is a function so the snapshot reads
+	// the cache's own counters at the moment it is asked, and so this package
+	// keeps no reference to anything in pkg/indexer.
+	cacheSrcs []func() CacheStats
 }
 
 type endpointCounts struct {
@@ -165,8 +174,15 @@ type groupCounts struct {
 }
 
 type totals struct {
-	asked     int64
-	sent      int64
+	asked int64
+	sent  int64
+	// served is the demand answered out of the response cache: counted under
+	// Asked like everything else, never sent, and deliberately not folded into
+	// collapsed. Two different savings are being claimed by two different
+	// pieces of machinery, and an operator reading this has to be able to tell
+	// "N readers wanted the same answer at the same instant" from "we already
+	// knew the answer".
+	served    int64
 	refused   int64
 	failed    int64
 	bytes     int64
@@ -218,11 +234,48 @@ func (m *Meter) Asked(endpoint, label string) {
 	m.recollapse(ep, g)
 }
 
+// Served records one logical request answered from the response cache instead
+// of from the wire. The caller counts Asked first, exactly as it would for a
+// request it was about to send: the demand is real either way, and a cache that
+// did not show up under Asked would quietly shrink the denominator every rate
+// on this page is measured against.
+func (m *Meter) Served(endpoint, label string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ep := m.endpoint(endpoint)
+	g := ep.group(label)
+	ep.totals.served++
+	g.totals.served++
+	m.recollapse(ep, g)
+}
+
+// RegisterCache adds a response cache to what Snapshot reports.
+//
+// Said out loud because #528 shipped a feature that recorded nothing until a
+// flag reached the unit file: a response cache that is never registered still
+// works, but /api/indexer/usage then reports no caches at all, and that empty
+// list is the signal to look at the wiring rather than at the hit rate. See
+// TestUsageSaysWhenNoCacheIsRegistered.
+func (m *Meter) RegisterCache(fn func() CacheStats) {
+	if m == nil || fn == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.cacheSrcs) >= maxCacheSources {
+		return
+	}
+	m.cacheSrcs = append(m.cacheSrcs, fn)
+}
+
 // recollapse keeps the collapsed figure as the difference it is. Called with
 // m.mu held, after either counter moves.
 func (m *Meter) recollapse(ep *endpointCounts, g *groupCounts) {
-	ep.totals.collapsed = max(0, ep.totals.asked-ep.totals.sent)
-	g.totals.collapsed = max(0, g.totals.asked-g.totals.sent)
+	ep.totals.collapsed = max(0, ep.totals.asked-ep.totals.sent-ep.totals.served)
+	g.totals.collapsed = max(0, g.totals.asked-g.totals.sent-g.totals.served)
 }
 
 // Sent records one round trip that reached the wire.
