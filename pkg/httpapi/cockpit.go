@@ -8,8 +8,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/gnoverse/gnoscope/pkg/config"
-	"github.com/gnoverse/gnoscope/pkg/indexer"
 	"github.com/gnoverse/gnoscope/pkg/store"
 	"github.com/gnoverse/gnoscope/pkg/syncer"
 	"github.com/gnoverse/gnoscope/pkg/traffic"
@@ -332,28 +330,10 @@ func (a *API) HandleCockpit(w http.ResponseWriter, r *http.Request) {
 // precisely when it is not the one you were looking at, and an operator asking
 // "is anything broken" has not already decided where.
 func (a *API) cockpitNetworks(ctx context.Context, now time.Time) []CockpitNetwork {
-	type netLive struct {
-		id   string
-		live store.SanityLiveness
-	}
-	results := fanOut(ctx, a.networks, a.clients, a.health,
-		func(ctx context.Context, n config.NetworkConfig, c *indexer.Client) (netLive, error) {
-			return netLive{id: n.ID, live: livenessOf(ctx, c)}, nil
-		})
-	live := make(map[string]store.SanityLiveness, len(a.networks))
-	for _, res := range results {
-		live[res.id] = res.live
-	}
-	// fanOut drops the networks it skipped — no client, or an open breaker —
-	// and this is the view whose job is to report exactly those. Fill the gaps
-	// in as unreachable rather than letting a chain vanish from the list.
-	for _, n := range a.networks {
-		if _, ok := live[n.ID]; !ok {
-			live[n.ID] = store.SanityLiveness{}
-		}
-	}
-
-	_, diags := a.probeNetworks(ctx, a.networks, live)
+	// The same probe /sanity runs, through the same function, so the two pages
+	// cannot grade one chain two ways. It also records a sample; see
+	// health_history.go.
+	live, _, diags := a.chainStates(ctx)
 	sync := a.syncHealth.Snapshot()
 
 	out := make([]CockpitNetwork, 0, len(a.networks))

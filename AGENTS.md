@@ -151,6 +151,16 @@ Break these and things go wrong in ways that are hard to see:
   it owns and clears its container, or `libBlock(into, 'echarts', draw)` when
   its caller appends siblings after it and the block has to hold its place. Do
   not add a fifth `<script src>`.
+- **The chain states are named twice, and a test keeps the two identical.**
+  `Diag*` in `pkg/httpapi/chainhealth.go` is the vocabulary the diagnosis
+  produces; `pkg/healthlog` ranks the same strings to decide which state wins a
+  bucket of the availability strip, and it cannot import httpapi because httpapi
+  writes its rows. `TestDiagStatesMatchHealthlog` fails if either side grows,
+  loses or renames a state. Left to drift it fails quietly, in the worst
+  direction: `healthlog.Severity` ranks a string it does not know as *worse*
+  than everything it does, so one renamed constant paints a healthy week in the
+  worst colour the strip has, with nothing anywhere saying why. Same shape as
+  the nav table above.
 - **Never commit the built binary.** `gnoscope` and `*.db` are gitignored.
 
 ## Conventions

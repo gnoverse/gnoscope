@@ -20,6 +20,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/config"
 	"github.com/gnoverse/gnoscope/pkg/discover"
 	"github.com/gnoverse/gnoscope/pkg/ghlab"
+	"github.com/gnoverse/gnoscope/pkg/healthlog"
 	"github.com/gnoverse/gnoscope/pkg/indexer"
 	"github.com/gnoverse/gnoscope/pkg/registry"
 	"github.com/gnoverse/gnoscope/pkg/store"
@@ -107,6 +108,13 @@ type API struct {
 	// the network's submissions move. Zero value ready; see
 	// api_code_timeline.go.
 	timeline timelineMemo
+
+	// healthLog is the per-network availability record: one sample per probe,
+	// in its own database file. Nil when -health-db is unset, and every use of
+	// it is nil-safe, for the same reason traffic above is: an explorer that
+	// does not want a second database should not need a second build. See
+	// health_history.go.
+	healthLog *healthlog.Store
 
 	// build is what -ldflags stamped in, plus when this process started. Set
 	// from main.go, which owns those variables; the zero value is a build that
@@ -1176,6 +1184,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/govdao/voters", a.HandleGovDAOVoters)
 	mux.HandleFunc("GET /api/params", a.HandleParameters)
 	mux.HandleFunc("GET /api/health/heartbeat", a.HandleHeartbeat)
+	mux.HandleFunc("GET /api/health/history", a.HandleHealthHistory)
 	mux.HandleFunc("GET /api/registry/apps", a.HandleApps)
 	mux.HandleFunc("GET /api/apps", a.HandleAppsHub)
 	mux.HandleFunc("GET /api/registry/awesome", a.HandleAwesome)
