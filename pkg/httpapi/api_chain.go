@@ -88,8 +88,12 @@ type healthTracker struct {
 }
 
 type netHealth struct {
-	failures  int
-	skipUntil time.Time
+	failures int
+	// rateLimits counts consecutive 429s from this network, and is the exponent
+	// behind the stand-down. Kept apart from failures because the two mean
+	// different things; see healthTracker.record.
+	rateLimits int
+	skipUntil  time.Time
 }
 
 func newHealthTracker() *healthTracker {

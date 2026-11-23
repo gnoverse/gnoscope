@@ -42,10 +42,25 @@ silent fallback, because an instance pointed at the wrong chain looks healthy.
 **`pkg/indexer`** — GraphQL client. One instance per network. Every query the
 explorer needs lives here: transactions by various filters, blocks, latest height.
 
+Two things sit between a caller and the wire. Concurrent *identical* requests
+collapse into one round trip (`singleflight`, keyed by endpoint plus the exact
+bytes we would send), so the fan-out of a merged page or a crawler walking one
+realm costs the upstream once. It is in-flight deduplication only: nothing is
+cached after an answer is delivered. And a `429` is handled apart from every
+other failure. It carries the wait the server asked for, read from the
+`Retry-After` header when there is one and from the error message body
+otherwise, which is where gno.land's rate limiter actually puts it; the breaker
+shuts on the first one rather than after a threshold, for at least that long,
+doubling with each consecutive refusal. Before that, a flat 30 or 60 second
+cooldown brought us back inside a 300 second penalty window and re-armed it: 277
+upstream 429s in 24 hours on one network, measured 2026-11-23. See
+`pkg/indexer/ratelimit.go`.
+
 **`pkg/syncer`** — the background loop, one per network, every 30s. Each pass
 checks chain identity, syncs blocks, then syncs packages, calls/sends, and
 msg_runs. Cursors come from the highest stored height, so a pass only fetches
-what is new.
+what is new. A pass returns immediately while the client's breaker is shut, so a
+rate-limited network costs one line every 30s rather than one per sub-pass.
 
 Block sync is the one part with two cursors, both derived from the `blocks` table
 itself: head sync walks forward from `MAX(height)` to the tip, and a backfill
