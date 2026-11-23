@@ -1,14 +1,12 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gnoverse/gnoscope/pkg/config"
-	"github.com/gnoverse/gnoscope/pkg/indexer"
 	"github.com/gnoverse/gnoscope/pkg/store"
 	"github.com/gnoverse/gnoscope/pkg/syncer"
 )
@@ -321,37 +319,20 @@ func (a *API) HandleSanityOverview(w http.ResponseWriter, r *http.Request) {
 
 	// All networks: report each chain rather than picking one. The top-level
 	// liveness fields stay zero, because no single value could be right.
-	type netLive struct {
-		id   string
-		live store.SanityLiveness
-	}
-	results := fanOut(r.Context(), a.networks, a.clients, a.health,
-		func(ctx context.Context, n config.NetworkConfig, c *indexer.Client) (netLive, error) {
-			return netLive{id: n.ID, live: livenessOf(ctx, c)}, nil
-		})
-	ov.ByNetwork = make(map[string]store.SanityLiveness, len(a.networks))
-	for _, r := range results {
-		ov.ByNetwork[r.id] = r.live
-	}
-	// fanOut drops networks it skipped — no client, or an open breaker — but
-	// this is the page whose job is to report liveness, and a chain silently
-	// missing from it is the one case a reader most needs to see. Fill the gaps
-	// in as unreachable rather than letting them vanish.
-	for _, n := range a.networks {
-		if _, ok := ov.ByNetwork[n.ID]; !ok {
-			ov.ByNetwork[n.ID] = store.SanityLiveness{}
-		}
-	}
+	//
+	// chainStates runs the node probe for every configured network, including
+	// the ones the liveness fan-out skipped for an open breaker: a chain whose
+	// indexer is gone is exactly the case where the node has something to say.
+	// It is also what records a sample, so this path keeps the history fed.
+	live, nodes, diags := a.chainStates(r.Context())
+	ov.ByNetwork = live
 	ids := make([]string, 0, len(a.networks))
 	for _, n := range a.networks {
 		ids = append(ids, n.ID)
 	}
 	resp.SanityOverview = ov
 	resp.Indexers = a.endpointsFor(ids)
-	// The node probe runs for every configured network, including the ones
-	// fanOut skipped above. A chain whose indexer is gone is exactly the case
-	// where the node has something to say.
-	resp.Nodes, resp.Diagnosis = a.probeNetworks(r.Context(), a.networks, ov.ByNetwork)
+	resp.Nodes, resp.Diagnosis = nodes, diags
 	JSONResponse(w, resp)
 }
 

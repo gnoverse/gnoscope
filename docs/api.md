@@ -1092,6 +1092,7 @@ that appears on every page when a network is degraded.
 |---|---|
 | `GET /api/sanity/overview` | as before, plus `nodes` and `diagnosis`, keyed by network |
 | `GET /api/health/heartbeat` | block cadence per network. `window` = `5m` (default), `30m`, `3h`, which select 10s, 60s and 360s cells. Always every configured network, never just the selected one |
+| `GET /api/health/history` | the availability record per network: an `enabled` flag, a strip of `cells` each carrying the worst `state` in its bucket, `uptime_percent` over observed samples, `outages`, `last_outage`, `current`, an `incidents` list newest first, and a one-line `summary`. `window` = `24h`, `7d` (default), `30d`, which select 144, 168 and 180 cells of 10m, 1h and 4h. `network` narrows it; by default every configured chain. Empty, with `enabled` false and a `note`, on an instance without `-health-db` |
 
 ### Why the node is asked directly
 
@@ -1151,6 +1152,31 @@ diagnosis rather than replacing it.
 Cells are anchored to `now`, not to the newest block. A grid built from the last
 block shows a full strip for a chain that stopped an hour ago, which is the one
 answer it must never give.
+
+### The history is this instance's view, kept in its own database
+
+`/api/health/history` reads `-health-db`, a SQLite file separate from the chain
+index for the same reasons as `-traffic-db`: it is small, it has a retention
+policy, it is not reconstructible once dropped, and it must be droppable on its
+own. With the flag unset the endpoint answers `enabled: false` with a full grid
+of empty cells and a note, rather than disappearing: a section that vanishes
+reads as a bug, and a section drawn green reads as a lie.
+
+One sample per network per probe, throttled to one every 30 seconds whoever
+asks, and a background sampler guarantees one a minute even when nobody has the
+page open. Recording happens inside the probe itself, so both
+`/api/sanity/overview` paths, `/api/cockpit` and the sampler all feed it and no
+probe path is silently unrecorded.
+
+Transitions are derived on read, never stored: the samples are the facts, and a
+stored run would be a second copy to correct. A hole in the series longer than
+three sampling intervals becomes a `no_data` run rather than being counted as
+more of whatever state preceded it, which is what a restart or a crashed
+sampler actually is. For the same reason `uptime_percent` is healthy samples
+over *observed* samples, and `no_data_seconds` beside it says how much of the
+window that figure covers. A row with no samples reports no percentage at all.
+
+`state` values are the `diagnosis` states above, plus `no_data`.
 
 ## Transactions and blocks
 

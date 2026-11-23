@@ -19,6 +19,8 @@ One static binary and one SQLite file. No runtime dependencies.
 | `-widget-frame-ancestors` | `*` | who may put [`/widget`](./cockpit.md#framing-the-header-that-makes-it-a-widget) in an iframe, as a CSP `frame-ancestors` source list. Falls back to `$GNOSCOPE_WIDGET_FRAME_ANCESTORS`. `none` sends no header |
 | `-traffic-db` | — | SQLite path for the request log and the engagement events, e.g. `gnoscope-traffic.db`. Empty records nothing |
 | `-traffic-retention-days` | `30` | days of request rows to keep. `0` keeps them forever |
+| `-health-db` | none | SQLite path for the per-network availability history, e.g. `gnoscope-health.db`. Empty records nothing, and `/sanity`'s availability strip says so |
+| `-health-retention-days` | `30` | days of health samples to keep. `0` keeps them forever |
 
 ## Configuration
 
@@ -322,6 +324,43 @@ log {
 
 Set `roll_size`/`roll_keep` when you add it, not after: an access log with no
 rotation is the one that reaches 141 MB unnoticed.
+
+## The availability history and /sanity
+
+`/sanity` graded a point-in-time probe and kept nothing, so a chain down for
+three days and one that blipped thirty seconds ago drew the same amber dot.
+Measured on the gnoscope.com instance over 24 hours: 277 upstream 429s and 38
+breaker trips on one network, every one of them invisible on the page whose
+whole job is to show exactly that.
+
+```
+gnoscope -health-db /root/gnoscope-health.db -health-retention-days 30
+```
+
+Off by default, and its own database file, for the same two reasons as the
+request log above: an explorer somebody runs for an afternoon should not open a
+second database nobody asked for, and a small table with a retention policy has
+no business inside a 1.7 GB index that gets rebuilt from the chain.
+
+**Cadence: one sample per network per minute.** That is the unit the thing
+being measured moves in (`breakerCooldown` is 60 seconds, so no outage worth
+naming is shorter), it is the finest resolution a 7-day strip drawn in hourly
+cells can show, and it is cheap: four chains is 5,760 rows a day and a few
+hundred KB a month. Samples come from two places, which is what keeps the
+record even. Every reader who opens `/sanity` or `/cockpit` writes one as a
+side effect of the probe, throttled to one per network per 30 seconds so a wall
+display polling `/cockpit` cannot inflate the table; a background sampler
+covers the hours nobody is watching, which are the hours an outage happens in.
+
+**Retention: 30 days**, matching `-traffic-retention-days`. The strip draws
+seven, and the extra three weeks are what answers "has this been happening all
+along" when somebody finally looks. `0` keeps everything.
+
+What the page shows with no history is deliberate: an empty grid, no
+percentage, and a sentence saying nothing has been recorded. A fresh instance
+must not render as a green week it never observed, and a stretch where the
+sampler was down is drawn blank rather than as more of whatever state preceded
+it. See [`docs/api.md`](./api.md) for the endpoint behind it.
 
 ## The GitHub lab and /lab/github
 
