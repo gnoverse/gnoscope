@@ -11291,6 +11291,172 @@ function availStateLabel(state) {
   return (DIAG_STYLE[state] || DIAG_STYLE.unknown).label;
 }
 
+// The indexer budget: what this process is spending upstream, against the
+// ceiling it is spending it from.
+//
+// The public gno indexers sit behind one Cloudflare rule, 3,100 requests per
+// 300 seconds per IP, counted across every indexer hostname under gno.land
+// together. #526 stopped the 429s; nobody knew what was behind them. The
+// decisive figures here are the peak over one 300 second window (the budget is
+// spent in bursts, and a day under the ceiling on average with one window four
+// times over it is the shape that 429s) and the would-have-hit columns, which
+// say what a response cache would have saved before anybody builds one.
+//
+// The verdict and the sentence are written by the server (pkg/reqmeter), for
+// the same reason the availability summary is: this page, the API and whoever
+// comes to answer #525 with it should all say the same thing about the same
+// traffic.
+const USAGE_VERDICT_STYLE = {
+  under: { color: '#51cf66', label: 'under' },
+  near: { color: '#ffd43b', label: 'near' },
+  over: { color: '#ff6b6b', label: 'over' },
+};
+
+function usageVerdictEl(verdict, text) {
+  const st = USAGE_VERDICT_STYLE[verdict] || { color: 'var(--fg2)', label: verdict || '-' };
+  return el('span', { style: { color: st.color, fontWeight: 'bold' } }, text || ('● ' + st.label));
+}
+
+function indexerBudgetSection() {
+  const wrap = el('div', { className: 'section', id: 'sanity-indexer-budget' });
+  wrap.appendChild(el('div', { className: 'section-title' }, 'indexer budget'));
+  wrap.appendChild(el('div', { className: 'section-sub' },
+    'what this process spends at the upstream indexers, against the one per-IP rule they sit behind. '
+    + 'the peak is the figure that matters: the budget is spent in bursts, and a quiet day with one '
+    + 'burst over the ceiling costs a 300 second blackout just the same. "would hit" is what a '
+    + 'short-lived response cache would have saved, measured rather than guessed.'));
+
+  const body = el('div');
+  wrap.appendChild(body);
+  loadIndexerBudget(body);
+  return wrap;
+}
+
+async function loadIndexerBudget(body) {
+  body.textContent = '';
+  skeletonBlock(body);
+  let data;
+  try {
+    data = await api('indexer/usage');
+  } catch (err) {
+    body.textContent = '';
+    body.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px' } },
+      'the request meter could not be read'));
+    return;
+  }
+  body.textContent = '';
+
+  const budget = data.budget || {};
+  const shared = data.shared || {};
+  const all = data.all || {};
+
+  const cards = el('div', { className: 'stats-bar' });
+  const stat = (label, value, extra) => {
+    const card = el('div', { className: 'stat' },
+      el('span', { className: 'label' }, label),
+      el('span', { className: 'value' }, value));
+    if (extra) card.appendChild(extra);
+    return card;
+  };
+
+  cards.appendChild(stat('ceiling', fmtNum(budget.requests || 0) + ' / ' + (budget.seconds || 0) + 's',
+    el('span', { style: { color: 'var(--fg2)' } }, (budget.per_second || 0) + '/s sustained')));
+  cards.appendChild(stat('last ' + (budget.seconds || 300) + 's', fmtNum(shared.last_300s || 0),
+    usageVerdictEl(shared.current_verdict, '● ' + (shared.current_percent || 0).toFixed(0) + '% of budget')));
+  cards.appendChild(stat('peak ' + (budget.seconds || 300) + 's today', fmtNum(shared.peak_300s || 0),
+    usageVerdictEl(shared.verdict, '● ' + (shared.peak_percent || 0).toFixed(0) + '% of budget')));
+  cards.appendChild(stat('peak minute', fmtNum(shared.peak_minute || 0),
+    el('span', { style: { color: 'var(--fg2)' } }, (shared.peak_minute_per_sec || 0) + '/s')));
+  cards.appendChild(stat('collapsed', (shared.collapsed_percent || 0).toFixed(0) + '%',
+    el('span', { style: { color: 'var(--fg2)' } },
+      fmtNum(shared.collapsed || 0) + ' of ' + fmtNum(shared.asked || 0) + ' never sent')));
+  cards.appendChild(stat('refused (429)', fmtNum(shared.refused || 0),
+    el('span', { style: { color: 'var(--fg2)' } }, fmtNum(shared.failed || 0) + ' other errors')));
+  body.appendChild(cards);
+
+  body.appendChild(el('div', {
+    style: { color: 'var(--fg2)', fontSize: '12px', margin: '8px 0 4px', whiteSpace: 'normal', lineHeight: '1.5' },
+  }, data.summary || ''));
+
+  // How long this has been counting. Without it "peak over the last 24 hours"
+  // from a process up for eleven minutes reads exactly like a real day, which
+  // is the same honesty problem the availability section's "recording since"
+  // solves one section up.
+  body.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px', marginBottom: '10px' } },
+    'counting since ' + (data.since || '?') + ' (' + fmtGap(data.uptime_seconds || 0) + '), in memory only: '
+    + 'a restart starts over. off-edge origins excluded from the figures above; '
+    + fmtNum(all.sent || 0) + ' requests sent in total.'));
+
+  const ttls = data.ttl_seconds || [];
+  const eps = data.endpoints || [];
+  if (!eps.length) {
+    body.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px' } },
+      'no outbound indexer requests recorded yet'));
+    return;
+  }
+
+  for (const ep of eps) {
+    const block = el('div', { style: { marginBottom: '14px' } });
+    const head = el('div', { style: { display: 'flex', alignItems: 'baseline', gap: '8px', fontSize: '12px', flexWrap: 'wrap' } });
+    head.appendChild(el('span', { style: { fontWeight: 'bold' } }, ep.url));
+    head.appendChild(el('span', { style: { color: ep.shared_bucket ? 'var(--fg2)' : '#51cf66' } },
+      ep.shared_bucket ? 'on the shared per-IP budget' : 'own origin, off the shared budget'));
+    head.appendChild(el('span', { style: { color: 'var(--fg2)' } },
+      fmtNum(ep.sent || 0) + ' sent · ' + (ep.per_sec_300s || 0) + '/s now · peak ' + fmtNum(ep.peak_300s || 0)));
+    block.appendChild(head);
+
+    const table = el('table');
+    const hr = el('tr');
+    ['query', 'sent', 'share', 'collapsed', '429s', 'errors', 'bytes']
+      .forEach(h => hr.appendChild(el('th', {}, h)));
+    ttls.forEach(t => hr.appendChild(el('th', {}, 'would hit ' + t + 's')));
+    table.appendChild(el('thead', {}, hr));
+
+    // The top callers, not every caller. The question this table answers is
+    // "what would a cache have to cover", and the eleventh row has never been
+    // the answer to it. The count below says what was left off.
+    const groups = ep.groups || [];
+    const shown = groups.slice(0, 10);
+
+    const tb = el('tbody');
+    for (const g of shown) {
+      const row = el('tr');
+      row.appendChild(el('td', { 'data-usage-group': g.label }, g.label));
+      row.appendChild(el('td', {}, fmtNum(g.sent || 0)));
+      row.appendChild(el('td', {}, (g.sent_percent || 0).toFixed(0) + '%'));
+      row.appendChild(el('td', {}, fmtNum(g.collapsed || 0)));
+      row.appendChild(el('td', {}, fmtNum(g.refused || 0)));
+      row.appendChild(el('td', {}, fmtNum(g.failed || 0)));
+      row.appendChild(el('td', {}, shortBytes(g.bytes || 0)));
+      (g.would_hit || []).forEach((n, i) => {
+        const pct = (g.would_hit_percent || [])[i] || 0;
+        // Coloured by how much a cache would buy, because that is the decision
+        // this table exists to inform: green is a row a cache would mostly
+        // remove.
+        const colour = pct >= 50 ? '#51cf66' : pct >= 20 ? '#ffd43b' : 'var(--fg2)';
+        row.appendChild(el('td', {},
+          el('span', { style: { color: colour } }, fmtNum(n) + ' (' + pct.toFixed(0) + '%)')));
+      });
+      tb.appendChild(row);
+    }
+    table.appendChild(tb);
+    block.appendChild(table);
+    if (groups.length > shown.length) {
+      block.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px' } },
+        'and ' + (groups.length - shown.length) + ' more query shapes at this endpoint'));
+    }
+    body.appendChild(block);
+  }
+
+  const b = data.bounds || {};
+  body.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px', marginTop: '4px', whiteSpace: 'normal', lineHeight: '1.5' } },
+    'the "would hit" columns are a floor: the simulation is holding ' + fmtNum(b.cache_sim_tracked || 0)
+    + ' of up to ' + fmtNum(b.cache_sim_keys || 0) + ' request identities and has evicted '
+    + fmtNum(b.cache_sim_evictions || 0)
+    + ', and every eviction reads as a miss a larger cache would have hit. requests already collapsed '
+    + 'in flight are excluded, so nothing is counted as saved twice.'));
+}
+
 function availabilitySection() {
   const wrap = el('div', { className: 'section', id: 'sanity-availability' });
   wrap.appendChild(el('div', { className: 'section-title' }, 'availability'));
@@ -14356,6 +14522,7 @@ async function loadSanity() {
 
     container.appendChild(sanityDiagnosisSection(ov));
     container.appendChild(availabilitySection());
+    container.appendChild(indexerBudgetSection());
     container.appendChild(heartbeatSection());
     container.appendChild(sanitySyncSection(ov));
 

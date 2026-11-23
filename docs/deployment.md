@@ -22,6 +22,14 @@ One static binary and one SQLite file. No runtime dependencies.
 | `-health-db` | none | SQLite path for the per-network availability history, e.g. `gnoscope-health.db`. Empty records nothing, and `/sanity`'s availability strip says so |
 | `-health-retention-days` | `30` | days of health samples to keep. `0` keeps them forever |
 
+**No flag turns the outbound request meter on.** `GET /api/indexer/usage` and the
+indexer budget section on `/sanity` are unconditional and entirely in memory:
+they start counting on the first outbound request and need no database, no
+interval and no ceiling to be configured. Deploying the binary is enough. The
+cost is that a restart starts the day over, which is why every response carries
+`since` and `uptime_seconds`. See
+[`api.md`](api.md#outbound-request-budget).
+
 ## Configuration
 
 Config comes from exactly one of these, in order:

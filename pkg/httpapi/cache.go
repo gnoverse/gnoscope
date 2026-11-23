@@ -500,6 +500,12 @@ func cacheable(r *http.Request) bool {
 		// the state the cache was in thirty seconds ago, which is the one
 		// question it exists to answer correctly.
 		return false
+	case "/api/indexer/usage":
+		// Same class again. It reports what this process has just spent at the
+		// upstream, and the one moment anybody reads it is during an incident,
+		// when thirty seconds old is the difference between "we are the cause"
+		// and "we were the cause and have stopped".
+		return false
 	case "/api/views":
 		// Same class, and it caught us. This counts realm page opens, flushes
 		// the buffer before answering so the number is current, and is then
