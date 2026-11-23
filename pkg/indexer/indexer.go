@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type Client struct {
@@ -29,6 +31,15 @@ type Client struct {
 	skipUntil time.Time
 	active    int
 	lastProbe time.Time
+	// rateLimits counts consecutive refusals (429) from this pool, and is the
+	// exponent behind the stand-down. Separate from failures because the two
+	// answer different questions: failures is "do we think it is unwell", this
+	// is "how many times has it told us to go away". Reset by any success.
+	rateLimits int
+	// lastRefusal identifies the round trip the newest notch on that ladder
+	// came from. Collapsed callers share one refusal object, and the ladder
+	// counts refusals rather than the callers that heard about one.
+	lastRefusal *RateLimitError
 	// fingerprint of the chain this pool is serving, learned from the first
 	// endpoint that answers. Members that disagree are never selected.
 	fingerprint string
@@ -36,6 +47,10 @@ type Client struct {
 	// typeSupport caches, per GraphQL type name, whether this chain's indexer
 	// defines it. A type is absent from the map until the first query asks.
 	typeSupport map[string]bool
+
+	// flight collapses concurrent identical requests. Its zero value works, so
+	// a Client built by any path gets it. See doQuery.
+	flight singleflight.Group
 }
 
 // ErrUnavailable is returned while the breaker is open.
@@ -82,17 +97,66 @@ func (c *Client) breakerOpen() bool {
 }
 
 // recordResult updates the breaker after a request.
+//
+// A refusal is handled apart from a failure, in both of the ways that matter.
+// It trips on the FIRST one rather than after clientBreakerThreshold, because
+// the threshold exists to avoid acting on one bad sample and a 429 is not a
+// sample, it is a verdict; and it stands down for as long as the server asked
+// rather than for the flat cooldown, which is what used to bring us back
+// inside the penalty window and re-arm it.
 func (c *Client) recordResult(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err == nil {
-		c.failures, c.skipUntil = 0, time.Time{}
+		c.failures, c.rateLimits, c.skipUntil = 0, 0, time.Time{}
+		c.lastRefusal = nil
 		return
 	}
 	c.failures++
-	if c.failures >= clientBreakerThreshold {
-		c.skipUntil = time.Now().Add(clientBreakerCooldown)
+	if errors.Is(err, ErrRateLimited) {
+		var rl *RateLimitError
+		errors.As(err, &rl)
+		// One round trip, one notch on the ladder. doQuery collapses concurrent
+		// identical requests, so several callers hand back the same refusal
+		// object; counting each of them would square the backoff against the
+		// width of the fan-out rather than against how often we were refused.
+		if rl != nil && rl == c.lastRefusal {
+			return
+		}
+		c.lastRefusal = rl
+		c.rateLimits++
+		hint, _ := RetryAfterOf(err)
+		c.pauseUntil(time.Now().Add(RateLimitPause(hint, c.rateLimits)))
+		return
 	}
+	if c.failures >= clientBreakerThreshold {
+		c.pauseUntil(time.Now().Add(clientBreakerCooldown))
+	}
+}
+
+// pauseUntil extends the stand-down, and never shortens it. Called with c.mu
+// held.
+//
+// The "never shortens" half is load-bearing: an ordinary failure arriving
+// during a 300-second rate-limit pause used to overwrite it with the flat
+// 30-second cooldown, which is the amplification wearing a different hat.
+func (c *Client) pauseUntil(t time.Time) {
+	if t.After(c.skipUntil) {
+		c.skipUntil = t
+	}
+}
+
+// PausedUntil reports when the breaker will next let a request through, and
+// whether it is currently open.
+//
+// Exported for the background sync loop, which runs about eighteen passes per
+// SyncAll. Every one of them would otherwise walk into breakerOpen() and log
+// its own failure, so a paused network produced eighteen log lines every thirty
+// seconds saying the same thing.
+func (c *Client) PausedUntil() (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.skipUntil, time.Now().Before(c.skipUntil)
 }
 
 // Request budgets. Serving a page and running a background sync have nothing in
@@ -708,64 +772,162 @@ func (c *Client) query(ctx context.Context, query string, vars map[string]any, r
 	return err
 }
 
+// doQuery sends one GraphQL request and decodes it into result, collapsing
+// concurrent identical requests into a single round trip.
+//
+// The collapsing is the point. Nothing on this client was cached except
+// typeSupport, which is schema capability rather than data, so N readers asking
+// the same question at the same instant were N requests at the upstream, and a
+// crawler walking one realm page was its own small thundering herd. That
+// fan-out is what earns the per-IP 429s this file now has to back off from, so
+// deduplicating it and honouring the refusal are two halves of one fix.
+//
+// In flight only, deliberately. A TTL response cache is a separate and larger
+// question about which read paths are immutable, and it does not belong behind
+// the same switch as this.
+//
+// A shared request belongs to the flight and not to whichever caller happened
+// to start it, which is why the round trip runs under a context detached from
+// that caller's: otherwise the first reader to close their tab cancels a
+// request several other readers are waiting on, and the breaker records their
+// cancellation as the indexer being slow. Each caller still waits on its own
+// context and leaves when that context says to.
+//
+// A failure, on the other hand, is shared on purpose: N callers see one
+// upstream error rather than each earning their own, which is exactly the
+// behaviour wanted from something whose job is to stop asking.
 func (c *Client) doQuery(ctx context.Context, url, query string, vars map[string]any, result any) error {
 	body, err := json.Marshal(gqlRequest{Query: query, Variables: vars})
 	if err != nil {
 		return err
 	}
 
+	// The key is the endpoint plus the exact bytes we would send. encoding/json
+	// sorts map keys, so two callers passing the same vars in a different
+	// insertion order serialise identically and collapse, as they should. The
+	// NUL separator cannot occur in a URL, so no (url, body) pair can collide
+	// with another by concatenation.
+	//
+	// The endpoint is part of the key rather than left out: the pool fails over
+	// mid-flight, and two callers reading different endpoints are asking two
+	// chains' worth of different questions even when the text matches.
+	ch := c.flight.DoChan(url+"\x00"+string(body), func() (any, error) {
+		// Detached from this caller's cancellation, bounded by the client's own
+		// timeout. c.client.Timeout bounds the round trip already; the context
+		// is what stops a Client built without one from waiting forever.
+		fctx := context.WithoutCancel(ctx)
+		if c.client.Timeout > 0 {
+			var cancel context.CancelFunc
+			fctx, cancel = context.WithTimeout(fctx, c.client.Timeout)
+			defer cancel()
+		}
+		return c.fetch(fctx, url, body), nil
+	})
+
+	var out *queryOutcome
+	select {
+	case <-ctx.Done():
+		// This caller is gone. The flight carries on for whoever else is
+		// waiting on it, and this caller reports its OWN context's error rather
+		// than inheriting anyone else's.
+		return ctx.Err()
+	case res := <-ch:
+		out = res.Val.(*queryOutcome)
+	}
+
+	// The element cap is the one error that still carries usable data: the
+	// resolver stops iterating and returns the rows it already has, so decode
+	// the partial page before reporting it.
+	if out.capped {
+		if err := json.Unmarshal(out.data, result); err != nil {
+			return fmt.Errorf("decode capped response: %w", err)
+		}
+		return out.err
+	}
+	if out.err != nil {
+		return out.err
+	}
+	return json.Unmarshal(out.data, result)
+}
+
+// queryOutcome is one upstream answer, shared by every caller that collapsed
+// onto it. It holds the raw `data` rather than a decoded value because each
+// caller decodes into its own destination type.
+type queryOutcome struct {
+	data   json.RawMessage
+	err    error
+	capped bool
+}
+
+// fetch performs the round trip. It never touches result: everything it learns
+// goes into the outcome, so one response can serve many callers.
+func (c *Client) fetch(ctx context.Context, url string, body []byte) *queryOutcome {
+	out := &queryOutcome{}
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		out.err = err
+		return out
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		out.err = err
+		return out
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		out.err = err
+		return out
 	}
 
 	// Report a refused request as what it is. A rate-limited indexer answers with
 	// an HTML error page, which otherwise surfaces as "invalid character '<'" and
 	// sends the reader looking for a bug in the query rather than at the status
 	// code. Sync catch-up is exactly the traffic that earns a 403.
+	//
+	// A 429 is split out and typed, because it is the only status that comes
+	// with instructions. See ratelimit.go.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		out.err = newRateLimitError(url, resp.Status, resp.Header, respBody)
+		return out
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("indexer returned %s: %s", resp.Status, string(respBody[:min(200, len(respBody))]))
+		out.err = fmt.Errorf("indexer returned %s: %s", resp.Status, string(respBody[:min(200, len(respBody))]))
+		return out
 	}
 
 	var gqlResp gqlResponse
 	if err := json.Unmarshal(respBody, &gqlResp); err != nil {
-		return fmt.Errorf("decode response: %w (body: %s)", err, string(respBody[:min(200, len(respBody))]))
+		out.err = fmt.Errorf("decode response: %w (body: %s)", err, string(respBody[:min(200, len(respBody))]))
+		return out
 	}
+	out.data = gqlResp.Data
 
 	if len(gqlResp.Errors) > 0 {
 		for _, e := range gqlResp.Errors {
 			if !strings.Contains(e.Message, "max elements per query") {
 				continue
 			}
-			// The resolver stops iterating at the cap and returns the rows it
-			// already has alongside this error, so decode the partial page before
-			// reporting it. Only this error carries usable data — for anything
-			// else `data` is meaningless and must not reach the caller.
-			if err := json.Unmarshal(gqlResp.Data, result); err != nil {
-				return fmt.Errorf("decode capped response: %w", err)
-			}
-			return fmt.Errorf("%w: %s", ErrQueryTooLarge, e.Message)
+			// Only this error carries usable data. For anything else `data`
+			// is meaningless and must not reach the caller.
+			out.capped = true
+			out.err = fmt.Errorf("%w: %s", ErrQueryTooLarge, e.Message)
+			return out
 		}
+		out.data = nil
 		if strings.Contains(gqlResp.Errors[0].Message, indexerNotFoundMessage) {
-			return fmt.Errorf("%w: %s", ErrNotFound, gqlResp.Errors[0].Message)
+			out.err = fmt.Errorf("%w: %s", ErrNotFound, gqlResp.Errors[0].Message)
+			return out
 		}
-		return fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)
+		out.err = fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)
+		return out
 	}
 
-	return json.Unmarshal(gqlResp.Data, result)
+	return out
 }
 
 // LatestBlockHeight returns the latest indexed block height.
