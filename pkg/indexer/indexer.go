@@ -36,6 +36,10 @@ type Client struct {
 	// answer different questions: failures is "do we think it is unwell", this
 	// is "how many times has it told us to go away". Reset by any success.
 	rateLimits int
+	// lastRefusal identifies the round trip the newest notch on that ladder
+	// came from. Collapsed callers share one refusal object, and the ladder
+	// counts refusals rather than the callers that heard about one.
+	lastRefusal *RateLimitError
 	// fingerprint of the chain this pool is serving, learned from the first
 	// endpoint that answers. Members that disagree are never selected.
 	fingerprint string
@@ -105,10 +109,21 @@ func (c *Client) recordResult(err error) {
 	defer c.mu.Unlock()
 	if err == nil {
 		c.failures, c.rateLimits, c.skipUntil = 0, 0, time.Time{}
+		c.lastRefusal = nil
 		return
 	}
 	c.failures++
 	if errors.Is(err, ErrRateLimited) {
+		var rl *RateLimitError
+		errors.As(err, &rl)
+		// One round trip, one notch on the ladder. doQuery collapses concurrent
+		// identical requests, so several callers hand back the same refusal
+		// object; counting each of them would square the backoff against the
+		// width of the fan-out rather than against how often we were refused.
+		if rl != nil && rl == c.lastRefusal {
+			return
+		}
+		c.lastRefusal = rl
 		c.rateLimits++
 		hint, _ := RetryAfterOf(err)
 		c.pauseUntil(time.Now().Add(RateLimitPause(hint, c.rateLimits)))
@@ -771,11 +786,16 @@ func (c *Client) query(ctx context.Context, query string, vars map[string]any, r
 // question about which read paths are immutable, and it does not belong behind
 // the same switch as this.
 //
-// Two tradeoffs come with sharing a request, and both are the accepted ones.
-// The leader's context governs: a waiter with a longer deadline inherits the
-// leader's cancellation. And a failure is shared too, so N callers see one
-// upstream error rather than each earning their own, which is the behaviour we
-// want from something whose job is to stop asking.
+// A shared request belongs to the flight and not to whichever caller happened
+// to start it, which is why the round trip runs under a context detached from
+// that caller's: otherwise the first reader to close their tab cancels a
+// request several other readers are waiting on, and the breaker records their
+// cancellation as the indexer being slow. Each caller still waits on its own
+// context and leaves when that context says to.
+//
+// A failure, on the other hand, is shared on purpose: N callers see one
+// upstream error rather than each earning their own, which is exactly the
+// behaviour wanted from something whose job is to stop asking.
 func (c *Client) doQuery(ctx context.Context, url, query string, vars map[string]any, result any) error {
 	body, err := json.Marshal(gqlRequest{Query: query, Variables: vars})
 	if err != nil {
@@ -791,10 +811,29 @@ func (c *Client) doQuery(ctx context.Context, url, query string, vars map[string
 	// The endpoint is part of the key rather than left out: the pool fails over
 	// mid-flight, and two callers reading different endpoints are asking two
 	// chains' worth of different questions even when the text matches.
-	v, _, _ := c.flight.Do(url+"\x00"+string(body), func() (any, error) {
-		return c.fetch(ctx, url, body), nil
+	ch := c.flight.DoChan(url+"\x00"+string(body), func() (any, error) {
+		// Detached from this caller's cancellation, bounded by the client's own
+		// timeout. c.client.Timeout bounds the round trip already; the context
+		// is what stops a Client built without one from waiting forever.
+		fctx := context.WithoutCancel(ctx)
+		if c.client.Timeout > 0 {
+			var cancel context.CancelFunc
+			fctx, cancel = context.WithTimeout(fctx, c.client.Timeout)
+			defer cancel()
+		}
+		return c.fetch(fctx, url, body), nil
 	})
-	out := v.(*queryOutcome)
+
+	var out *queryOutcome
+	select {
+	case <-ctx.Done():
+		// This caller is gone. The flight carries on for whoever else is
+		// waiting on it, and this caller reports its OWN context's error rather
+		// than inheriting anyone else's.
+		return ctx.Err()
+	case res := <-ch:
+		out = res.Val.(*queryOutcome)
+	}
 
 	// The element cap is the one error that still carries usable data: the
 	// resolver stops iterating and returns the rows it already has, so decode

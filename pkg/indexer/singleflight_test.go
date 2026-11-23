@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -191,5 +192,87 @@ func TestConcurrentIdenticalQueriesShareOneRefusal(t *testing.T) {
 	}
 	if _, paused := c.PausedUntil(); !paused {
 		t.Error("the shared refusal must still trip the breaker")
+	}
+}
+
+// A caller leaving must not take the flight with it.
+//
+// The first reader to close their tab cancels the request, and if the flight is
+// bound to that caller's context then every other reader waiting on the same
+// answer gets a cancellation they never asked for, and the breaker records it
+// as the indexer being slow. The request belongs to the flight.
+func TestACancelledCallerDoesNotPoisonTheOthers(t *testing.T) {
+	b, srv := newBlockingIndexer(t, ok(`{"data":{"latestBlockHeight":445027}}`))
+	c := NewClient(srv.URL)
+
+	quitter, abandon := context.WithCancel(context.Background())
+
+	var quitterErr, stayerErr error
+	var stayerHeight int
+	var done sync.WaitGroup
+
+	// Ordered, so the caller that leaves is provably the one that started the
+	// flight. Started together it would be whichever goroutine won, and the
+	// regression this pins would only show up half the time.
+	done.Add(1)
+	go func() {
+		defer done.Done()
+		_, quitterErr = c.LatestBlockHeight(quitter)
+	}()
+	<-b.arrived
+
+	done.Add(1)
+	go func() {
+		defer done.Done()
+		stayerHeight, stayerErr = c.LatestBlockHeight(context.Background())
+	}()
+	time.Sleep(300 * time.Millisecond)
+
+	abandon()
+	time.Sleep(100 * time.Millisecond)
+	close(b.release)
+	done.Wait()
+
+	if !errors.Is(quitterErr, context.Canceled) {
+		t.Errorf("the caller that left got %v, want its own context.Canceled", quitterErr)
+	}
+	if stayerErr != nil {
+		t.Fatalf("the caller that stayed got %v; it inherited somebody else's cancellation", stayerErr)
+	}
+	if stayerHeight != 445027 {
+		t.Errorf("the caller that stayed got height %d, want 445027", stayerHeight)
+	}
+	if got := atomic.LoadInt64(&b.hits); got != 1 {
+		t.Errorf("%d upstream requests, want 1", got)
+	}
+}
+
+// The backoff ladder counts refusals, not the callers that heard about one.
+//
+// Collapsing hands the same refusal to every waiter, and if each of them
+// advanced the exponent then the stand-down would scale with the width of the
+// fan-out rather than with how often the upstream actually said no: six readers
+// hitting one 429 would jump straight to the ceiling.
+func TestASharedRefusalAdvancesTheLadderOnce(t *testing.T) {
+	const callers = 6
+
+	b, srv := newBlockingIndexer(t, func(string) (int, string) {
+		return http.StatusTooManyRequests, onyxRateLimitBody
+	})
+	c := NewClient(srv.URL)
+
+	b.runConcurrently(callers, func(int) {
+		c.LatestBlockHeight(context.Background())
+	})
+
+	until, paused := c.PausedUntil()
+	if !paused {
+		t.Fatal("the shared refusal did not trip the breaker")
+	}
+	// One notch: the 300s the server asked for, plus jitter. Six notches would
+	// be 300s << 5, which the ceiling clamps to 15 minutes.
+	if wait := time.Until(until); wait > 331*time.Second {
+		t.Errorf("paused for %s after one refusal shared by %d callers; want about 300s, so the ladder moved %d times",
+			wait.Round(time.Second), callers, callers)
 	}
 }
