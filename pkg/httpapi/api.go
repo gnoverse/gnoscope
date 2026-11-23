@@ -23,6 +23,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/healthlog"
 	"github.com/gnoverse/gnoscope/pkg/indexer"
 	"github.com/gnoverse/gnoscope/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/reqmeter"
 	"github.com/gnoverse/gnoscope/pkg/store"
 	"github.com/gnoverse/gnoscope/pkg/syncer"
 	"github.com/gnoverse/gnoscope/pkg/traffic"
@@ -108,6 +109,11 @@ type API struct {
 	// the network's submissions move. Zero value ready; see
 	// api_code_timeline.go.
 	timeline timelineMemo
+
+	// indexerMeter is the outbound request meter behind /api/indexer/usage,
+	// normally the process-wide one in pkg/reqmeter. Nil means "use that one";
+	// a test replaces it. See api_indexer_usage.go.
+	indexerMeter *reqmeter.Meter
 
 	// healthLog is the per-network availability record: one sample per probe,
 	// in its own database file. Nil when -health-db is unset, and every use of
@@ -1185,6 +1191,7 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/params", a.HandleParameters)
 	mux.HandleFunc("GET /api/health/heartbeat", a.HandleHeartbeat)
 	mux.HandleFunc("GET /api/health/history", a.HandleHealthHistory)
+	mux.HandleFunc("GET /api/indexer/usage", a.HandleIndexerUsage)
 	mux.HandleFunc("GET /api/registry/apps", a.HandleApps)
 	mux.HandleFunc("GET /api/apps", a.HandleAppsHub)
 	mux.HandleFunc("GET /api/registry/awesome", a.HandleAwesome)

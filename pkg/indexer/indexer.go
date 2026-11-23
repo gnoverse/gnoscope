@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/gnoverse/gnoscope/pkg/reqmeter"
 )
 
 type Client struct {
@@ -51,7 +53,19 @@ type Client struct {
 	// flight collapses concurrent identical requests. Its zero value works, so
 	// a Client built by any path gets it. See doQuery.
 	flight singleflight.Group
+
+	// meter counts what this client spends at the upstream, for
+	// /api/indexer/usage. Process-wide rather than per-client, because the
+	// budget it is measured against is per IP: the serve pool, the sync pool
+	// and every configured network share one Cloudflare bucket. Nil in a
+	// Client built as a literal, and every call on it is a no-op then.
+	meter *reqmeter.Meter
 }
+
+// SetMeter points this client at a request meter. Exported for tests, which
+// want a meter of their own rather than the process-wide one; the constructors
+// wire the default.
+func (c *Client) SetMeter(m *reqmeter.Meter) { c.meter = m }
 
 // ErrUnavailable is returned while the breaker is open.
 var ErrUnavailable = errors.New("indexer unavailable, not retried yet")
@@ -202,6 +216,7 @@ func newIndexerClient(urls []string, timeout time.Duration) *Client {
 	return &Client{
 		urls:   normalized,
 		client: &http.Client{Timeout: timeout, Transport: indexerTransport},
+		meter:  reqmeter.Default(),
 	}
 }
 
@@ -811,6 +826,14 @@ func (c *Client) doQuery(ctx context.Context, url, query string, vars map[string
 	// The endpoint is part of the key rather than left out: the pool fails over
 	// mid-flight, and two callers reading different endpoints are asking two
 	// chains' worth of different questions even when the text matches.
+
+	// One logical request, counted before singleflight decides whether it costs
+	// a round trip. The meter reports the difference between this and what
+	// fetch sends as the saving the collapsing is already making; see
+	// pkg/reqmeter.
+	label := reqmeter.Label(query)
+	c.meter.Asked(url, label)
+
 	ch := c.flight.DoChan(url+"\x00"+string(body), func() (any, error) {
 		// Detached from this caller's cancellation, bounded by the client's own
 		// timeout. c.client.Timeout bounds the round trip already; the context
@@ -821,7 +844,7 @@ func (c *Client) doQuery(ctx context.Context, url, query string, vars map[string
 			fctx, cancel = context.WithTimeout(fctx, c.client.Timeout)
 			defer cancel()
 		}
-		return c.fetch(fctx, url, body), nil
+		return c.fetch(fctx, url, body, label), nil
 	})
 
 	var out *queryOutcome
@@ -859,14 +882,59 @@ type queryOutcome struct {
 	capped bool
 }
 
-// fetch performs the round trip. It never touches result: everything it learns
-// goes into the outcome, so one response can serve many callers.
-func (c *Client) fetch(ctx context.Context, url string, body []byte) *queryOutcome {
+// fetch performs the round trip and records it.
+//
+// This is the one place in the binary where an outbound GraphQL request leaves,
+// which is why the meter is here and not at any of the forty call sites above:
+// a counter at a call site is a counter somebody forgets to add to the
+// forty-first. See pkg/reqmeter for what is counted and what bounds it.
+func (c *Client) fetch(ctx context.Context, url string, body []byte, label string) *queryOutcome {
+	out, size := c.fetchOnce(ctx, url, body)
+	c.meter.Sent(reqmeter.Request{
+		URL:     url,
+		Label:   label,
+		Body:    body,
+		Bytes:   size,
+		Outcome: meterOutcome(out.err),
+		// What a response cache would have stored. A refusal, a transport
+		// failure, a miss and a GraphQL error are all answers a cache would
+		// not keep, and counting them as fills would promise a hit rate on
+		// repeated failures.
+		Cacheable: out.err == nil || out.capped,
+	})
+	return out
+}
+
+// meterOutcome classifies a round trip for the meter.
+//
+// A 200 carrying a GraphQL error counts as OK rather than as a failure: the
+// upstream answered and the budget was spent either way, which is the only
+// thing being measured here. ErrRateLimited is the one that is split out,
+// because it is the one the budget is about.
+func meterOutcome(err error) reqmeter.Outcome {
+	switch {
+	case err == nil:
+		return reqmeter.OutcomeOK
+	case errors.Is(err, ErrRateLimited):
+		return reqmeter.OutcomeRefused
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrQueryTooLarge),
+		strings.HasPrefix(err.Error(), "graphql error:"):
+		return reqmeter.OutcomeOK
+	default:
+		return reqmeter.OutcomeFailed
+	}
+}
+
+// fetchOnce is the round trip itself. It never touches result: everything it
+// learns goes into the outcome, so one response can serve many callers. The
+// second return is the size of the response body, which the meter wants and the
+// outcome has no use for.
+func (c *Client) fetchOnce(ctx context.Context, url string, body []byte) (*queryOutcome, int) {
 	out := &queryOutcome{}
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		out.err = err
-		return out
+		return out, 0
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -874,15 +942,16 @@ func (c *Client) fetch(ctx context.Context, url string, body []byte) *queryOutco
 	resp, err := c.client.Do(req)
 	if err != nil {
 		out.err = err
-		return out
+		return out, 0
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		out.err = err
-		return out
+		return out, len(respBody)
 	}
+	size := len(respBody)
 
 	// Report a refused request as what it is. A rate-limited indexer answers with
 	// an HTML error page, which otherwise surfaces as "invalid character '<'" and
@@ -893,17 +962,17 @@ func (c *Client) fetch(ctx context.Context, url string, body []byte) *queryOutco
 	// with instructions. See ratelimit.go.
 	if resp.StatusCode == http.StatusTooManyRequests {
 		out.err = newRateLimitError(url, resp.Status, resp.Header, respBody)
-		return out
+		return out, size
 	}
 	if resp.StatusCode != http.StatusOK {
 		out.err = fmt.Errorf("indexer returned %s: %s", resp.Status, string(respBody[:min(200, len(respBody))]))
-		return out
+		return out, size
 	}
 
 	var gqlResp gqlResponse
 	if err := json.Unmarshal(respBody, &gqlResp); err != nil {
 		out.err = fmt.Errorf("decode response: %w (body: %s)", err, string(respBody[:min(200, len(respBody))]))
-		return out
+		return out, size
 	}
 	out.data = gqlResp.Data
 
@@ -916,18 +985,18 @@ func (c *Client) fetch(ctx context.Context, url string, body []byte) *queryOutco
 			// is meaningless and must not reach the caller.
 			out.capped = true
 			out.err = fmt.Errorf("%w: %s", ErrQueryTooLarge, e.Message)
-			return out
+			return out, size
 		}
 		out.data = nil
 		if strings.Contains(gqlResp.Errors[0].Message, indexerNotFoundMessage) {
 			out.err = fmt.Errorf("%w: %s", ErrNotFound, gqlResp.Errors[0].Message)
-			return out
+			return out, size
 		}
 		out.err = fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)
-		return out
+		return out, size
 	}
 
-	return out
+	return out, size
 }
 
 // LatestBlockHeight returns the latest indexed block height.

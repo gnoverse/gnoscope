@@ -1178,6 +1178,120 @@ window that figure covers. A row with no samples reports no percentage at all.
 
 `state` values are the `diagnosis` states above, plus `no_data`.
 
+## Outbound request budget
+
+What this process spends at the indexers, against the one rule they sit behind.
+
+| endpoint | description |
+|---|---|
+| `GET /api/indexer/usage` | the outbound request meter: cumulative counters, rolling rates, the peak over one budget window in the last day, a per-operation breakdown, and what a short-TTL response cache would have saved. No parameters, and no flag to enable it |
+
+### Why this exists, and what it is measuring against
+
+The public gno indexers sit behind **one** Cloudflare rate-limit rule: **3,100
+requests per 300 seconds per IP, counted across every `indexer.` hostname under
+`gno.land` together**, not per hostname and not per network. That is about 10.3
+requests per second sustained, shared between every chain this explorer reads.
+Going one over costs a 300 second blackout, because the rule's block cannot be
+shorter than its own period.
+
+Measured on the production instance over 24 hours before #526: 277 upstream
+429s, all on onyx, behind 38 breaker trips. #526 took that to zero by honouring
+`Retry-After` and collapsing concurrent identical queries, without anyone
+knowing how much budget was being spent in the first place. This is that number,
+and it is produced permanently rather than once.
+
+### Where the counting happens
+
+`Client.fetch` in `pkg/indexer`, which is the one place an outbound GraphQL
+request leaves the binary. A counter at a call site is a counter somebody
+forgets to add to the forty-first call site.
+
+Two figures, not one. `asked` is counted in `doQuery`, before singleflight has
+decided whether a caller costs a round trip; `sent` is counted in `fetch`, which
+runs once per flight. `collapsed` is the difference, which is the saving #526 is
+already making and the reason a cache's upside has to be measured against `sent`
+rather than against raw demand.
+
+### The rate, and why the peak is the figure
+
+A cumulative counter since process start answers the wrong question: the budget
+is spent in bursts. A day averaging well under the ceiling with one window four
+times over it is exactly the shape that earns a 429, and the average reports that
+day as fine.
+
+So the response carries `last_60s`, `last_300s` and `last_1h`, plus
+`peak_minute` and `peak_300s` over the retained day. `peak_300s` is the one the
+verdict is drawn from, because the ceiling counts requests per window and is not
+a rate. It is minute-aligned, so the true worst 300 seconds can straddle two
+runs and be up to one minute's traffic higher than reported.
+
+`verdict` and `current_verdict` are `under`, `near` (70% of the ceiling) or
+`over`. Three rather than two: a boolean would only go true after the blackout
+had already started.
+
+### Shared bucket versus own origin
+
+`shared` is the traffic that actually spends the per-IP budget, and is what the
+verdict grades. `all` is every endpoint. The split matters because mainnet's
+reads can be served by onbloc, which is a different origin and off that
+Cloudflare edge entirely: that is why mainnet never 429s while onyx did, and an
+instance configured with onbloc first spends almost nothing against the shared
+bucket while making plenty of requests. Classification is by DNS suffix; an
+endpoint whose URL will not parse counts as shared, since over-reporting what we
+spend against a ceiling is the safe direction to be wrong in.
+
+### Attribution
+
+Requests are grouped by the GraphQL operation name, or by the first root field
+where there is none, which is what this codebase's queries actually carry: most
+are anonymous with one root field, so in practice the groups are
+`getTransactions`, `latestBlockHeight`, `getBlocks` and `getSupply`. The parser
+skips string literals, which is load-bearing rather than tidy: several queries
+interpolate a package path or an address into a `where` clause, those values are
+attacker-controlled, and a naive scan would key the group table by something an
+outsider writes.
+
+### What a cache would have saved, without building the cache
+
+Every wire request is run past a simulation of a response cache that does not
+exist, at 5, 30 and 300 seconds. `would_hit` and `would_hit_percent` per group
+are the hit rate that cache would have had. **This is the figure #525 is waiting
+on**: a cache that covers the top three groups may be the whole fix, and the
+decision does not need the cache to be built first.
+
+What is simulated is a cache and not a memory, and the distinction decides the
+number. Requests at t=0, t=4 and t=8 under a 5 second lifetime are one hit and a
+refill, not two hits: the entry expires five seconds after it was filled, not
+five seconds after it was last read.
+
+The figure is a floor in two directions, both of which make it read low:
+evictions from the simulation's bounded key set count as misses a larger cache
+would have hit, and requests singleflight already collapsed are excluded, since
+a cache cannot claim a saving that has already been made.
+
+### Bounded, and it says by what
+
+`bounds` in the response is the meter's own cost, reported rather than asserted:
+a ring of 300 one-second and 1,440 one-minute slots per endpoint rather than a
+timestamp per request, at most 16 endpoints and 48 operation groups each with
+the overflow folded into a named bucket, and an LRU of 8,192 request digests for
+the simulation. Nothing is keyed by anything an outsider controls.
+
+Everything is in memory and nothing is persisted, so a restart starts over.
+`since` and `uptime_seconds` are in the response for that reason: "peak over the
+last 24 hours" from a process up for eleven minutes reads identically to a real
+day.
+
+### What it does not cover
+
+The indexer path only. The RPC and ABCI calls (`probeNode`, chain verification,
+balances, `vm/qrender`, `vm/qeval`, parameters, gnockpit), the GitHub lab, the
+price venues, the genesis import and the screenshot upstream all use their own
+`http.Client` and are not counted here. The RPC path is the one that matters:
+it is also outside #526's breaker, and it is where the remaining 429s were
+measured.
+
 ## Transactions and blocks
 
 | endpoint | description |

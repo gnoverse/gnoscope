@@ -56,6 +56,16 @@ cooldown brought us back inside a 300 second penalty window and re-armed it: 277
 upstream 429s in 24 hours on one network, measured 2026-11-23. See
 `pkg/indexer/ratelimit.go`.
 
+**`pkg/reqmeter`** is the outbound request meter, fed from `Client.fetch` because
+that is the one place a GraphQL request leaves the binary. Per endpoint and per
+GraphQL operation: requests sent, requests collapsed in flight, refusals, errors,
+bytes, a rolling rate and the peak over one budget window in the last day, plus a
+simulation of the response cache that does not exist yet. It answers the question
+the three paragraphs above left open, which is how much of the 3,100-per-300-seconds
+per-IP budget this explorer actually spends and on which queries. Everything is in
+fixed memory and nothing is persisted. Served at `GET /api/indexer/usage` and drawn
+on `/sanity`; see [`api.md`](api.md#outbound-request-budget).
+
 **`pkg/syncer`** — the background loop, one per network, every 30s. Each pass
 checks chain identity, syncs blocks, then syncs packages, calls/sends, and
 msg_runs. Cursors come from the highest stored height, so a pass only fetches
