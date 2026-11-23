@@ -773,3 +773,137 @@ func TestSyncBlocksCanBeDeclined(t *testing.T) {
 		t.Errorf("made %d indexer range queries with block sync declined, want 0", fake.BlockQueryCount())
 	}
 }
+
+// ⚠️ A reset chain keeps its heights and changes what is at them, so a response
+// cache keyed on a block height outlives the chain it was filled from and then
+// serves the old chain's blocks with total confidence. #525's own comments
+// record that shape one layer down, where a stale node defines a pool's
+// identity and locks the real endpoints out as impostors; this is the same trap
+// one layer up, and this test is what keeps the purge wired to the detection.
+func TestChainResetEmptiesTheResponseCache(t *testing.T) {
+	ctx := context.Background()
+	syncer, fake, _ := newTestSyncer(t, "staging")
+
+	cache := indexer.NewResponseCache(1000, 1<<20)
+	syncer.client.SetCache(cache)
+	fake.AddBlocks(indexer.Block{Height: 500, Hash: "b500-a", ChainID: "testchain", Time: "2026-01-01T00:08:20Z"})
+
+	if err := syncer.checkChainReset(ctx); err != nil {
+		t.Fatalf("first reset check: %v", err)
+	}
+	// Warm it with a block that is not the fingerprint block, since height 1
+	// is deliberately never cached.
+	if _, err := syncer.client.GetBlock(ctx, 500); err != nil {
+		t.Fatalf("warm the cache: %v", err)
+	}
+	if st := cache.Stats(); st.Entries == 0 {
+		t.Fatalf("cache holds nothing after a block fetch: %+v", st)
+	}
+
+	fake.Set("genesis-b", 5)
+	if err := syncer.checkChainReset(ctx); err != nil {
+		t.Fatalf("reset check after reset: %v", err)
+	}
+
+	st := cache.Stats()
+	if st.Purges != 1 {
+		t.Errorf("purges = %d, want 1: the reset did not reach the cache", st.Purges)
+	}
+	if st.Entries != 0 {
+		t.Errorf("cache still holds %d entries from the previous chain", st.Entries)
+	}
+}
+
+// The other half: a check that finds the same chain must not throw away a
+// cache that is still correct. Purging on every pass would make the cache a
+// 30-second TTL dressed up as an immutable one.
+func TestUnchangedChainKeepsTheResponseCache(t *testing.T) {
+	ctx := context.Background()
+	syncer, fake, _ := newTestSyncer(t, "staging")
+
+	cache := indexer.NewResponseCache(1000, 1<<20)
+	syncer.client.SetCache(cache)
+	fake.AddBlocks(indexer.Block{Height: 500, Hash: "b500-a", ChainID: "testchain", Time: "2026-01-01T00:08:20Z"})
+
+	for i := 0; i < 3; i++ {
+		if err := syncer.checkChainReset(ctx); err != nil {
+			t.Fatalf("reset check %d: %v", i, err)
+		}
+		if _, err := syncer.client.GetBlock(ctx, 500); err != nil {
+			t.Fatalf("block fetch %d: %v", i, err)
+		}
+	}
+	st := cache.Stats()
+	if st.Purges != 0 {
+		t.Errorf("purges = %d, want 0 on an unchanged chain", st.Purges)
+	}
+	if st.Hits != 2 || st.Stores != 1 {
+		t.Errorf("hits/stores = %d/%d, want 2/1", st.Hits, st.Stores)
+	}
+}
+
+// The measurement, in the repo, re-runnable.
+//
+// #529 measured a production instance for an hour: 92% of every outbound
+// request was `getBlocks`, 85 to 87% of those a repeat inside five minutes,
+// and only 0.16% collapsed by singleflight, so the duplicates were sequential
+// rather than concurrent. This is the shape behind that number, reproduced
+// against the fake indexer.
+//
+// syncUsers is the clearest case because it has no cursor at all, by design:
+// a third of the registry was written at genesis and a cursor-driven walk
+// would never revisit it, so the pass replays the whole registry on every
+// tick. It then resolves each registration's block time through
+// GetBlocksByHeights, which is one getBlocks per height. Those heights are
+// finalised and their blocks cannot change, and before this cache every one of
+// them was asked again every thirty seconds, forever.
+func TestRepeatedPassesStopRefetchingFinalisedBlocks(t *testing.T) {
+	const heights, passes = 12, 5
+
+	run := func(t *testing.T, cached bool) int {
+		t.Helper()
+		syncer, fake, _ := newTestSyncer(t, "staging")
+		if cached {
+			syncer.client.SetCache(indexer.NewResponseCache(1000, 1<<20))
+		} else {
+			syncer.client.SetCache(nil)
+		}
+		for i := 0; i < heights; i++ {
+			h := 100 + i*7 // scattered, so the range path does not apply
+			fake.AddBlocks(indexer.Block{
+				Height: h, Hash: fmt.Sprintf("b%d", h), ChainID: "testchain",
+				Time: time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC).Format(time.RFC3339),
+			})
+			fake.Add(indexer.Transaction{
+				Hash: fmt.Sprintf("tx%d", h), BlockHeight: h, Success: true,
+				Response: &indexer.TxResponse{Events: []indexer.TxEvent{{
+					Typename: "GnoEvent", Type: "Registered", PkgPath: usersRealm,
+					Attrs: []indexer.EventAttr{
+						{Key: "name", Value: fmt.Sprintf("user%d", h)},
+						{Key: "address", Value: fmt.Sprintf("g1addr%d", h)},
+					},
+				}}},
+			})
+		}
+		before := fake.BlockQueryCount()
+		for i := 0; i < passes; i++ {
+			syncer.syncUsers(context.Background())
+		}
+		return fake.BlockQueryCount() - before
+	}
+
+	uncached := run(t, false)
+	cached := run(t, true)
+
+	// Without a cache the whole registry is re-resolved every pass.
+	if uncached != heights*passes {
+		t.Fatalf("uncached getBlocks = %d, want %d (%d heights every pass, %d passes)",
+			uncached, heights*passes, heights, passes)
+	}
+	// With one, each finalised height is asked exactly once, ever.
+	if cached != heights {
+		t.Fatalf("cached getBlocks = %d, want %d (each height asked once)", cached, heights)
+	}
+	t.Logf("getBlocks over %d passes of %d finalised heights: %d before, %d after (%.0f%% removed)",
+		passes, heights, uncached, cached, 100*float64(uncached-cached)/float64(uncached))
+}

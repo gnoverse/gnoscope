@@ -484,6 +484,17 @@ func (s *Syncer) checkChainReset(ctx context.Context) error {
 	log.Printf("[%s] CHAIN RESET DETECTED: stored chain %q is no longer served (indexer now serves %q); discarding local data for this network",
 		s.networkID, stored, current)
 
+	// Before the rows, and unconditionally. The response cache holds block
+	// answers keyed by height with no expiry, because a finalised block cannot
+	// change — but a reset chain comes back with *different* blocks at the same
+	// heights, so every one of those answers is now about a chain that no
+	// longer exists. Left in place they would be served to the re-sync with
+	// total confidence and nothing anywhere saying so: the same shape as a
+	// stale node defining a pool's identity, which #525 recorded one layer
+	// down. The cache is shared with this network's serve client, so this one
+	// call covers the pages as well as the sync loop. See ResponseCache.Purge.
+	s.client.PurgeCache()
+
 	deleted, err := s.db.DeleteNetworkData(s.networkID)
 	if err != nil {
 		return fmt.Errorf("discard data after chain reset: %w", err)

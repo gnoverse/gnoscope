@@ -443,3 +443,96 @@ func TestSnapshotMarshals(t *testing.T) {
 		}
 	}
 }
+
+// Three savings, counted apart. Collapsed is "N callers wanted this at the same
+// instant"; Served is "we already knew the answer". Folding the second into the
+// first would credit singleflight with the cache's work and leave an operator
+// unable to tell which machinery is carrying a page.
+func TestMeterSeparatesCacheHitsFromCollapses(t *testing.T) {
+	m, _ := newTestMeter()
+
+	// Ten callers want the same block. One round trip, three collapse onto it,
+	// six are answered from the cache afterwards.
+	for i := 0; i < 4; i++ {
+		m.Asked(onyx, "getBlocks")
+	}
+	m.Sent(Request{URL: onyx, Label: "getBlocks", Body: []byte("q"), Bytes: 300, Outcome: OutcomeOK, Cacheable: true})
+	for i := 0; i < 6; i++ {
+		m.Asked(onyx, "getBlocks")
+		m.Served(onyx, "getBlocks")
+	}
+
+	s := m.Snapshot()
+	if s.Shared.Asked != 10 || s.Shared.Sent != 1 || s.Shared.Served != 6 || s.Shared.Collapsed != 3 {
+		t.Fatalf("asked/sent/served/collapsed = %d/%d/%d/%d, want 10/1/6/3",
+			s.Shared.Asked, s.Shared.Sent, s.Shared.Served, s.Shared.Collapsed)
+	}
+	// The arithmetic has to close from the response alone.
+	if s.Shared.Sent+s.Shared.Served+s.Shared.Collapsed != s.Shared.Asked {
+		t.Error("sent + served + collapsed does not add up to asked")
+	}
+	if s.Shared.ServedPercent != 60 || s.Shared.CollapsedPercent != 30 {
+		t.Errorf("served/collapsed percent = %v/%v, want 60/30", s.Shared.ServedPercent, s.Shared.CollapsedPercent)
+	}
+	g := s.Endpoints[0].Groups[0]
+	if g.Served != 6 || g.ServedPercent != 60 {
+		t.Errorf("group served = %d (%v%%), want 6 (60%%)", g.Served, g.ServedPercent)
+	}
+	// The real hit rate sits beside the simulation it was predicting.
+	if len(g.WouldHit) != len(TTLs) {
+		t.Errorf("would_hit = %v, want one entry per TTL", g.WouldHit)
+	}
+	if !strings.Contains(s.Summary, "answered from the response cache") {
+		t.Errorf("summary says nothing about the cache: %q", s.Summary)
+	}
+}
+
+// ⚠️ #528 shipped a feature that recorded nothing until a flag reached the unit
+// file, and a deploy that shipped the binary alone read as broken only to
+// someone who knew. The opposite failure is covered here: a meter with no
+// registered cache must say "nothing is wired" rather than report a hit rate
+// of zero, which reads identically to a cache that is working and cold.
+func TestUsageSaysWhenNoCacheIsRegistered(t *testing.T) {
+	m, _ := newTestMeter()
+	send(m, onyx, "getBlocks", "a", OutcomeOK)
+
+	s := m.Snapshot()
+	if len(s.Caches) != 0 {
+		t.Fatalf("caches = %+v, want none", s.Caches)
+	}
+	if !strings.Contains(s.CacheNote, "wiring fault") {
+		t.Errorf("cache_note = %q, want it to name the wiring fault", s.CacheNote)
+	}
+	if !strings.Contains(s.Summary, "wiring fault") {
+		t.Errorf("summary = %q, want it to name the wiring fault", s.Summary)
+	}
+
+	// With one registered, the note turns into the real explanation and the
+	// cache's own bounds are readable off the response.
+	m.RegisterCache(func() CacheStats {
+		return CacheStats{Name: "indexer.onyx.testnets.gno.land", Entries: 7, MaxEntries: 20000, MaxBytes: 32 << 20, Hits: 3, Misses: 7}
+	})
+	s = m.Snapshot()
+	if len(s.Caches) != 1 || s.Caches[0].Entries != 7 || s.Caches[0].MaxBytes != 32<<20 {
+		t.Fatalf("caches = %+v, want the registered one with its bounds", s.Caches)
+	}
+	if strings.Contains(s.CacheNote, "wiring fault") {
+		t.Errorf("cache_note still reports a wiring fault: %q", s.CacheNote)
+	}
+	if strings.Contains(s.Summary, "wiring fault") {
+		t.Errorf("summary still reports a wiring fault: %q", s.Summary)
+	}
+}
+
+// The registry is bounded like everything else here: one cache per endpoint
+// pool, and the pools come from the operator's config.
+func TestCacheRegistryIsBounded(t *testing.T) {
+	m, _ := newTestMeter()
+	for i := 0; i < maxCacheSources*3; i++ {
+		m.RegisterCache(func() CacheStats { return CacheStats{Name: "x"} })
+	}
+	m.RegisterCache(nil)
+	if got := len(m.Snapshot().Caches); got != maxCacheSources {
+		t.Errorf("registered caches = %d, want %d", got, maxCacheSources)
+	}
+}

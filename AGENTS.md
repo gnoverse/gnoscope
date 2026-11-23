@@ -161,6 +161,24 @@ Break these and things go wrong in ways that are hard to see:
   than everything it does, so one renamed constant paints a healthy week in the
   worst colour the strip has, with nothing anywhere saying why. Same shape as
   the nav table above.
+- **The indexer response cache keeps block data and nothing else, and the two
+  things it must never keep are the ones that look most cacheable.** A finalised
+  block is immutable, so `GetBlock` above height 1 and a `GetBlocksInRange` that
+  came back whole are kept with no expiry at all. `latestBlockHeight` is not,
+  because a stale tip makes the explorer lag with nothing anywhere reporting it,
+  which is a worse failure than the 429 the cache exists to avoid. **Block 1 is
+  not**, because it is the fingerprint `Syncer.chainFingerprint` and
+  `API.VerifyRPCChains` read to notice the indexer has started serving a
+  different chain: cached, a reset stops being late and becomes undetectable.
+  Caching is opt-in per call site (`cacheRule` in `pkg/indexer/cache.go`) and
+  the default rule caches nothing, so a new query path is uncached until someone
+  argues it is immutable. An answer is checked before it is kept, not just the
+  query: an empty `getBlocks` is "not there *yet*" as often as "not there", and
+  a short range is one that will grow. `checkChainReset` purges the cache before
+  it discards rows, because a reset chain keeps its heights and changes what is
+  at them. Same shape as the invariants above: quiet, load-bearing, and broken
+  invisibly, because a confidently served stale block reads exactly like a
+  correct one.
 - **Never commit the built binary.** `gnoscope` and `*.db` are gitignored.
 
 ## Conventions

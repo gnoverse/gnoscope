@@ -98,3 +98,57 @@ func TestIndexerUsageFallsBackToTheProcessMeter(t *testing.T) {
 		t.Fatal("an API with no meter set does not read the process-wide meter")
 	}
 }
+
+// The real cache's hit rate has to come out of this endpoint in the same shape
+// as the simulation it replaced, or the before-and-after #525 asked for cannot
+// be read off a running instance at all.
+func TestIndexerUsageReportsTheResponseCache(t *testing.T) {
+	const ep = "https://indexer.onyx.testnets.gno.land/graphql/query"
+	m := reqmeter.New()
+	m.Asked(ep, "getBlocks")
+	m.Sent(reqmeter.Request{URL: ep, Label: "getBlocks", Body: []byte("q"), Bytes: 300, Outcome: reqmeter.OutcomeOK, Cacheable: true})
+	for i := 0; i < 9; i++ {
+		m.Asked(ep, "getBlocks")
+		m.Served(ep, "getBlocks")
+	}
+	m.RegisterCache(func() reqmeter.CacheStats {
+		return reqmeter.CacheStats{Name: "indexer.onyx.testnets.gno.land", Entries: 1, MaxEntries: 20000, MaxBytes: 32 << 20, Hits: 9, Misses: 1, HitPercent: 90}
+	})
+	a := &API{}
+	a.SetIndexerMeter(m)
+
+	snap := getUsage(t, a)
+	if snap.Shared.Served != 9 || snap.Shared.ServedPercent != 90 {
+		t.Errorf("served = %d (%v%%), want 9 (90%%)", snap.Shared.Served, snap.Shared.ServedPercent)
+	}
+	if len(snap.Caches) != 1 || snap.Caches[0].HitPercent != 90 || snap.Caches[0].MaxBytes == 0 {
+		t.Fatalf("caches = %+v, want the registered cache with its bounds", snap.Caches)
+	}
+	g := snap.Endpoints[0].Groups[0]
+	if g.Served != 9 || len(g.WouldHit) != len(reqmeter.TTLs) {
+		t.Errorf("group = %+v, want the measured hit beside the simulated one", g)
+	}
+	if strings.Contains(snap.CacheNote, "wiring fault") {
+		t.Errorf("cache_note reports a wiring fault with a cache registered: %q", snap.CacheNote)
+	}
+}
+
+// ⚠️ And the other direction, which is the one #528 got wrong: an instance with
+// no cache registered must read as misconfigured, not as a cache that happens
+// to be cold.
+func TestIndexerUsageSaysWhenNoCacheIsWired(t *testing.T) {
+	const ep = "https://indexer.onyx.testnets.gno.land/graphql/query"
+	m := reqmeter.New()
+	m.Asked(ep, "getBlocks")
+	m.Sent(reqmeter.Request{URL: ep, Label: "getBlocks", Body: []byte("q"), Bytes: 300, Outcome: reqmeter.OutcomeOK, Cacheable: true})
+	a := &API{}
+	a.SetIndexerMeter(m)
+
+	snap := getUsage(t, a)
+	if len(snap.Caches) != 0 {
+		t.Fatalf("caches = %+v, want none", snap.Caches)
+	}
+	if !strings.Contains(snap.CacheNote, "wiring fault") || !strings.Contains(snap.Summary, "wiring fault") {
+		t.Errorf("an unwired cache reads as a cold one: note %q, summary %q", snap.CacheNote, snap.Summary)
+	}
+}
