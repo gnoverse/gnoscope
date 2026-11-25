@@ -782,9 +782,15 @@ func run() error {
 	if *analyticsScript != "" {
 		log.Printf("analytics: frontend loads %s", *analyticsScript)
 	}
-	// Unknown badge URLs must not replace the cached SVG namespace with HTML.
-	mux.HandleFunc("GET "+httpapi.BadgePrefix, http.NotFound)
-	mux.HandleFunc("GET /", frontend)
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		// Match the decoded path used by cache admission. Unknown badges
+		// must not put a document in the SVG response cache.
+		if strings.HasPrefix(r.URL.Path, httpapi.BadgePrefix) {
+			http.NotFound(w, r)
+			return
+		}
+		frontend(w, r)
+	})
 
 	// Cache outermost, so a hit costs nothing beyond the network-name check —
 	// and compression *inside* it, so what the cache stores is already

@@ -360,14 +360,14 @@ func TestResponseCacheIsBounded(t *testing.T) {
 // must not merge them.
 //
 // A third of gno transaction hashes are base64 containing a slash.
-// `/api/tx/a%2Fb` matches the transaction route and answers JSON. The
-// unescaped `/api/tx/a/b` matches no API route and should still return 404
-// after the valid transaction response is cached.
+// `/api/example/a%2Fb` matches a single-segment route and answers JSON. The
+// unescaped `/api/example/a/b` matches no API route and should still return 404
+// after the valid response is cached.
 func TestResponseCacheKeysOnTheEscapedPath(t *testing.T) {
 	var calls atomic.Int32
 	h := WithResponseCache(NewResponseCache(CacheTTL), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.URL.EscapedPath() != "/api/tx/a%2Fb" {
+		if r.URL.EscapedPath() != "/api/example/a%2Fb" {
 			http.NotFound(w, r)
 			return
 		}
@@ -381,14 +381,14 @@ func TestResponseCacheKeysOnTheEscapedPath(t *testing.T) {
 		return rec
 	}
 
-	const tx = "/api/tx/a%2Fb"
-	if rec := get(tx); rec.Code != http.StatusOK || rec.Body.String() != `{"hash":"a/b"}` {
-		t.Fatalf("transaction: status %d, body %q", rec.Code, rec.Body.String())
+	const encoded = "/api/example/a%2Fb"
+	if rec := get(encoded); rec.Code != http.StatusOK || rec.Body.String() != `{"hash":"a/b"}` {
+		t.Fatalf("encoded path: status %d, body %q", rec.Code, rec.Body.String())
 	}
-	if rec := get("/api/tx/a/b"); rec.Code != http.StatusNotFound {
-		t.Errorf("unescaped transaction path: status %d, want 404", rec.Code)
+	if rec := get("/api/example/a/b"); rec.Code != http.StatusNotFound {
+		t.Errorf("unescaped path: status %d, want 404", rec.Code)
 	}
-	get(tx)
+	get(encoded)
 	if calls.Load() != 2 {
 		t.Errorf("handler ran %d times, want 2 distinct keys", calls.Load())
 	}

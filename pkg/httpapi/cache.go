@@ -570,11 +570,9 @@ func cacheable(r *http.Request) bool {
 // encoding in the key, the first gzip-accepting reader would poison the entry
 // for every client that cannot decode it.
 //
-// EscapedPath, not Path, because the two are not the same request. A third of
-// transaction hashes are base64 containing a slash: `/api/tx/a%2Fb` routes to
-// the transaction handler and answers JSON, while `/api/tx/a/b` matches no API
-// route. Path decodes both to the same string, so a cache hit could serve
-// the transaction to a request for the unroutable URL.
+// EscapedPath preserves the distinction between a separator and an encoded
+// slash within one segment. A pattern for one segment can match the latter
+// without matching the former, even though both have the same decoded path.
 func cacheKey(r *http.Request) string {
 	key := r.URL.EscapedPath() + "?" + canonicalQuery(r.URL.RawQuery)
 	if acceptsGzip(r) {
