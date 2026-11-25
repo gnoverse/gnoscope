@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/gnoverse/gnoscope/internal/contentcoding"
 )
 
 // Response compression for the read-only API.
@@ -58,20 +60,9 @@ func compressibleType(ct string) bool {
 	return strings.HasPrefix(ct, "text/") && ct != "text/event-stream"
 }
 
-// acceptsGzip reports whether the client advertised gzip.
-//
-// A bare substring check, not a full q-value parse: the only way to see
-// "gzip;q=0" in the wild is a client deliberately disabling it, and the cost of
-// honouring that is a header parser on every request. `identity` is not
-// special-cased for the same reason — a client that wants it simply omits gzip.
+// acceptsGzip is shared by compression and the response cache key.
 func acceptsGzip(r *http.Request) bool {
-	for _, v := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
-		name, _, _ := strings.Cut(strings.TrimSpace(v), ";")
-		if strings.EqualFold(name, "gzip") {
-			return true
-		}
-	}
-	return false
+	return contentcoding.Quality(r, "gzip") > 0
 }
 
 // gzipWriter compresses a handler's output, deciding lazily.

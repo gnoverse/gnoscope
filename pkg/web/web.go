@@ -167,7 +167,7 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 	// so a new build is picked up on the next request, while an unchanged one
 	// costs a 304 with no body.
 	sum := sha256.Sum256(index)
-	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
+	etag := `W/"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
 
 	if err := validateFrameAncestors(opts.WidgetFrameAncestors); err != nil {
 		return nil, err
@@ -234,7 +234,7 @@ func serveDocument(w http.ResponseWriter, r *http.Request, index []byte, hole in
 	baseETag string, block []byte,
 ) {
 	sum := sha256.Sum256(append([]byte(baseETag), block...))
-	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
+	etag := `W/"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("ETag", etag)
@@ -253,13 +253,14 @@ func serveDocument(w http.ResponseWriter, r *http.Request, index []byte, hole in
 	body = append(body, block...)
 	body = append(body, index[hole:]...)
 
+	br, gz := encodingWeights(r)
 	switch {
-	case acceptsEncoding(r, "br"):
+	case br > 0 && br >= gz:
 		if br := brotliBytesFast(body); br != nil {
 			w.Header().Set("Content-Encoding", "br")
 			body = br
 		}
-	case acceptsEncoding(r, "gzip"):
+	case gz > 0:
 		if gz := gzipBytesFast(body); gz != nil {
 			w.Header().Set("Content-Encoding", "gzip")
 			body = gz
@@ -332,14 +333,13 @@ func gzipBytes(b []byte) []byte {
 
 // matchesETag reports whether an If-None-Match header names the given tag.
 //
-// The header is a comma-separated list and a revalidating browser may send the
-// tag back weakened (`W/"..."`) even though it was issued strong, so a plain
-// string comparison against the whole header misses the match and re-sends
-// the body for nothing.
+// If-None-Match uses weak comparison, so validators for either wire
+// representation of the same decoded body can be compared by their opaque value.
 func matchesETag(inm, etag string) bool {
 	if inm == "" {
 		return false
 	}
+	etag = strings.TrimPrefix(etag, "W/")
 	for _, candidate := range strings.Split(inm, ",") {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "*" {

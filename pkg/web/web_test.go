@@ -90,9 +90,22 @@ func TestIndexIsCompressedAndRevalidatable(t *testing.T) {
 		})
 	}
 
-	t.Run("prefers br when both are accepted", func(t *testing.T) {
-		if got := get("/", "gzip, deflate, br, zstd").Header().Get("Content-Encoding"); got != "br" {
-			t.Errorf("Content-Encoding = %q, want br", got)
+	t.Run("honors encoding preferences", func(t *testing.T) {
+		for _, c := range []struct{ header, want string }{
+			{"gzip, deflate, br, zstd", "br"},
+			{"br;q=0, gzip;q=1", "gzip"},
+			{"br;q=0.5, gzip;q=0.9", "gzip"},
+			{"br;q=0.9, gzip;q=0.5", "br"},
+			{"br;q=0, gzip;q=0", ""},
+			{"*;q=0.5, br;q=0", "gzip"},
+		} {
+			rec := get("/", c.header)
+			if got := rec.Header().Get("Content-Encoding"); got != c.want {
+				t.Errorf("Accept-Encoding %q: got %q, want %q", c.header, got, c.want)
+			}
+			if got := rec.Header().Get("ETag"); got != raw.Header().Get("ETag") || !strings.HasPrefix(got, "W/") {
+				t.Errorf("Accept-Encoding %q: expected a weak validator for the same document, got %q", c.header, got)
+			}
 		}
 	})
 
@@ -102,7 +115,7 @@ func TestIndexIsCompressedAndRevalidatable(t *testing.T) {
 			t.Fatal("no ETag")
 		}
 
-		for _, inm := range []string{etag, "W/" + etag, `"other", ` + etag, "*"} {
+		for _, inm := range []string{etag, strings.TrimPrefix(etag, "W/"), `"other", ` + etag, "*"} {
 			req := httptest.NewRequest("GET", "/", nil)
 			req.Header.Set("If-None-Match", inm)
 			rec := httptest.NewRecorder()
@@ -230,9 +243,12 @@ func TestBundleIsAnImmutableAsset(t *testing.T) {
 			}
 
 			req = httptest.NewRequest("GET", c.path, nil)
-			req.Header.Set("Accept-Encoding", "gzip")
+			req.Header.Set("Accept-Encoding", "br;q=0, gzip;q=1")
 			gz := httptest.NewRecorder()
 			h(gz, req)
+			if tag := gz.Header().Get("ETag"); tag != rec.Header().Get("ETag") || !strings.HasPrefix(tag, "W/") {
+				t.Errorf("gzip ETag %q must be weak and identify the same asset", tag)
+			}
 			gzLen := gz.Body.Len()
 			zr, err := gzip.NewReader(gz.Body)
 			if err != nil {

@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/andybalholm/brotli"
+	"github.com/gnoverse/gnoscope/internal/contentcoding"
 )
 
 // The bundle, served as a file of its own.
@@ -90,7 +90,7 @@ func splitBundle(index []byte) ([]byte, []*asset, error) {
 		a := &asset{
 			path:   AssetPrefix + name + "." + hex.EncodeToString(sum[:6]) + "." + ext,
 			raw:    body,
-			etag:   `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`,
+			etag:   `W/"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`,
 			brDone: make(chan struct{}),
 		}
 		out.Write(rest[:m[0]])
@@ -163,6 +163,7 @@ func serveAsset(w http.ResponseWriter, r *http.Request, assets map[string]*asset
 	// wrong, and `immutable` tells the browser not to revalidate it on reload
 	// either.
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
+	// The validator names the decoded content shared by all encodings.
 	h.Set("ETag", a.etag)
 	h.Set("Vary", "Accept-Encoding")
 	h.Set("X-Content-Type-Options", "nosniff")
@@ -171,11 +172,13 @@ func serveAsset(w http.ResponseWriter, r *http.Request, assets map[string]*asset
 		return
 	}
 	body := a.raw
-	switch br := a.br.Load(); {
-	case br != nil && acceptsEncoding(r, "br"):
+	br, gz := encodingWeights(r)
+	brotli := a.br.Load()
+	switch {
+	case brotli != nil && br > 0 && (br >= gz || a.gz == nil):
 		h.Set("Content-Encoding", "br")
-		body = *br
-	case a.gz != nil && acceptsEncoding(r, "gzip"):
+		body = *brotli
+	case a.gz != nil && gz > 0:
 		h.Set("Content-Encoding", "gzip")
 		body = a.gz
 	}
@@ -196,16 +199,8 @@ func brotliBytes(b []byte, level int) []byte {
 	return buf.Bytes()
 }
 
-// acceptsEncoding reports whether the client listed an encoding. Same rule as
-// the httpapi middleware: a bare name match, no q-values. Duplicated rather
-// than imported because pkg/web must not depend on pkg/httpapi; it is the leaf
-// the whole binary can serve without.
-func acceptsEncoding(r *http.Request, enc string) bool {
-	for _, v := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
-		name, _, _ := strings.Cut(strings.TrimSpace(v), ";")
-		if strings.EqualFold(name, enc) {
-			return true
-		}
-	}
-	return false
+// encodingWeights returns the two encodings this frontend serves. Brotli
+// wins at equal weight where it is available.
+func encodingWeights(r *http.Request) (br, gzip float64) {
+	return contentcoding.Quality(r, "br"), contentcoding.Quality(r, "gzip")
 }

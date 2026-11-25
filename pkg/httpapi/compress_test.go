@@ -165,6 +165,10 @@ func TestAcceptsGzip(t *testing.T) {
 		{"gzip", true},
 		{"gzip, deflate, br", true},
 		{"deflate, gzip;q=1.0, *;q=0.5", true},
+		{"*;q=0.5", true},
+		{"gzip;q=0, *;q=0.5", false},
+		{"GZIP ; q=0.1", true},
+		{"gzip;q=garbage", false},
 		{"br", false},
 		{"deflate", false},
 		// "x-gzip" and "notgzip" must not match on a substring check.
