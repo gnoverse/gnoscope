@@ -26,6 +26,7 @@ func TestDiagStatesMatchHealthlog(t *testing.T) {
 		DiagWedged:          true,
 		DiagStale:           true,
 		DiagIndexerDown:     true,
+		DiagIndexerBehind:   true,
 		DiagNodeUnreachable: true,
 		DiagUnknown:         true,
 	}

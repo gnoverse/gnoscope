@@ -56,6 +56,15 @@ var consensusStepNames = map[int]string{
 // seconds.
 const wedgedRoundAge = 120 * time.Second
 
+// indexerBehindBlocks is how far the indexer's tip may trail the node's before
+// the indexer is named as the stale half.
+//
+// The same figure as cockpitLagWarn, on purpose: that one measures our stored
+// copy against the indexer, this one measures the indexer against the node, and
+// a reader adding the two gaps should not have to convert between thresholds.
+// Below it the difference is the indexer's ordinary polling delay.
+const indexerBehindBlocks = cockpitLagWarn
+
 // nodeProbeTimeout bounds each of the four node calls. They are answered from
 // local state, so a node that needs longer than this is itself the finding.
 const nodeProbeTimeout = 6 * time.Second
@@ -104,6 +113,7 @@ const (
 	DiagWedged          = "wedged"           // the chain stopped, a node operator
 	DiagStale           = "stale"            // no recent blocks, cause not established
 	DiagIndexerDown     = "indexer_down"     // the chain is fine, our data source is not
+	DiagIndexerBehind   = "indexer_behind"   // the chain is fine, our data source answers late
 	DiagNodeUnreachable = "node_unreachable" // we cannot ask, so we do not know
 	DiagUnknown         = "unknown"          // neither source answered
 )
@@ -302,6 +312,23 @@ func diagnose(node NodeState, live store.SanityLiveness) ChainDiagnosis {
 			Detail: fmt.Sprintf("the chain is producing blocks (height %d), but our indexer is not answering, "+
 				"so history and search are stale", node.Height),
 		}
+
+	case node.Height > 0 && live.ChainHeight > 0 &&
+		node.Height-int64(live.ChainHeight) >= indexerBehindBlocks:
+		// The indexer answers, and what it answers is old. Before this case
+		// existed the gap was invisible twice over: the cockpit's lag compares
+		// our stored copy with the indexer's own tip, so an index that has
+		// caught up with a late indexer reads as zero blocks behind, and the
+		// case below then blamed the chain for a silence that was the
+		// indexer's. Only the node can say otherwise, which is why this needs
+		// both halves answering.
+		detail := fmt.Sprintf("the chain is at height %d but the indexer has only reached %d, %d blocks behind",
+			node.Height, live.ChainHeight, node.Height-int64(live.ChainHeight))
+		if live.SecondsSinceBlock > 0 {
+			detail += fmt.Sprintf(", and its newest block is %s old", humanDuration(live.SecondsSinceBlock))
+		}
+		detail += fmt.Sprintf(", so history and search are stale (a gap of %d blocks is where this is reported)", indexerBehindBlocks)
+		return ChainDiagnosis{State: DiagIndexerBehind, Detail: detail}
 
 	case !live.IsAlive && live.LastBlockTime != "":
 		// No recent block, but the round is young, so this is not a wedge. Say

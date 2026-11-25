@@ -19,6 +19,7 @@ const (
 	StateStale           = "stale"
 	StateNodeUnreachable = "node_unreachable"
 	StateIndexerDown     = "indexer_down"
+	StateIndexerBehind   = "indexer_behind"
 	StateWedged          = "wedged"
 	StateUnknown         = "unknown"
 
@@ -40,10 +41,11 @@ var severity = map[string]int{
 	StateAlive:           0,
 	StateSyncing:         1,
 	StateStale:           2,
-	StateNodeUnreachable: 3,
-	StateIndexerDown:     4,
-	StateWedged:          5,
-	StateUnknown:         6,
+	StateIndexerBehind:   3,
+	StateNodeUnreachable: 4,
+	StateIndexerDown:     5,
+	StateWedged:          6,
+	StateUnknown:         7,
 }
 
 // RankedStates is the stored vocabulary, for the test in pkg/httpapi that keeps

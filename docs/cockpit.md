@@ -41,9 +41,10 @@ right person — and carries its threshold in its detail line, the same rule
 
 | finding | fires when | severity |
 |---|---|---|
-| `chain` | the per-network diagnosis is not healthy | `down` for `wedged`, `indexer_down` and `unknown`; `warn` for `syncing`, `stale` and `node_unreachable`, which are "we cannot see" rather than "it has stopped" |
+| `chain` | the per-network diagnosis is not healthy | `down` for `wedged`, `indexer_down` and `unknown`; `warn` for `syncing`, `stale`, `indexer_behind` and `node_unreachable`, which are "we cannot see" or "we see late" rather than "it has stopped" |
 | `index-unreadable` | reading a network's stored tip failed outright, which is a different thing from there being nothing to read | `down` |
 | `not-indexed` | this instance has stored no block for a network, ten minutes or more after it started | `warn` |
+| `index-ahead` | the stored tip is 50 blocks or more above the tip the indexer reports: a replica that is behind, or a chain that was reset and whose old rows have not been discarded yet | `warn` |
 | `lag` | the stored tip trails the chain head by 50 blocks, or 1000 | `warn` / `down` |
 | `sync` | sync passes for a network are failing consecutively; 5 in a row is an outage | `warn` / `down` |
 | `errors` | more than 5% of the last 24 hours' requests answered 4xx or 5xx, over at least 200 requests, crawlers excluded | `warn` |
