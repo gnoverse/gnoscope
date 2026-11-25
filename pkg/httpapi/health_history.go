@@ -396,6 +396,8 @@ func healthStateLabel(state string) string {
 		return "stale"
 	case DiagIndexerDown:
 		return "indexer down"
+	case DiagIndexerBehind:
+		return "indexer behind"
 	case DiagNodeUnreachable:
 		return "node unreachable"
 	case DiagWedged:

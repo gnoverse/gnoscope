@@ -1111,6 +1111,7 @@ it with the indexer's view into one verdict:
 | `syncing` | the node is catching up |
 | `stale` | no recent block, but consensus is still advancing |
 | `indexer_down` | the chain is producing blocks and our indexer is not answering |
+| `indexer_behind` | the indexer answers, but its tip trails the node's by 50 blocks or more, so history and search are stale |
 | `wedged` | consensus has not advanced, with the height, round and step it stopped on |
 | `node_unreachable` | the node did not answer, so live state is unavailable |
 | `unknown` | neither source answered |

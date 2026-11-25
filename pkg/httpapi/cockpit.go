@@ -492,6 +492,24 @@ func cockpitFindings(resp cockpitResponse) []CockpitFinding {
 					n.Network, humanDuration(int(resp.Service.UptimeSeconds))),
 				Href: "/sanity?network=" + n.Network,
 			})
+		case n.Reachable && n.IndexedHeight-n.ChainHeight >= cockpitLagWarn:
+			// The stored tip is above the tip the indexer reports. Two causes
+			// look identical from here and both mean the pages are not showing
+			// the chain as it is: a replica that is behind, or a chain that
+			// was reset and restarted from a low height. The syncer tells them
+			// apart by fingerprint and discards the old rows on a reset, but
+			// only on its next pass and never while the indexer is refusing
+			// it, so this is the finding for the window in between. Until now
+			// the only trace of it was a log line.
+			out = append(out, CockpitFinding{
+				ID: "index-ahead", Severity: CockpitWarnSeverity, Network: n.Network,
+				Title: fmt.Sprintf("%s's index is ahead of the chain", n.Network),
+				Detail: fmt.Sprintf("the index holds blocks up to %s and the indexer now reports %s: "+
+					"either the indexer is a replica that is behind, or the chain was reset and "+
+					"the stored rows describe a chain that no longer exists; a gap of %d blocks is where this is reported",
+					fmtThousands(int64(n.IndexedHeight)), fmtThousands(int64(n.ChainHeight)), cockpitLagWarn),
+				Href: "/sanity?network=" + n.Network,
+			})
 		case n.LagBlocks >= cockpitLagWarn:
 			sev := CockpitWarnSeverity
 			if n.LagBlocks >= cockpitLagDown {
@@ -597,6 +615,8 @@ func cockpitChainTitle(network, state string) string {
 		return network + "'s node is catching up"
 	case DiagIndexerDown:
 		return network + "'s indexer is not answering"
+	case DiagIndexerBehind:
+		return network + "'s indexer is behind the chain"
 	case DiagNodeUnreachable:
 		return network + "'s node is not answering"
 	default:
