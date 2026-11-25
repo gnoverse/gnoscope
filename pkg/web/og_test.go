@@ -116,7 +116,7 @@ func TestRealmDocumentCarriesTheCaptureAsItsCard(t *testing.T) {
 		`property="og:image:width" content="1200"`,
 		`name="twitter:card" content="summary_large_image"`,
 		`property="og:title" content="gno.land/r/gov/dao on gnoscope"`,
-		`property="og:url" content="https://gnoscope.example/realm/r/gov/dao"`,
+		`property="og:url" content="https://gnoscope.example/realm/r/gov/dao?network=mainnet"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the realm document is missing %s", want)
