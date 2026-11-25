@@ -20,8 +20,10 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/config"
 	"github.com/gnoverse/gnoscope/pkg/discover"
 	"github.com/gnoverse/gnoscope/pkg/ghlab"
+	"github.com/gnoverse/gnoscope/pkg/healthlog"
 	"github.com/gnoverse/gnoscope/pkg/indexer"
 	"github.com/gnoverse/gnoscope/pkg/registry"
+	"github.com/gnoverse/gnoscope/pkg/reqmeter"
 	"github.com/gnoverse/gnoscope/pkg/store"
 	"github.com/gnoverse/gnoscope/pkg/syncer"
 	"github.com/gnoverse/gnoscope/pkg/traffic"
@@ -107,6 +109,18 @@ type API struct {
 	// the network's submissions move. Zero value ready; see
 	// api_code_timeline.go.
 	timeline timelineMemo
+
+	// indexerMeter is the outbound request meter behind /api/indexer/usage,
+	// normally the process-wide one in pkg/reqmeter. Nil means "use that one";
+	// a test replaces it. See api_indexer_usage.go.
+	indexerMeter *reqmeter.Meter
+
+	// healthLog is the per-network availability record: one sample per probe,
+	// in its own database file. Nil when -health-db is unset, and every use of
+	// it is nil-safe, for the same reason traffic above is: an explorer that
+	// does not want a second database should not need a second build. See
+	// health_history.go.
+	healthLog *healthlog.Store
 
 	// build is what -ldflags stamped in, plus when this process started. Set
 	// from main.go, which owns those variables; the zero value is a build that
@@ -207,6 +221,13 @@ const (
 )
 
 // healthTracker trips a per-network breaker after repeated failures.
+//
+// Repeated failures, with one exception: a refusal. breakerCooldown is a guess
+// about an indexer we think is unwell, and a guess needs a second sample before
+// it is worth acting on. A 429 is neither. The server has already decided, has
+// usually said for how long, and the only thing a second sample buys is another
+// strike against the budget we are already over. So a 429 trips on the first
+// one and pauses for as long as the server asked. See pkg/indexer/ratelimit.go.
 
 func (h *healthTracker) shouldSkip(id string) bool {
 	if h == nil {
@@ -235,15 +256,39 @@ func (h *healthTracker) record(id string, err error) {
 		if s.failures >= breakerThreshold {
 			log.Printf("[%s] reachable again, resuming", id)
 		}
-		s.failures, s.skipUntil = 0, time.Time{}
+		s.failures, s.rateLimits, s.skipUntil = 0, 0, time.Time{}
 		return
 	}
 	s.failures++
+
+	if errors.Is(err, indexer.ErrRateLimited) {
+		s.rateLimits++
+		hint, _ := indexer.RetryAfterOf(err)
+		pause := indexer.RateLimitPause(hint, s.rateLimits)
+		if s.skipUntil.IsZero() || time.Now().After(s.skipUntil) {
+			log.Printf("[%s] rate limited, standing down for %s: %v", id, pause, err)
+		}
+		s.pauseUntil(time.Now().Add(pause))
+		return
+	}
+
 	if s.failures >= breakerThreshold {
 		if s.skipUntil.IsZero() || time.Now().After(s.skipUntil) {
 			log.Printf("[%s] unreachable, pausing for %s: %v", id, breakerCooldown, err)
 		}
-		s.skipUntil = time.Now().Add(breakerCooldown)
+		s.pauseUntil(time.Now().Add(breakerCooldown))
+	}
+}
+
+// pauseUntil extends the pause and never shortens it.
+//
+// Assigning unconditionally is what let an ordinary timeout arriving during a
+// 300-second rate-limit stand-down replace it with the flat 60-second cooldown,
+// which put us back inside the upstream's penalty window and re-armed it. The
+// longest outstanding reason to wait wins.
+func (s *netHealth) pauseUntil(t time.Time) {
+	if t.After(s.skipUntil) {
+		s.skipUntil = t
 	}
 }
 
@@ -1145,6 +1190,8 @@ func (a *API) RegisterRoutes(serveMux *http.ServeMux) {
 	mux.HandleFunc("GET /api/govdao/voters", a.HandleGovDAOVoters)
 	mux.HandleFunc("GET /api/params", a.HandleParameters)
 	mux.HandleFunc("GET /api/health/heartbeat", a.HandleHeartbeat)
+	mux.HandleFunc("GET /api/health/history", a.HandleHealthHistory)
+	mux.HandleFunc("GET /api/indexer/usage", a.HandleIndexerUsage)
 	mux.HandleFunc("GET /api/registry/apps", a.HandleApps)
 	mux.HandleFunc("GET /api/apps", a.HandleAppsHub)
 	mux.HandleFunc("GET /api/registry/awesome", a.HandleAwesome)

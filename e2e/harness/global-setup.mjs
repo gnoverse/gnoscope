@@ -74,6 +74,16 @@ export default async function globalSetup() {
   const trafficPath = join(tmpDir, 'e2e-traffic.db');
   for (const suffix of ['', '-wal', '-shm']) rmSync(trafficPath + suffix, { force: true });
 
+  // The availability history, in its own file for the same reason as the
+  // request log above. Enabled here because /sanity's availability section
+  // otherwise only ever renders its "not recorded on this instance" state,
+  // and a suite that only sees the off state cannot tell a working strip from
+  // a broken one. The harness configures no RPC, so what gets recorded is a
+  // cannot-ask verdict, which is still a real sample written by the real
+  // probe; the interesting states are stubbed in the spec.
+  const healthPath = join(tmpDir, 'e2e-health.db');
+  for (const suffix of ['', '-wal', '-shm']) rmSync(healthPath + suffix, { force: true });
+
   const port = PORT;
   const baseURL = `http://127.0.0.1:${port}`;
 
@@ -105,6 +115,7 @@ export default async function globalSetup() {
     // pkg/httpapi/warmer_test.go.
     '-warm-interval', '0',
     '-traffic-db', trafficPath,
+    '-health-db', healthPath,
   ], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] });
 
   const log = [];

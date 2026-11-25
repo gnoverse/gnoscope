@@ -12,6 +12,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
+
+	"github.com/gnoverse/gnoscope/pkg/reqmeter"
 )
 
 type Client struct {
@@ -29,6 +33,15 @@ type Client struct {
 	skipUntil time.Time
 	active    int
 	lastProbe time.Time
+	// rateLimits counts consecutive refusals (429) from this pool, and is the
+	// exponent behind the stand-down. Separate from failures because the two
+	// answer different questions: failures is "do we think it is unwell", this
+	// is "how many times has it told us to go away". Reset by any success.
+	rateLimits int
+	// lastRefusal identifies the round trip the newest notch on that ladder
+	// came from. Collapsed callers share one refusal object, and the ladder
+	// counts refusals rather than the callers that heard about one.
+	lastRefusal *RateLimitError
 	// fingerprint of the chain this pool is serving, learned from the first
 	// endpoint that answers. Members that disagree are never selected.
 	fingerprint string
@@ -36,7 +49,45 @@ type Client struct {
 	// typeSupport caches, per GraphQL type name, whether this chain's indexer
 	// defines it. A type is absent from the map until the first query asks.
 	typeSupport map[string]bool
+
+	// flight collapses concurrent identical requests. Its zero value works, so
+	// a Client built by any path gets it. See doQuery.
+	flight singleflight.Group
+
+	// meter counts what this client spends at the upstream, for
+	// /api/indexer/usage. Process-wide rather than per-client, because the
+	// budget it is measured against is per IP: the serve pool, the sync pool
+	// and every configured network share one Cloudflare bucket. Nil in a
+	// Client built as a literal, and every call on it is a no-op then.
+	meter *reqmeter.Meter
+
+	// cache holds answers that cannot change, shared with every other Client
+	// built on the same endpoints. Nil in a Client built as a literal, and
+	// every call on it misses then. See cache.go.
+	cache *ResponseCache
 }
+
+// SetMeter points this client at a request meter. Exported for tests, which
+// want a meter of their own rather than the process-wide one; the constructors
+// wire the default.
+func (c *Client) SetMeter(m *reqmeter.Meter) { c.meter = m }
+
+// SetCache points this client at a response cache. Exported for tests, which
+// want one of their own rather than the pool's shared instance; the
+// constructors wire the default.
+func (c *Client) SetCache(rc *ResponseCache) { c.cache = rc }
+
+// Cache returns the response cache this client reads, which is the pool's and
+// not this client's alone.
+func (c *Client) Cache() *ResponseCache { return c.cache }
+
+// PurgeCache drops every cached answer for this pool.
+//
+// The one caller is the syncer's chain-reset check. A cache keyed on block
+// heights outlives a chain that comes back with different blocks at the same
+// heights, and nothing about the stale answers looks wrong; see
+// ResponseCache.Purge.
+func (c *Client) PurgeCache() { c.cache.Purge() }
 
 // ErrUnavailable is returned while the breaker is open.
 var ErrUnavailable = errors.New("indexer unavailable, not retried yet")
@@ -82,17 +133,66 @@ func (c *Client) breakerOpen() bool {
 }
 
 // recordResult updates the breaker after a request.
+//
+// A refusal is handled apart from a failure, in both of the ways that matter.
+// It trips on the FIRST one rather than after clientBreakerThreshold, because
+// the threshold exists to avoid acting on one bad sample and a 429 is not a
+// sample, it is a verdict; and it stands down for as long as the server asked
+// rather than for the flat cooldown, which is what used to bring us back
+// inside the penalty window and re-arm it.
 func (c *Client) recordResult(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err == nil {
-		c.failures, c.skipUntil = 0, time.Time{}
+		c.failures, c.rateLimits, c.skipUntil = 0, 0, time.Time{}
+		c.lastRefusal = nil
 		return
 	}
 	c.failures++
-	if c.failures >= clientBreakerThreshold {
-		c.skipUntil = time.Now().Add(clientBreakerCooldown)
+	if errors.Is(err, ErrRateLimited) {
+		var rl *RateLimitError
+		errors.As(err, &rl)
+		// One round trip, one notch on the ladder. doQuery collapses concurrent
+		// identical requests, so several callers hand back the same refusal
+		// object; counting each of them would square the backoff against the
+		// width of the fan-out rather than against how often we were refused.
+		if rl != nil && rl == c.lastRefusal {
+			return
+		}
+		c.lastRefusal = rl
+		c.rateLimits++
+		hint, _ := RetryAfterOf(err)
+		c.pauseUntil(time.Now().Add(RateLimitPause(hint, c.rateLimits)))
+		return
 	}
+	if c.failures >= clientBreakerThreshold {
+		c.pauseUntil(time.Now().Add(clientBreakerCooldown))
+	}
+}
+
+// pauseUntil extends the stand-down, and never shortens it. Called with c.mu
+// held.
+//
+// The "never shortens" half is load-bearing: an ordinary failure arriving
+// during a 300-second rate-limit pause used to overwrite it with the flat
+// 30-second cooldown, which is the amplification wearing a different hat.
+func (c *Client) pauseUntil(t time.Time) {
+	if t.After(c.skipUntil) {
+		c.skipUntil = t
+	}
+}
+
+// PausedUntil reports when the breaker will next let a request through, and
+// whether it is currently open.
+//
+// Exported for the background sync loop, which runs about eighteen passes per
+// SyncAll. Every one of them would otherwise walk into breakerOpen() and log
+// its own failure, so a paused network produced eighteen log lines every thirty
+// seconds saying the same thing.
+func (c *Client) PausedUntil() (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.skipUntil, time.Now().Before(c.skipUntil)
 }
 
 // Request budgets. Serving a page and running a background sync have nothing in
@@ -138,6 +238,8 @@ func newIndexerClient(urls []string, timeout time.Duration) *Client {
 	return &Client{
 		urls:   normalized,
 		client: &http.Client{Timeout: timeout, Transport: indexerTransport},
+		meter:  reqmeter.Default(),
+		cache:  cacheForPool(normalized),
 	}
 }
 
@@ -687,15 +789,52 @@ func answered(err error) bool {
 		strings.HasPrefix(err.Error(), "graphql error:")
 }
 
+// query asks the pool, caching nothing. Most read paths want this: whether an
+// answer may be kept is a statement about the question, and the default answer
+// to "may this be kept" has to be no.
 func (c *Client) query(ctx context.Context, query string, vars map[string]any, result any) error {
+	return c.queryCached(ctx, cacheRule{}, query, vars, result)
+}
+
+// queryCached is query with a caller-supplied rule about what may be kept.
+//
+// The cache is read before the breaker on purpose. An answer that cannot change
+// is just as true during a 300-second blackout as outside one, and refusing to
+// serve it would turn a rate-limit penalty into an outage on pages whose whole
+// content is finalised block data. A cache hit is also not an observation of
+// the indexer, so it reaches neither recordResult nor selectEndpoint: a cache
+// that healed the breaker would hide the very condition it exists to survive.
+func (c *Client) queryCached(ctx context.Context, rule cacheRule, query string, vars map[string]any, result any) error {
+	var key string
+	if rule.on() {
+		body, err := json.Marshal(gqlRequest{Query: query, Variables: vars})
+		if err != nil {
+			return err
+		}
+		key = string(body)
+		if data, ok := c.cache.get(key); ok {
+			// Attributed to the endpoint we would have asked, which is not
+			// necessarily the one the answer came from: the cache is shared
+			// across a pool whose members are proven to serve one chain. A hit
+			// spends no budget either way, so "where this would have cost us"
+			// is the useful reading of the per-endpoint breakdown.
+			url := c.activeURL()
+			label := reqmeter.Label(query)
+			// Counted as demand first and as a cache hit second, in that
+			// order and never as a collapse: see Meter.Served.
+			c.meter.Asked(url, label)
+			c.meter.Served(url, label)
+			return json.Unmarshal(data, result)
+		}
+	}
 	if c.breakerOpen() {
 		return ErrUnavailable
 	}
 	c.selectEndpoint(ctx)
-	err := c.doQuery(ctx, c.activeURL(), query, vars, result)
+	err := c.doQueryRule(ctx, rule, key, c.activeURL(), query, vars, result)
 	if err != nil && !answered(err) {
 		if next, ok := c.failOver(); ok {
-			err = c.doQuery(ctx, next, query, vars, result)
+			err = c.doQueryRule(ctx, rule, key, next, query, vars, result)
 		}
 	}
 	// Caller-side cancellation, a capped result set and a miss all say nothing
@@ -708,64 +847,230 @@ func (c *Client) query(ctx context.Context, query string, vars map[string]any, r
 	return err
 }
 
+// doQuery sends one GraphQL request and decodes it into result, collapsing
+// concurrent identical requests into a single round trip.
+//
+// The collapsing is the point. Nothing on this client was cached except
+// typeSupport, which is schema capability rather than data, so N readers asking
+// the same question at the same instant were N requests at the upstream, and a
+// crawler walking one realm page was its own small thundering herd. That
+// fan-out is what earns the per-IP 429s this file now has to back off from, so
+// deduplicating it and honouring the refusal are two halves of one fix.
+//
+// In flight only, deliberately. A TTL response cache is a separate and larger
+// question about which read paths are immutable, and it does not belong behind
+// the same switch as this.
+//
+// A shared request belongs to the flight and not to whichever caller happened
+// to start it, which is why the round trip runs under a context detached from
+// that caller's: otherwise the first reader to close their tab cancels a
+// request several other readers are waiting on, and the breaker records their
+// cancellation as the indexer being slow. Each caller still waits on its own
+// context and leaves when that context says to.
+//
+// A failure, on the other hand, is shared on purpose: N callers see one
+// upstream error rather than each earning their own, which is exactly the
+// behaviour wanted from something whose job is to stop asking.
 func (c *Client) doQuery(ctx context.Context, url, query string, vars map[string]any, result any) error {
+	return c.doQueryRule(ctx, cacheRule{}, "", url, query, vars, result)
+}
+
+// doQueryRule is doQuery with a cache rule and the cache key queryCached
+// already computed. cacheKey is empty when the rule caches nothing.
+//
+// The answer is stored inside the flight rather than after it, so exactly one
+// of N collapsed callers writes it, and so a caller whose own context expired
+// while waiting still leaves the answer behind for the next one.
+func (c *Client) doQueryRule(ctx context.Context, rule cacheRule, cacheKey, url, query string, vars map[string]any, result any) error {
 	body, err := json.Marshal(gqlRequest{Query: query, Variables: vars})
 	if err != nil {
 		return err
 	}
 
+	// The key is the endpoint plus the exact bytes we would send. encoding/json
+	// sorts map keys, so two callers passing the same vars in a different
+	// insertion order serialise identically and collapse, as they should. The
+	// NUL separator cannot occur in a URL, so no (url, body) pair can collide
+	// with another by concatenation.
+	//
+	// The endpoint is part of the key rather than left out: the pool fails over
+	// mid-flight, and two callers reading different endpoints are asking two
+	// chains' worth of different questions even when the text matches.
+
+	// One logical request, counted before singleflight decides whether it costs
+	// a round trip. The meter reports the difference between this and what
+	// fetch sends as the saving the collapsing is already making; see
+	// pkg/reqmeter.
+	label := reqmeter.Label(query)
+	c.meter.Asked(url, label)
+
+	ch := c.flight.DoChan(url+"\x00"+string(body), func() (any, error) {
+		// Detached from this caller's cancellation, bounded by the client's own
+		// timeout. c.client.Timeout bounds the round trip already; the context
+		// is what stops a Client built without one from waiting forever.
+		fctx := context.WithoutCancel(ctx)
+		if c.client.Timeout > 0 {
+			var cancel context.CancelFunc
+			fctx, cancel = context.WithTimeout(fctx, c.client.Timeout)
+			defer cancel()
+		}
+		out := c.fetch(fctx, url, body, label)
+		if cacheKey != "" && out.err == nil && rule.keeps(out.data) {
+			c.cache.put(cacheKey, out.data, rule.ttl)
+		}
+		return out, nil
+	})
+
+	var out *queryOutcome
+	select {
+	case <-ctx.Done():
+		// This caller is gone. The flight carries on for whoever else is
+		// waiting on it, and this caller reports its OWN context's error rather
+		// than inheriting anyone else's.
+		return ctx.Err()
+	case res := <-ch:
+		out = res.Val.(*queryOutcome)
+	}
+
+	// The element cap is the one error that still carries usable data: the
+	// resolver stops iterating and returns the rows it already has, so decode
+	// the partial page before reporting it.
+	if out.capped {
+		if err := json.Unmarshal(out.data, result); err != nil {
+			return fmt.Errorf("decode capped response: %w", err)
+		}
+		return out.err
+	}
+	if out.err != nil {
+		return out.err
+	}
+	return json.Unmarshal(out.data, result)
+}
+
+// queryOutcome is one upstream answer, shared by every caller that collapsed
+// onto it. It holds the raw `data` rather than a decoded value because each
+// caller decodes into its own destination type.
+type queryOutcome struct {
+	data   json.RawMessage
+	err    error
+	capped bool
+}
+
+// fetch performs the round trip and records it.
+//
+// This is the one place in the binary where an outbound GraphQL request leaves,
+// which is why the meter is here and not at any of the forty call sites above:
+// a counter at a call site is a counter somebody forgets to add to the
+// forty-first. See pkg/reqmeter for what is counted and what bounds it.
+func (c *Client) fetch(ctx context.Context, url string, body []byte, label string) *queryOutcome {
+	out, size := c.fetchOnce(ctx, url, body)
+	c.meter.Sent(reqmeter.Request{
+		URL:     url,
+		Label:   label,
+		Body:    body,
+		Bytes:   size,
+		Outcome: meterOutcome(out.err),
+		// What a response cache would have stored. A refusal, a transport
+		// failure, a miss and a GraphQL error are all answers a cache would
+		// not keep, and counting them as fills would promise a hit rate on
+		// repeated failures.
+		Cacheable: out.err == nil || out.capped,
+	})
+	return out
+}
+
+// meterOutcome classifies a round trip for the meter.
+//
+// A 200 carrying a GraphQL error counts as OK rather than as a failure: the
+// upstream answered and the budget was spent either way, which is the only
+// thing being measured here. ErrRateLimited is the one that is split out,
+// because it is the one the budget is about.
+func meterOutcome(err error) reqmeter.Outcome {
+	switch {
+	case err == nil:
+		return reqmeter.OutcomeOK
+	case errors.Is(err, ErrRateLimited):
+		return reqmeter.OutcomeRefused
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrQueryTooLarge),
+		strings.HasPrefix(err.Error(), "graphql error:"):
+		return reqmeter.OutcomeOK
+	default:
+		return reqmeter.OutcomeFailed
+	}
+}
+
+// fetchOnce is the round trip itself. It never touches result: everything it
+// learns goes into the outcome, so one response can serve many callers. The
+// second return is the size of the response body, which the meter wants and the
+// outcome has no use for.
+func (c *Client) fetchOnce(ctx context.Context, url string, body []byte) (*queryOutcome, int) {
+	out := &queryOutcome{}
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		out.err = err
+		return out, 0
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		out.err = err
+		return out, 0
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		out.err = err
+		return out, len(respBody)
 	}
+	size := len(respBody)
 
 	// Report a refused request as what it is. A rate-limited indexer answers with
 	// an HTML error page, which otherwise surfaces as "invalid character '<'" and
 	// sends the reader looking for a bug in the query rather than at the status
 	// code. Sync catch-up is exactly the traffic that earns a 403.
+	//
+	// A 429 is split out and typed, because it is the only status that comes
+	// with instructions. See ratelimit.go.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		out.err = newRateLimitError(url, resp.Status, resp.Header, respBody)
+		return out, size
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("indexer returned %s: %s", resp.Status, string(respBody[:min(200, len(respBody))]))
+		out.err = fmt.Errorf("indexer returned %s: %s", resp.Status, string(respBody[:min(200, len(respBody))]))
+		return out, size
 	}
 
 	var gqlResp gqlResponse
 	if err := json.Unmarshal(respBody, &gqlResp); err != nil {
-		return fmt.Errorf("decode response: %w (body: %s)", err, string(respBody[:min(200, len(respBody))]))
+		out.err = fmt.Errorf("decode response: %w (body: %s)", err, string(respBody[:min(200, len(respBody))]))
+		return out, size
 	}
+	out.data = gqlResp.Data
 
 	if len(gqlResp.Errors) > 0 {
 		for _, e := range gqlResp.Errors {
 			if !strings.Contains(e.Message, "max elements per query") {
 				continue
 			}
-			// The resolver stops iterating at the cap and returns the rows it
-			// already has alongside this error, so decode the partial page before
-			// reporting it. Only this error carries usable data — for anything
-			// else `data` is meaningless and must not reach the caller.
-			if err := json.Unmarshal(gqlResp.Data, result); err != nil {
-				return fmt.Errorf("decode capped response: %w", err)
-			}
-			return fmt.Errorf("%w: %s", ErrQueryTooLarge, e.Message)
+			// Only this error carries usable data. For anything else `data`
+			// is meaningless and must not reach the caller.
+			out.capped = true
+			out.err = fmt.Errorf("%w: %s", ErrQueryTooLarge, e.Message)
+			return out, size
 		}
+		out.data = nil
 		if strings.Contains(gqlResp.Errors[0].Message, indexerNotFoundMessage) {
-			return fmt.Errorf("%w: %s", ErrNotFound, gqlResp.Errors[0].Message)
+			out.err = fmt.Errorf("%w: %s", ErrNotFound, gqlResp.Errors[0].Message)
+			return out, size
 		}
-		return fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)
+		out.err = fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)
+		return out, size
 	}
 
-	return json.Unmarshal(gqlResp.Data, result)
+	return out, size
 }
 
 // LatestBlockHeight returns the latest indexed block height.
@@ -1490,6 +1795,15 @@ func (c *Client) GetRecentBlocks(ctx context.Context, limit int) ([]Block, error
 }
 
 // GetBlocksInRange fetches all blocks between fromHeight and toHeight inclusive.
+//
+// Cached indefinitely, but only when the range came back whole.
+//
+// That condition is what makes an indefinite lifetime safe here without the
+// caller knowing where the tip is. Blocks are contiguous, so a range that
+// returned every height it asked for lies entirely below the tip and is
+// final; one that returned fewer is either running past the tip and will grow,
+// or sitting under a pruned floor another endpoint may still answer for.
+// Neither is kept. See rangeComplete.
 func (c *Client) GetBlocksInRange(ctx context.Context, fromHeight, toHeight int) ([]Block, error) {
 	var result struct {
 		GetBlocks []Block `json:"getBlocks"`
@@ -1500,7 +1814,11 @@ func (c *Client) GetBlocksInRange(ctx context.Context, fromHeight, toHeight int)
 			order: { height: ASC }
 		) { %s }
 	}`, fromHeight-1, toHeight+1, blockFields)
-	err := c.query(ctx, q, nil, &result)
+	// Heights start at 1, so a caller asking from 0 is asking for one height
+	// that cannot exist and the range can never read as complete. Counting
+	// from 1 is what keeps the bottom of the chain cacheable like the rest.
+	want := toHeight - max(fromHeight, 1) + 1
+	err := c.queryCached(ctx, cacheRule{ttl: cacheForever, store: rangeComplete(want)}, q, nil, &result)
 	return result.GetBlocks, err
 }
 
@@ -1580,6 +1898,24 @@ func (c *Client) GetBlocksByHeights(ctx context.Context, heights []int) (map[int
 // that need to tell "confirmed absent" apart from "could not ask" (network
 // error, indexer down) rely on this distinction; do not collapse it back into
 // a single error.
+// Cached indefinitely when a block came back, and never when one did not.
+//
+// This is the single query the cache exists for: #529 measured getBlocks at
+// 92% of all outbound traffic, and GetBlocksByHeights turns one caller's set
+// of heights into one of these per height. A finalised block cannot change, so
+// the right lifetime is "until the chain under it does", which is what Purge
+// is for.
+//
+// ⚠️ Height 1 is never cached, and that is not an optimisation detail. Block 1
+// is the chain's fingerprint: Syncer.chainFingerprint and API.VerifyRPCChains
+// both read it to decide whether the indexer is still serving the chain the
+// stored data came from. Cached, the reset check would be answered forever by
+// the chain it is supposed to notice the end of, and a reset would become
+// undetectable rather than merely late. That is the same failure #525 recorded
+// one layer down, where a stale node defines a pool's identity and locks the
+// real endpoints out as impostors.
+//
+// An empty answer is never kept either; see blocksFound.
 func (c *Client) GetBlock(ctx context.Context, height int) (*Block, error) {
 	var result struct {
 		GetBlocks []Block `json:"getBlocks"`
@@ -1589,7 +1925,11 @@ func (c *Client) GetBlock(ctx context.Context, height int) (*Block, error) {
 			where: { height: { eq: %d } }
 		) { %s }
 	}`, height, blockFields)
-	err := c.query(ctx, q, nil, &result)
+	rule := cacheRule{ttl: cacheForever, store: blocksFound}
+	if height <= 1 {
+		rule = cacheRule{}
+	}
+	err := c.queryCached(ctx, rule, q, nil, &result)
 	if err != nil {
 		return nil, err
 	}

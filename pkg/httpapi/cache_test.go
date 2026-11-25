@@ -557,6 +557,11 @@ func TestLiveCountersAreNotCacheable(t *testing.T) {
 		// it as current. Measured 2026-09-29: two reads four minutes apart were
 		// byte-identical while the reverse proxy logged 64 requests in between.
 		"/api/traffic", "/api/traffic/health",
+		// Fifth. /api/indexer/usage reports what this process has spent at the
+		// upstream in the last few minutes, and is read during an incident to
+		// decide whether we are the cause. Served from a cache it would answer
+		// with the state before the burst that prompted the question.
+		"/api/indexer/usage",
 	} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		if cacheable(r) {

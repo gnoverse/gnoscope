@@ -68,7 +68,14 @@ type Fake struct {
 	NoTransferEvents bool
 
 	// Failure injection, each checked before any data is served.
-	Status        int    // non-200 to return instead of a response
+	Status int // non-200 to return instead of a response
+	// StatusBody is what to serve alongside Status. Empty means the HTML error
+	// page below, which is what a proxy in front of a struggling indexer sends.
+	// Set it to reproduce an upstream that puts instructions in the body, which
+	// is where gno.land's rate limiter puts its retry-after.
+	StatusBody string
+	// StatusHeader is set on the non-200 response. For Retry-After, mostly.
+	StatusHeader  map[string]string
 	GQLError      string // a GraphQL error to return instead of data
 	CapAt         int    // >0: truncate to this many rows and report the element cap
 	BlocksFailing bool   // fail only getBlocks, leaving other queries healthy
@@ -115,6 +122,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.queries = append(f.queries, req.Query)
 	Status, gqlErr, CapAt, Delay := f.Status, f.GQLError, f.CapAt, f.Delay
 	BlocksFailing := f.BlocksFailing
+	statusBody, statusHeader := f.StatusBody, f.StatusHeader
 	f.mu.Unlock()
 
 	if Delay > 0 {
@@ -125,10 +133,17 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if Status != 0 && Status != http.StatusOK {
-		// Deliberately HTML: a rate-limited indexer answers with an error page,
-		// and reporting that as a JSON decode failure sends the reader looking
-		// for a bug in the query rather than at the Status code.
+		for k, v := range statusHeader {
+			w.Header().Set(k, v)
+		}
 		w.WriteHeader(Status)
+		if statusBody != "" {
+			io.WriteString(w, statusBody)
+			return
+		}
+		// Deliberately HTML by default: a rate-limited indexer answers with an
+		// error page, and reporting that as a JSON decode failure sends the
+		// reader looking for a bug in the query rather than at the Status code.
 		fmt.Fprintf(w, "<html><body>%d</body></html>", Status)
 		return
 	}
@@ -634,6 +649,16 @@ func (f *Fake) Add(txs ...Transaction) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.txs = append(f.txs, txs...)
+}
+
+// QueryCount is how many requests the fake has been sent, of any kind.
+//
+// Counts requests rather than useful ones on purpose: what a stand-down has to
+// be measured by is how many times we touched the upstream at all.
+func (f *Fake) QueryCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.queries)
 }
 
 func (f *Fake) AskedQueries() []string {

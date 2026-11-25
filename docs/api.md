@@ -1092,6 +1092,7 @@ that appears on every page when a network is degraded.
 |---|---|
 | `GET /api/sanity/overview` | as before, plus `nodes` and `diagnosis`, keyed by network |
 | `GET /api/health/heartbeat` | block cadence per network. `window` = `5m` (default), `30m`, `3h`, which select 10s, 60s and 360s cells. Always every configured network, never just the selected one |
+| `GET /api/health/history` | the availability record per network: an `enabled` flag, a strip of `cells` each carrying the worst `state` in its bucket, `uptime_percent` over observed samples, `outages`, `last_outage`, `current`, an `incidents` list newest first, and a one-line `summary`. `window` = `24h`, `7d` (default), `30d`, which select 144, 168 and 180 cells of 10m, 1h and 4h. `network` narrows it; by default every configured chain. Empty, with `enabled` false and a `note`, on an instance without `-health-db` |
 
 ### Why the node is asked directly
 
@@ -1151,6 +1152,231 @@ diagnosis rather than replacing it.
 Cells are anchored to `now`, not to the newest block. A grid built from the last
 block shows a full strip for a chain that stopped an hour ago, which is the one
 answer it must never give.
+
+### The history is this instance's view, kept in its own database
+
+`/api/health/history` reads `-health-db`, a SQLite file separate from the chain
+index for the same reasons as `-traffic-db`: it is small, it has a retention
+policy, it is not reconstructible once dropped, and it must be droppable on its
+own. With the flag unset the endpoint answers `enabled: false` with a full grid
+of empty cells and a note, rather than disappearing: a section that vanishes
+reads as a bug, and a section drawn green reads as a lie.
+
+One sample per network per probe, throttled to one every 30 seconds whoever
+asks, and a background sampler guarantees one a minute even when nobody has the
+page open. Recording happens inside the probe itself, so both
+`/api/sanity/overview` paths, `/api/cockpit` and the sampler all feed it and no
+probe path is silently unrecorded.
+
+Transitions are derived on read, never stored: the samples are the facts, and a
+stored run would be a second copy to correct. A hole in the series longer than
+three sampling intervals becomes a `no_data` run rather than being counted as
+more of whatever state preceded it, which is what a restart or a crashed
+sampler actually is. For the same reason `uptime_percent` is healthy samples
+over *observed* samples, and `no_data_seconds` beside it says how much of the
+window that figure covers. A row with no samples reports no percentage at all.
+
+`state` values are the `diagnosis` states above, plus `no_data`.
+
+## Outbound request budget
+
+What this process spends at the indexers, against the one rule they sit behind.
+
+| endpoint | description |
+|---|---|
+| `GET /api/indexer/usage` | the outbound request meter: cumulative counters, rolling rates, the peak over one budget window in the last day, a per-operation breakdown, what the response cache actually answered, and what a short-TTL cache would still have saved on top. No parameters, and no flag to enable it |
+
+### Why this exists, and what it is measuring against
+
+The public gno indexers sit behind **one** Cloudflare rate-limit rule: **3,100
+requests per 300 seconds per IP, counted across every `indexer.` hostname under
+`gno.land` together**, not per hostname and not per network. That is about 10.3
+requests per second sustained, shared between every chain this explorer reads.
+Going one over costs a 300 second blackout, because the rule's block cannot be
+shorter than its own period.
+
+Measured on the production instance over 24 hours before #526: 277 upstream
+429s, all on onyx, behind 38 breaker trips. #526 took that to zero by honouring
+`Retry-After` and collapsing concurrent identical queries, without anyone
+knowing how much budget was being spent in the first place. This is that number,
+and it is produced permanently rather than once.
+
+### Where the counting happens
+
+`Client.fetch` in `pkg/indexer`, which is the one place an outbound GraphQL
+request leaves the binary. A counter at a call site is a counter somebody
+forgets to add to the forty-first call site.
+
+Three figures, not one. `asked` is counted in `doQuery`, before anything has
+decided whether a caller costs a round trip; `served` is counted when the
+response cache answers; `sent` is counted in `fetch`, which runs once per
+flight. `collapsed` is what is left over, which is the saving #526 is already
+making. The three never overlap, so `sent + served + collapsed == asked` and the
+arithmetic can be checked off the response itself. They are kept apart because
+they are different machinery: `collapsed` is "N callers wanted this at the same
+instant", `served` is "we already knew the answer".
+
+### The rate, and why the peak is the figure
+
+A cumulative counter since process start answers the wrong question: the budget
+is spent in bursts. A day averaging well under the ceiling with one window four
+times over it is exactly the shape that earns a 429, and the average reports that
+day as fine.
+
+So the response carries `last_60s`, `last_300s` and `last_1h`, plus
+`peak_minute` and `peak_300s` over the retained day. `peak_300s` is the one the
+verdict is drawn from, because the ceiling counts requests per window and is not
+a rate. It is minute-aligned, so the true worst 300 seconds can straddle two
+runs and be up to one minute's traffic higher than reported.
+
+`verdict` and `current_verdict` are `under`, `near` (70% of the ceiling) or
+`over`. Three rather than two: a boolean would only go true after the blackout
+had already started.
+
+### Shared bucket versus own origin
+
+`shared` is the traffic that actually spends the per-IP budget, and is what the
+verdict grades. `all` is every endpoint. The split matters because mainnet's
+reads can be served by onbloc, which is a different origin and off that
+Cloudflare edge entirely: that is why mainnet never 429s while onyx did, and an
+instance configured with onbloc first spends almost nothing against the shared
+bucket while making plenty of requests. Classification is by DNS suffix; an
+endpoint whose URL will not parse counts as shared, since over-reporting what we
+spend against a ceiling is the safe direction to be wrong in.
+
+### Attribution
+
+Requests are grouped by the GraphQL operation name, or by the first root field
+where there is none, which is what this codebase's queries actually carry: most
+are anonymous with one root field, so in practice the groups are
+`getTransactions`, `latestBlockHeight`, `getBlocks` and `getSupply`. The parser
+skips string literals, which is load-bearing rather than tidy: several queries
+interpolate a package path or an address into a `where` clause, those values are
+attacker-controlled, and a naive scan would key the group table by something an
+outsider writes.
+
+### The response cache, and what it is allowed to keep
+
+`caches` in the response is what the real cache did: `hits`, `misses`,
+`entries`, `bytes`, `evictions`, `expired`, `purges`, and the bounds each of
+those is measured against. `served` and `served_percent` on every group are the
+same saving attributed to the query that earned it.
+
+**The two rates have different denominators, and the second is the one about the
+budget.** `hit_percent` under `caches` is hits over *lookups*, and a lookup
+happens before the circuit breaker is consulted, on purpose: an answer that
+cannot change is still true during a blackout. So a miss during a stand-down is
+a miss that could never have become a request. Measured on a rate-limited
+catch-up run, 40,108 lookups sat behind 11,485 requests that reached the meter.
+`served_percent` on a group is hits over *demand that would otherwise have gone
+to the wire*, which is what the ceiling counts. **An empty `caches` list on
+an instance that is making requests is a wiring fault, not a hit rate of zero**,
+and `cache_note` and `summary` both say so in words rather than leaving a reader
+to notice.
+
+The cache is opt-in per call site, and the default is to cache nothing. Two
+queries opt in:
+
+| query | lifetime | why, and what is checked before it is kept |
+|---|---|---|
+| `GetBlock(height)`, height > 1 | indefinite | a finalised block is immutable, and Tendermint2 finalises in one slot, so there is no reorg to invalidate against. Kept only when a block actually came back: an empty `getBlocks` is also what a height above the tip, a replica still catching up, and a pruned floor look like, and the first of those becomes a real block seconds later |
+| `GetBlocksInRange(from, to)` | indefinite | same reason, kept only when **every** height in the range came back. Blocks are contiguous, so a whole range lies below the tip and is final; a short one is either running past the tip and will grow, or under a pruned floor another endpoint may yet answer for. That check is what makes an indefinite lifetime safe without the caller knowing where the tip is |
+
+Everything else goes to the wire. Named explicitly, because a cache that serves
+stale chain data is a regression and not a fix:
+
+- **`latestBlockHeight` is never cached.** A stale tip makes the explorer
+  silently lag, which is a worse failure than a 429 because nothing reports it.
+  It was 2.6% of mainnet's traffic when this was measured, so there is nothing
+  worth buying with it.
+- **`GetBlock(1)` is never cached.** Block 1 is the chain's fingerprint:
+  `Syncer.chainFingerprint` and `API.VerifyRPCChains` both read it to decide
+  whether the indexer is still serving the chain the stored rows came from.
+  Cached, a reset would stop being late and start being undetectable, which is
+  the same failure #525 recorded one layer down where a stale node defines a
+  pool's identity and locks the real endpoints out as impostors.
+- **`GetRecentBlocks` is never cached.** It reads the tip and then asks for a
+  window below it, so it is a tip query wearing a range's clothes.
+- **`getTransactions` in all its forms is never cached**, including
+  `GetTransactionsByBlock` and `GetTransactionsInRange`, which are immutable by
+  exactly the same argument as a finalised block. They were 2.8% and 5.3% of
+  their endpoints' requests but 96% of the bytes, and the budget counts
+  requests. Caching them would spend the memory bound on the traffic that is not
+  the problem.
+- **Schema introspection (`__type`) is never cached here.** It already has its
+  own memo in `Client.typeSupport`.
+
+A cached answer is served even while the circuit breaker is shut, on purpose: an
+answer that cannot change is as true during a 300 second blackout as outside
+one, and a page whose whole content is finalised block data should not go down
+with the budget. A cache hit is not an observation of the indexer, so it reaches
+neither the breaker nor the endpoint probe.
+
+**Memory, eviction, and a chain that comes back different.** One cache per
+endpoint pool, shared by that network's serve client and sync client, looked up
+by endpoint list rather than wired by hand so there is no constructor to forget.
+Bounded by 20,000 entries *and* 32 MB, whichever binds first, with least-recently-used
+eviction; any single answer over 256 KB is refused rather than stored, which
+also keeps a 5,000-block backfill page (~684 KB, walked exactly once) from
+flushing thousands of single-block answers that are asked for again and again.
+In practice the entry bound binds first on the traffic that matters: a
+single-block answer measured 310 bytes on production, so 20,000 of them is
+about 6 MB and the byte bound is the backstop for ranges. Worst case is 32 MB
+per pool, flat, and a pool is a network: three configured networks is at most
+~96 MB, and the registry refuses to grow past sixteen pools. Nothing is
+persisted and nothing is swept by a goroutine. A chain reset keeps its
+heights and changes what is at them, so `Syncer.checkChainReset` purges the
+cache before it discards the rows; `purges` and `last_purge` in the response are
+how an operator sees that happened. There is no reorg case to handle: single-slot
+finality means a height never changes hands.
+
+The purge rides the syncer, so an instance started with `-sync=false` has
+nothing that would empty it. That is not a new gap: such an instance has no
+reset detection at all and its *stored rows* already outlive a reset by the same
+amount. It is worth knowing that the cache now inherits it.
+
+### What a short-TTL cache would still save, on top
+
+Every wire request is run past a simulation of a response cache, at 5, 30 and
+300 seconds. `would_hit` and `would_hit_percent` per group
+are the hit rate such a cache would have had on the requests that *still* reach
+the wire. Before the response cache existed this was the figure #525 was waiting
+on; now it reads as the headroom left over, so a group still showing a high
+`would_hit` beside a low `served` is one whose immutability nobody has argued
+for yet.
+
+What is simulated is a cache and not a memory, and the distinction decides the
+number. Requests at t=0, t=4 and t=8 under a 5 second lifetime are one hit and a
+refill, not two hits: the entry expires five seconds after it was filled, not
+five seconds after it was last read.
+
+The figure is a floor in two directions, both of which make it read low:
+evictions from the simulation's bounded key set count as misses a larger cache
+would have hit, and requests singleflight already collapsed are excluded, since
+a cache cannot claim a saving that has already been made.
+
+### Bounded, and it says by what
+
+`bounds` in the response is the meter's own cost, reported rather than asserted:
+a ring of 300 one-second and 1,440 one-minute slots per endpoint rather than a
+timestamp per request, at most 16 endpoints and 48 operation groups each with
+the overflow folded into a named bucket, and an LRU of 8,192 request digests for
+the simulation. Nothing is keyed by anything an outsider controls. The response
+cache reports its own bounds separately, under `caches`.
+
+Everything is in memory and nothing is persisted, so a restart starts over.
+`since` and `uptime_seconds` are in the response for that reason: "peak over the
+last 24 hours" from a process up for eleven minutes reads identically to a real
+day.
+
+### What it does not cover
+
+The indexer path only. The RPC and ABCI calls (`probeNode`, chain verification,
+balances, `vm/qrender`, `vm/qeval`, parameters, gnockpit), the GitHub lab, the
+price venues, the genesis import and the screenshot upstream all use their own
+`http.Client` and are not counted here. The RPC path is the one that matters:
+it is also outside #526's breaker, and it is where the remaining 429s were
+measured.
 
 ## Transactions and blocks
 

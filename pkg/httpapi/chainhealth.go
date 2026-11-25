@@ -356,6 +356,13 @@ func humanDuration(seconds int) string {
 // live carries what the indexer already said, keyed by network; a network
 // missing from it is treated as an unreachable indexer, which is what an
 // absent entry means at every call site.
+//
+// It also records a sample per network, when -health-db is set. Here, and not
+// in the three callers, because this is the one function every health probe
+// goes through: both /api/sanity/overview paths, /api/cockpit and the
+// background sampler. A caller that forgot to record would leave a hole in the
+// history, and a hole is indistinguishable from an outage. See
+// health_history.go.
 func (a *API) probeNetworks(ctx context.Context, networks []config.NetworkConfig, live map[string]store.SanityLiveness) (map[string]NodeState, map[string]ChainDiagnosis) {
 	var (
 		mu    sync.Mutex
@@ -381,6 +388,7 @@ func (a *API) probeNetworks(ctx context.Context, networks []config.NetworkConfig
 		}(n)
 	}
 	wg.Wait()
+	a.recordHealthSamples(nodes, diags, live)
 	return nodes, diags
 }
 

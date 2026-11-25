@@ -22,6 +22,7 @@ import (
 	"github.com/gnoverse/gnoscope/pkg/discover"
 	"github.com/gnoverse/gnoscope/pkg/genesis"
 	"github.com/gnoverse/gnoscope/pkg/ghlab"
+	"github.com/gnoverse/gnoscope/pkg/healthlog"
 	"github.com/gnoverse/gnoscope/pkg/httpapi"
 	"github.com/gnoverse/gnoscope/pkg/indexer"
 	"github.com/gnoverse/gnoscope/pkg/stdlibs"
@@ -157,6 +158,20 @@ func run() error {
 		trafficRetention = flag.Int("traffic-retention-days", 30,
 			"how many days of request rows to keep; 0 keeps them forever")
 
+		// The availability record, and its own database file, for the same
+		// reasons as traffic above. Off by default and for the same reason
+		// too: an explorer somebody runs for an afternoon should not open a
+		// second database nobody asked for.
+		//
+		// What it buys when it is on: /sanity stops reporting a state and
+		// starts reporting a history, so a chain down for three days reads
+		// differently from one that blipped thirty seconds ago. See
+		// pkg/healthlog.
+		healthDB = flag.String("health-db", "",
+			"SQLite path for the per-network availability history, e.g. gnoscope-health.db (empty = record nothing)")
+		healthRetention = flag.Int("health-retention-days", healthlog.DefaultRetentionDays,
+			"how many days of health samples to keep; 0 keeps them forever")
+
 		// The lab's GitHub section, and its own database file, for the same
 		// reasons as traffic above: small, entirely re-fetchable, and with
 		// nothing in common with the chain index but the process.
@@ -196,6 +211,20 @@ func run() error {
 		}
 		log.Printf("traffic: recording requests and engagement to %s (retention %s); /api/traffic is public and aggregate-only",
 			*trafficDB, retention)
+	}
+	var healthStore *healthlog.Store
+	if *healthDB != "" {
+		healthStore, err = healthlog.Open(*healthDB, *healthRetention)
+		if err != nil {
+			return fmt.Errorf("init health db: %w", err)
+		}
+		defer healthStore.Close()
+		retention := "forever"
+		if *healthRetention > 0 {
+			retention = fmt.Sprintf("%d days", *healthRetention)
+		}
+		log.Printf("health history: sampling every %s into %s (retention %s); served at /api/health/history",
+			healthlog.SampleInterval, *healthDB, retention)
 	}
 	defer db.Close()
 
@@ -811,6 +840,22 @@ func run() error {
 	api.SetResponseCache(cache)
 	api.SetViewCounter(views)
 	api.SetTraffic(traf)
+	// The availability history, and the loop that keeps it fed.
+	//
+	// Both halves are needed. Every reader who opens /sanity or /cockpit
+	// records a sample as a side effect of the probe, which costs nothing and
+	// covers the hours somebody is watching; the sampler covers the hours
+	// nobody is, which are the ones an outage happens in. Started after the
+	// background database work settles, like the warmer, so the first pass is
+	// not competing with the initial sync for the indexer's budget.
+	api.SetHealthLog(healthStore)
+	if healthStore != nil {
+		go healthStore.Run(ctx)
+		go func() {
+			db.WaitBackground()
+			api.RunHealthSampler(ctx, healthlog.SampleInterval)
+		}()
+	}
 	api.SetGitHub(ghStore, ghOffReason)
 	if ghSyncer != nil {
 		go ghSyncer.Run(ctx)

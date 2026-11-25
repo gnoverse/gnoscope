@@ -65,7 +65,24 @@ func (s *Syncer) SetBlockHistoryDays(days int) { s.blockHistoryDays = days }
 const fingerprintKeyPrefix = "chain_fingerprint:"
 
 // SyncAll fetches all data from the indexer and processes it.
+//
+// It stands down as a whole pass when the client's breaker is open, rather than
+// letting each of its eighteen passes walk into the breaker on its own.
+//
+// Both halves of that matter. The passes below do respect the breaker already,
+// because every one of them goes through Client.query, which short-circuits on
+// ErrUnavailable; what they did not do was respect it *collectively*. A network
+// rate limited for five minutes produced ten ticks of eighteen failed passes
+// each, every one of them logging its own line, and the first pass after the
+// cooldown spent a real request discovering the upstream was still angry.
+// Honouring the server's own number (see pkg/indexer/ratelimit.go) is what
+// makes that first request land outside the penalty window instead of inside
+// it, and this is what keeps the other seventeen quiet in the meantime.
 func (s *Syncer) SyncAll(ctx context.Context) error {
+	if until, paused := s.client.PausedUntil(); paused {
+		return fmt.Errorf("%w: standing down for another %s",
+			indexer.ErrUnavailable, time.Until(until).Round(time.Second))
+	}
 	if err := s.checkChainReset(ctx); err != nil {
 		return fmt.Errorf("check chain reset: %w", err)
 	}
@@ -466,6 +483,17 @@ func (s *Syncer) checkChainReset(ctx context.Context) error {
 
 	log.Printf("[%s] CHAIN RESET DETECTED: stored chain %q is no longer served (indexer now serves %q); discarding local data for this network",
 		s.networkID, stored, current)
+
+	// Before the rows, and unconditionally. The response cache holds block
+	// answers keyed by height with no expiry, because a finalised block cannot
+	// change — but a reset chain comes back with *different* blocks at the same
+	// heights, so every one of those answers is now about a chain that no
+	// longer exists. Left in place they would be served to the re-sync with
+	// total confidence and nothing anywhere saying so: the same shape as a
+	// stale node defining a pool's identity, which #525 recorded one layer
+	// down. The cache is shared with this network's serve client, so this one
+	// call covers the pages as well as the sync loop. See ResponseCache.Purge.
+	s.client.PurgeCache()
 
 	deleted, err := s.db.DeleteNetworkData(s.networkID)
 	if err != nil {

@@ -11323,6 +11323,402 @@ function fmtGap(seconds) {
   return Math.floor(seconds / 86400) + 'd';
 }
 
+// The availability strip: one row per network, one cell per bucket, coloured
+// by the worst state seen in that bucket.
+//
+// The section above says what each chain is *right now*, which is the thing
+// this page has always said and the thing a reader cannot act on: a chain down
+// for three days and one that blipped thirty seconds ago drew the same amber
+// dot. Measured on the production instance over 24 hours, 38 breaker trips on
+// one network were invisible here.
+//
+// The sentence under each strip carries more than the strip does, and is the
+// part worth keeping if only one survives: "last unreachable 4h ago, indexer
+// down for 5m" is the answer, and a row of squares makes a reader count cells
+// to reach it. The server writes that sentence (see pkg/httpapi/health_history.go)
+// so this page, /widget and any agent reading the endpoint say the same thing.
+let _availWindow = '7d';
+
+// No cell colour of its own: the states are already coloured by DIAG_STYLE
+// above, and a second palette for the same seven words is how two parts of one
+// page end up disagreeing about what amber means. Only the eighth case is new.
+const AVAIL_NO_DATA = 'var(--bg3)';
+
+function availStateColor(state) {
+  if (!state) return AVAIL_NO_DATA;
+  return (DIAG_STYLE[state] || DIAG_STYLE.unknown).color;
+}
+
+function availStateLabel(state) {
+  if (!state) return 'not sampled';
+  return (DIAG_STYLE[state] || DIAG_STYLE.unknown).label;
+}
+
+// The indexer budget: what this process is spending upstream, against the
+// ceiling it is spending it from.
+//
+// The public gno indexers sit behind one Cloudflare rule, 3,100 requests per
+// 300 seconds per IP, counted across every indexer hostname under gno.land
+// together. #526 stopped the 429s; nobody knew what was behind them. The
+// decisive figures here are the peak over one 300 second window (the budget is
+// spent in bursts, and a day under the ceiling on average with one window four
+// times over it is the shape that 429s) and the would-have-hit columns, which
+// say what a response cache would have saved before anybody builds one.
+//
+// The verdict and the sentence are written by the server (pkg/reqmeter), for
+// the same reason the availability summary is: this page, the API and whoever
+// comes to answer #525 with it should all say the same thing about the same
+// traffic.
+const USAGE_VERDICT_STYLE = {
+  under: { color: '#51cf66', label: 'under' },
+  near: { color: '#ffd43b', label: 'near' },
+  over: { color: '#ff6b6b', label: 'over' },
+};
+
+function usageVerdictEl(verdict, text) {
+  const st = USAGE_VERDICT_STYLE[verdict] || { color: 'var(--fg2)', label: verdict || '-' };
+  return el('span', { style: { color: st.color, fontWeight: 'bold' } }, text || ('● ' + st.label));
+}
+
+function indexerBudgetSection() {
+  const wrap = el('div', { className: 'section', id: 'sanity-indexer-budget' });
+  wrap.appendChild(el('div', { className: 'section-title' }, 'indexer budget'));
+  wrap.appendChild(el('div', { className: 'section-sub' },
+    'what this process spends at the upstream indexers, against the one per-IP rule they sit behind. '
+    + 'the peak is the figure that matters: the budget is spent in bursts, and a quiet day with one '
+    + 'burst over the ceiling costs a 300 second blackout just the same. "cached" is what the '
+    + 'response cache actually answered; "would hit" is what a short-lived cache would still save '
+    + 'on top of it, measured rather than guessed.'));
+
+  const body = el('div');
+  wrap.appendChild(body);
+  loadIndexerBudget(body);
+  return wrap;
+}
+
+async function loadIndexerBudget(body) {
+  body.textContent = '';
+  skeletonBlock(body);
+  let data;
+  try {
+    data = await api('indexer/usage');
+  } catch (err) {
+    body.textContent = '';
+    body.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px' } },
+      'the request meter could not be read'));
+    return;
+  }
+  body.textContent = '';
+
+  const budget = data.budget || {};
+  const shared = data.shared || {};
+  const all = data.all || {};
+
+  const cards = el('div', { className: 'stats-bar' });
+  const stat = (label, value, extra) => {
+    const card = el('div', { className: 'stat' },
+      el('span', { className: 'label' }, label),
+      el('span', { className: 'value' }, value));
+    if (extra) card.appendChild(extra);
+    return card;
+  };
+
+  cards.appendChild(stat('ceiling', fmtNum(budget.requests || 0) + ' / ' + (budget.seconds || 0) + 's',
+    el('span', { style: { color: 'var(--fg2)' } }, (budget.per_second || 0) + '/s sustained')));
+  cards.appendChild(stat('last ' + (budget.seconds || 300) + 's', fmtNum(shared.last_300s || 0),
+    usageVerdictEl(shared.current_verdict, '● ' + (shared.current_percent || 0).toFixed(0) + '% of budget')));
+  cards.appendChild(stat('peak ' + (budget.seconds || 300) + 's today', fmtNum(shared.peak_300s || 0),
+    usageVerdictEl(shared.verdict, '● ' + (shared.peak_percent || 0).toFixed(0) + '% of budget')));
+  cards.appendChild(stat('peak minute', fmtNum(shared.peak_minute || 0),
+    el('span', { style: { color: 'var(--fg2)' } }, (shared.peak_minute_per_sec || 0) + '/s')));
+  cards.appendChild(stat('cached', (shared.served_percent || 0).toFixed(0) + '%',
+    el('span', { style: { color: 'var(--fg2)' } },
+      fmtNum(shared.served || 0) + ' of ' + fmtNum(shared.asked || 0) + ' answered from memory')));
+  cards.appendChild(stat('collapsed', (shared.collapsed_percent || 0).toFixed(0) + '%',
+    el('span', { style: { color: 'var(--fg2)' } },
+      fmtNum(shared.collapsed || 0) + ' of ' + fmtNum(shared.asked || 0) + ' never sent')));
+  cards.appendChild(stat('refused (429)', fmtNum(shared.refused || 0),
+    el('span', { style: { color: 'var(--fg2)' } }, fmtNum(shared.failed || 0) + ' other errors')));
+  body.appendChild(cards);
+
+  body.appendChild(el('div', {
+    style: { color: 'var(--fg2)', fontSize: '12px', margin: '8px 0 4px', whiteSpace: 'normal', lineHeight: '1.5' },
+  }, data.summary || ''));
+
+  // How long this has been counting. Without it "peak over the last 24 hours"
+  // from a process up for eleven minutes reads exactly like a real day, which
+  // is the same honesty problem the availability section's "recording since"
+  // solves one section up.
+  body.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px', marginBottom: '10px' } },
+    'counting since ' + (data.since || '?') + ' (' + fmtGap(data.uptime_seconds || 0) + '), in memory only: '
+    + 'a restart starts over. off-edge origins excluded from the figures above; '
+    + fmtNum(all.sent || 0) + ' requests sent in total.'));
+
+  const ttls = data.ttl_seconds || [];
+  const eps = data.endpoints || [];
+  if (!eps.length) {
+    body.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px' } },
+      'no outbound indexer requests recorded yet'));
+    return;
+  }
+
+  for (const ep of eps) {
+    const block = el('div', { style: { marginBottom: '14px' } });
+    const head = el('div', { style: { display: 'flex', alignItems: 'baseline', gap: '8px', fontSize: '12px', flexWrap: 'wrap' } });
+    head.appendChild(el('span', { style: { fontWeight: 'bold' } }, ep.url));
+    head.appendChild(el('span', { style: { color: ep.shared_bucket ? 'var(--fg2)' : '#51cf66' } },
+      ep.shared_bucket ? 'on the shared per-IP budget' : 'own origin, off the shared budget'));
+    head.appendChild(el('span', { style: { color: 'var(--fg2)' } },
+      fmtNum(ep.sent || 0) + ' sent · ' + (ep.per_sec_300s || 0) + '/s now · peak ' + fmtNum(ep.peak_300s || 0)));
+    block.appendChild(head);
+
+    const table = el('table');
+    const hr = el('tr');
+    ['query', 'sent', 'share', 'cached', 'collapsed', '429s', 'errors', 'bytes']
+      .forEach(h => hr.appendChild(el('th', {}, h)));
+    ttls.forEach(t => hr.appendChild(el('th', {}, 'would hit ' + t + 's')));
+    table.appendChild(el('thead', {}, hr));
+
+    // The top callers, not every caller. The question this table answers is
+    // "what would a cache have to cover", and the eleventh row has never been
+    // the answer to it. The count below says what was left off.
+    const groups = ep.groups || [];
+    const shown = groups.slice(0, 10);
+
+    const tb = el('tbody');
+    for (const g of shown) {
+      const row = el('tr');
+      row.appendChild(el('td', { 'data-usage-group': g.label }, g.label));
+      row.appendChild(el('td', {}, fmtNum(g.sent || 0)));
+      row.appendChild(el('td', {}, (g.sent_percent || 0).toFixed(0) + '%'));
+      // The measured hit rate, in the same column shape as the simulated one
+      // four columns over, so the two can be read against each other.
+      const served = g.served || 0, servedPct = g.served_percent || 0;
+      const servedColour = servedPct >= 50 ? '#51cf66' : servedPct >= 20 ? '#ffd43b' : 'var(--fg2)';
+      row.appendChild(el('td', { 'data-usage-served': g.label },
+        el('span', { style: { color: servedColour } }, fmtNum(served) + ' (' + servedPct.toFixed(0) + '%)')));
+      row.appendChild(el('td', {}, fmtNum(g.collapsed || 0)));
+      row.appendChild(el('td', {}, fmtNum(g.refused || 0)));
+      row.appendChild(el('td', {}, fmtNum(g.failed || 0)));
+      row.appendChild(el('td', {}, shortBytes(g.bytes || 0)));
+      (g.would_hit || []).forEach((n, i) => {
+        const pct = (g.would_hit_percent || [])[i] || 0;
+        // Coloured by how much a cache would buy, because that is the decision
+        // this table exists to inform: green is a row a cache would mostly
+        // remove.
+        const colour = pct >= 50 ? '#51cf66' : pct >= 20 ? '#ffd43b' : 'var(--fg2)';
+        row.appendChild(el('td', {},
+          el('span', { style: { color: colour } }, fmtNum(n) + ' (' + pct.toFixed(0) + '%)')));
+      });
+      tb.appendChild(row);
+    }
+    table.appendChild(tb);
+    block.appendChild(table);
+    if (groups.length > shown.length) {
+      block.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px' } },
+        'and ' + (groups.length - shown.length) + ' more query shapes at this endpoint'));
+    }
+    body.appendChild(block);
+  }
+
+  // What the real cache holds, and what bounds it. An empty list here is a
+  // wiring fault and says so: a cache nobody registered reports a hit rate of
+  // zero, which reads exactly like a cache that is working and cold.
+  const caches = data.caches || [];
+  const cacheBox = el('div', { id: 'sanity-indexer-cache', style: { marginBottom: '12px' } });
+  cacheBox.appendChild(el('div', { style: { fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' } }, 'response cache'));
+  if (!caches.length) {
+    cacheBox.appendChild(el('div', { style: { color: '#ff6b6b', fontSize: '12px' } },
+      'no response cache is registered on this instance'));
+  } else {
+    const ct = el('table');
+    const chr = el('tr');
+    ['pool', 'hits / lookups', 'hits', 'misses', 'entries', 'held', 'evicted', 'expired', 'purges']
+      .forEach(h => chr.appendChild(el('th', {}, h)));
+    ct.appendChild(el('thead', {}, chr));
+    const ctb = el('tbody');
+    for (const c of caches) {
+      const row = el('tr');
+      row.appendChild(el('td', { 'data-cache-pool': c.name || '' }, c.name || '?'));
+      row.appendChild(el('td', {}, (c.hit_percent || 0).toFixed(0) + '%'));
+      row.appendChild(el('td', {}, fmtNum(c.hits || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.misses || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.entries || 0) + ' / ' + fmtNum(c.max_entries || 0)));
+      row.appendChild(el('td', {}, shortBytes(c.bytes || 0) + ' / ' + shortBytes(c.max_bytes || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.evictions || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.expired || 0)));
+      row.appendChild(el('td', {}, fmtNum(c.purges || 0) + (c.last_purge ? ' (' + c.last_purge + ')' : '')));
+      ctb.appendChild(row);
+    }
+    ct.appendChild(ctb);
+    cacheBox.appendChild(ct);
+  }
+  cacheBox.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px', marginTop: '4px', whiteSpace: 'normal', lineHeight: '1.5' } },
+    'the rate in this table is hits over lookups, and a lookup happens before the breaker is '
+    + 'consulted, so a miss during a stand-down is one that could never have been a request. the '
+    + '"cached" column above is the one that says what share of outbound demand the cache removed. '
+    + (data.cache_note || '')));
+  body.appendChild(cacheBox);
+
+  const b = data.bounds || {};
+  body.appendChild(el('div', { style: { color: 'var(--dim)', fontSize: '11px', marginTop: '4px', whiteSpace: 'normal', lineHeight: '1.5' } },
+    'the "would hit" columns are a floor: the simulation is holding ' + fmtNum(b.cache_sim_tracked || 0)
+    + ' of up to ' + fmtNum(b.cache_sim_keys || 0) + ' request identities and has evicted '
+    + fmtNum(b.cache_sim_evictions || 0)
+    + ', and every eviction reads as a miss a larger cache would have hit. requests already collapsed '
+    + 'in flight are excluded, so nothing is counted as saved twice.'));
+}
+
+function availabilitySection() {
+  const wrap = el('div', { className: 'section', id: 'sanity-availability' });
+  wrap.appendChild(el('div', { className: 'section-title' }, 'availability'));
+  wrap.appendChild(el('div', { className: 'section-sub' },
+    'what each chain looked like from here, sampled once a minute and kept. one cell per bucket, '
+    + 'coloured by the worst state in it, newest on the right. a blank cell is a bucket nobody '
+    + 'sampled, which is not the same as a healthy one.'));
+
+  const controls = el('div', { style: { display: 'flex', gap: '4px', margin: '8px 0 12px' } });
+  const body = el('div');
+  wrap.appendChild(controls);
+  wrap.appendChild(body);
+
+  for (const w of ['24h', '7d', '30d']) {
+    const btn = el('button', { className: 'pager-btn' + (_availWindow === w ? ' active' : ''), style: { padding: '3px 10px', fontSize: '12px' } }, w);
+    btn.addEventListener('click', () => {
+      _availWindow = w;
+      controls.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadAvailability(body);
+    });
+    controls.appendChild(btn);
+  }
+  loadAvailability(body);
+  return wrap;
+}
+
+// A generation counter, because the window buttons can be clicked faster than
+// a response arrives and the loser must not paint over the winner. Same guard
+// as the heartbeat strip, and for the same reason.
+let _availGen = 0;
+
+async function loadAvailability(body) {
+  const gen = ++_availGen;
+  body.textContent = '';
+  skeletonBlock(body);
+  let data;
+  try {
+    data = await api('health/history?window=' + encodeURIComponent(_availWindow));
+  } catch (err) {
+    if (gen !== _availGen) return;
+    body.textContent = '';
+    body.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px' } },
+      'the availability history could not be read'));
+    return;
+  }
+  if (gen !== _availGen) return;
+  body.textContent = '';
+
+  if (data.note) {
+    body.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px', margin: '0 0 10px' } }, data.note));
+  }
+  const rows = data.rows || [];
+  if (!rows.length) {
+    body.appendChild(el('p', { style: { color: 'var(--fg2)', fontSize: '12px' } }, 'no networks configured'));
+    return;
+  }
+
+  for (const row of rows) {
+    const block = el('div', { style: { marginBottom: '14px' } });
+
+    const head = el('div', { style: { display: 'flex', alignItems: 'baseline', gap: '8px', fontSize: '12px' } });
+    const label = el('div', {});
+    label.appendChild(netDotEl(row.network));
+    label.append(row.network);
+    head.appendChild(label);
+    // The percentage, only where it means something. With no samples there is
+    // nothing to be a percentage of, and "0.00% available" on a fresh instance
+    // is the one reading this section must never produce.
+    if (row.samples > 0) {
+      head.appendChild(el('span', {
+        style: { color: row.uptime_percent >= 99.9 ? '#51cf66' : row.uptime_percent >= 99 ? '#ffd43b' : '#ff6b6b' },
+      }, row.uptime_percent.toFixed(2) + '%'));
+      head.appendChild(el('span', { style: { color: 'var(--fg2)' } }, row.samples + ' samples'));
+    }
+    block.appendChild(head);
+
+    // Cells flex rather than taking a fixed width: 168 of them at a readable
+    // size is wider than the column on anything but a desktop, and a strip
+    // that scrolls sideways is a strip whose right-hand end, the only part
+    // anybody looks at first, is off screen.
+    const strip = el('div', {
+      style: { display: 'flex', gap: '1px', margin: '6px 0', height: '20px', borderRadius: '2px', overflow: 'hidden' },
+    });
+    for (const c of (row.cells || [])) {
+      const cell = el('div', {
+        style: { flex: '1 1 0', minWidth: '1px', background: availStateColor(c.state) },
+      });
+      const when = new Date(c.start);
+      cell.title = (c.samples
+        ? availStateLabel(c.state) + ' · ' + c.healthy + '/' + c.samples + ' samples healthy'
+        : 'no sample in this bucket')
+        + ' · ' + when.toLocaleString();
+      strip.appendChild(cell);
+    }
+    block.appendChild(strip);
+
+    block.appendChild(el('div', {
+      style: { color: 'var(--fg2)', fontSize: '12px', whiteSpace: 'normal', wordBreak: 'normal', lineHeight: '1.5' },
+    }, row.summary || ''));
+
+    // The incidents themselves, most recent first. Five, because the sixth is
+    // never the one being looked for and the count above already says how many
+    // there were.
+    const incidents = (row.incidents || []).slice(0, 5);
+    if (incidents.length) {
+      const list = el('div', { style: { marginTop: '6px', fontSize: '11px' } });
+      for (const inc of incidents) {
+        // data-incident so the browser tests can count the lines without
+        // matching on prose, the same reason the rest of the page carries
+        // data-track and data-tab hooks.
+        const line = el('div', { 'data-incident': inc.state, style: { color: 'var(--fg2)', display: 'flex', gap: '8px' } });
+        line.appendChild(el('span', { style: { color: availStateColor(inc.state), minWidth: '110px' } },
+          '● ' + availStateLabel(inc.state)));
+        line.appendChild(timeEl(inc.start));
+        line.append('for ' + fmtGap(inc.seconds) + (inc.ongoing ? ' and counting' : ''));
+        if (inc.detail) line.title = inc.detail;
+        list.appendChild(line);
+      }
+      if (row.outages > incidents.length) {
+        list.appendChild(el('div', { style: { color: 'var(--dim)' } },
+          'and ' + (row.outages - incidents.length) + ' more in this window'));
+      }
+      block.appendChild(list);
+    }
+
+    body.appendChild(block);
+  }
+
+  // A legend, because the colours are the whole encoding and a tooltip is not
+  // a legend: it answers one cell at a time, to a reader who already suspects
+  // something. The palette is DIAG_STYLE's, the same one the diagnosis table
+  // above uses, so this names it rather than inventing a second meaning.
+  const legend = el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '10px', fontSize: '11px', color: 'var(--fg2)' } });
+  for (const state of ['alive', 'syncing', 'stale', 'node_unreachable', 'indexer_down', 'wedged', '']) {
+    const item = el('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } });
+    item.appendChild(el('span', {
+      style: { width: '10px', height: '10px', borderRadius: '2px', background: availStateColor(state), display: 'inline-block' },
+    }));
+    item.append(availStateLabel(state));
+    legend.appendChild(item);
+  }
+  body.appendChild(legend);
+
+  const foot = el('div', { style: { color: 'var(--fg2)', fontSize: '11px', marginTop: '8px' } },
+    fmtGap(data.cell_seconds) + ' per cell · sampled every ' + fmtGap(data.sample_seconds));
+  if (data.retention_days > 0) foot.append(' · kept ' + data.retention_days + ' days');
+  body.appendChild(foot);
+}
+
 // The heartbeat strip: one row per network, one cell per interval.
 //
 // A status light says alive or not. This says cadence, which is what degrades
@@ -14237,6 +14633,8 @@ async function loadSanity() {
     container.appendChild(cards);
 
     container.appendChild(sanityDiagnosisSection(ov));
+    container.appendChild(availabilitySection());
+    container.appendChild(indexerBudgetSection());
     container.appendChild(heartbeatSection());
     container.appendChild(sanitySyncSection(ov));
 
