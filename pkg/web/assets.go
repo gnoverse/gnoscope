@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
-	"sync/atomic"
 
 	"github.com/andybalholm/brotli"
 	"github.com/gnoverse/gnoscope/internal/contentcoding"
@@ -47,14 +46,8 @@ type asset struct {
 	ctype string
 	raw   []byte
 	gz    []byte
+	br    []byte
 	etag  string
-
-	// br is filled in the background. Brotli at its best ratio takes about
-	// five seconds on the script, which is too long to hold startup for and
-	// short enough that nobody notices gzip in the meantime.
-	br atomic.Pointer[[]byte]
-	// brDone closes once br is set, for tests that need to see it.
-	brDone chan struct{}
 }
 
 // bundleRe finds the blocks to cut. The closing tag is the first one after
@@ -88,10 +81,9 @@ func splitBundle(index []byte) ([]byte, []*asset, error) {
 
 		sum := sha256.Sum256(body)
 		a := &asset{
-			path:   AssetPrefix + name + "." + hex.EncodeToString(sum[:6]) + "." + ext,
-			raw:    body,
-			etag:   `W/"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`,
-			brDone: make(chan struct{}),
+			path: AssetPrefix + name + "." + hex.EncodeToString(sum[:6]) + "." + ext,
+			raw:  body,
+			etag: `W/"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`,
 		}
 		out.Write(rest[:m[0]])
 		if ext == "js" {
@@ -113,9 +105,13 @@ func splitBundle(index []byte) ([]byte, []*asset, error) {
 	return out.Bytes(), assets, nil
 }
 
-// bundle is the split, done once per process. It depends on nothing but the
-// embedded index.html, so every Handler shares one, and the test binary pays
-// for the five-second brotli pass once rather than once per test.
+// Level 9 keeps startup compression under a second on the build host while
+// shrinking the script below gzip. Encode both forms before serving so a
+// browser arriving after a restart can cache its preferred form immediately.
+const assetBrotliLevel = 9
+
+// The split and compression depend only on the embedded index.html, so every
+// Handler in the process shares the result.
 var bundle = sync.OnceValues(func() (*splitResult, error) {
 	index, err := frontendFS.ReadFile("frontend/index.html")
 	if err != nil {
@@ -128,13 +124,8 @@ var bundle = sync.OnceValues(func() (*splitResult, error) {
 	res := &splitResult{doc: doc, byPath: map[string]*asset{}}
 	for _, a := range assets {
 		a.gz = gzipBytes(a.raw)
+		a.br = brotliBytes(a.raw, assetBrotliLevel)
 		res.byPath[a.path] = a
-		go func(a *asset) {
-			if br := brotliBytes(a.raw, brotli.BestCompression); br != nil {
-				a.br.Store(&br)
-			}
-			close(a.brDone)
-		}(a)
 	}
 	return res, nil
 })
@@ -173,11 +164,10 @@ func serveAsset(w http.ResponseWriter, r *http.Request, assets map[string]*asset
 	}
 	body := a.raw
 	br, gz := encodingWeights(r)
-	brotli := a.br.Load()
 	switch {
-	case brotli != nil && br > 0 && (br >= gz || a.gz == nil):
+	case a.br != nil && br > 0 && (br >= gz || a.gz == nil):
 		h.Set("Content-Encoding", "br")
-		body = *brotli
+		body = a.br
 	case a.gz != nil && gz > 0:
 		h.Set("Content-Encoding", "gzip")
 		body = a.gz

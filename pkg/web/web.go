@@ -178,6 +178,12 @@ func Handler(opts Options) (http.HandlerFunc, error) {
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Registered API routes take precedence over the SPA catch-all. A
+		// missing API route must not put origin-specific HTML into the API cache.
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
 		// One route, named, before anything else writes a header. Everything
 		// else here stays exactly as unframeable as whatever is in front of
 		// it: a policy that leaked onto every path would be a site-wide

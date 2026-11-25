@@ -109,6 +109,19 @@ func TestIndexIsCompressedAndRevalidatable(t *testing.T) {
 		}
 	})
 
+	t.Run("missing API routes do not serve a document", func(t *testing.T) {
+		for _, path := range []string{"/api", "/api/", "/api/tx/a/b"} {
+			for _, enc := range []string{"", "br", "gzip, br"} {
+				rec := get(path, enc)
+				if rec.Code != http.StatusNotFound ||
+					!strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") ||
+					rec.Header().Get("Content-Encoding") != "" {
+					t.Errorf("%s with %q: want a plain 404, got %d %v", path, enc, rec.Code, rec.Header())
+				}
+			}
+		}
+	})
+
 	t.Run("revalidates with an ETag", func(t *testing.T) {
 		etag := raw.Header().Get("ETag")
 		if etag == "" {
@@ -258,9 +271,6 @@ func TestBundleIsAnImmutableAsset(t *testing.T) {
 				t.Error("gzip does not round-trip")
 			}
 
-			// Brotli is computed in the background; wait for it here.
-			b, _ := bundle()
-			<-b.byPath[c.path].brDone
 			req = httptest.NewRequest("GET", c.path, nil)
 			req.Header.Set("Accept-Encoding", "br")
 			br := httptest.NewRecorder()

@@ -360,38 +360,35 @@ func TestResponseCacheIsBounded(t *testing.T) {
 // must not merge them.
 //
 // A third of gno transaction hashes are base64 containing a slash.
-// `/api/tx/a%2Fb` routes to the transaction handler and answers JSON;
-// `/api/tx/a/b` matches no API route and falls through to the SPA, which
-// answers 200 with HTML. Keyed on the decoded path the two collide, and
-// whichever arrived first was served to the other for the whole TTL.
+// `/api/tx/a%2Fb` matches the transaction route and answers JSON. The
+// unescaped `/api/tx/a/b` matches no API route and should still return 404
+// after the valid transaction response is cached.
 func TestResponseCacheKeysOnTheEscapedPath(t *testing.T) {
 	var calls atomic.Int32
 	h := WithResponseCache(NewResponseCache(CacheTTL), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		// What the real chain does: one path matches a route, the other does
-		// not and is answered by the single-page app.
-		if r.URL.EscapedPath() == "/api/tx/a%2Fb" {
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"hash":"a/b"}`)
+		if r.URL.EscapedPath() != "/api/tx/a%2Fb" {
+			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, "<!DOCTYPE html>")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"hash":"a/b"}`)
 	}))
 
-	get := func(path string) string {
+	get := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
-		return rec.Body.String()
+		return rec
 	}
 
-	// The unescaped one first, which is what poisoned the entry.
-	if got := get("/api/tx/a/b"); got != "<!DOCTYPE html>" {
-		t.Fatalf("got %q", got)
+	const tx = "/api/tx/a%2Fb"
+	if rec := get(tx); rec.Code != http.StatusOK || rec.Body.String() != `{"hash":"a/b"}` {
+		t.Fatalf("transaction: status %d, body %q", rec.Code, rec.Body.String())
 	}
-	if got := get("/api/tx/a%2Fb"); got != `{"hash":"a/b"}` {
-		t.Errorf("got %q, want the transaction; the two paths shared a cache entry", got)
+	if rec := get("/api/tx/a/b"); rec.Code != http.StatusNotFound {
+		t.Errorf("unescaped transaction path: status %d, want 404", rec.Code)
 	}
+	get(tx)
 	if calls.Load() != 2 {
 		t.Errorf("handler ran %d times, want 2 distinct keys", calls.Load())
 	}

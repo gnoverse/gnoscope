@@ -782,6 +782,8 @@ func run() error {
 	if *analyticsScript != "" {
 		log.Printf("analytics: frontend loads %s", *analyticsScript)
 	}
+	// Unknown badge URLs must not replace the cached SVG namespace with HTML.
+	mux.HandleFunc("GET "+httpapi.BadgePrefix, http.NotFound)
 	mux.HandleFunc("GET /", frontend)
 
 	// Cache outermost, so a hit costs nothing beyond the network-name check —
