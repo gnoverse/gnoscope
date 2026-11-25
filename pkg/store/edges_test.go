@@ -1,6 +1,7 @@
 package store
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -63,7 +64,7 @@ func TestEdgeRollupsAreIncrementalAndPerChain(t *testing.T) {
 
 	edgeValue := func(network string) int64 {
 		t.Helper()
-		g, err := db.GetTransferGraph(network, 7, 0, 0, "")
+		g, err := db.GetTransferGraph(network, 7, 0, 0, "", 0)
 		if err != nil {
 			t.Fatalf("GetTransferGraph: %v", err)
 		}
@@ -105,7 +106,7 @@ func TestEdgeRollupsAreIncrementalAndPerChain(t *testing.T) {
 	// Node volumes, not just edges: the node query ranks addresses by summed
 	// volume in its own statement, so an unscoped one blends the chains even
 	// while the edge query stays correct.
-	g, err := db.GetTransferGraph("live", 7, 0, 0, "")
+	g, err := db.GetTransferGraph("live", 7, 0, 0, "", 0)
 	if err != nil {
 		t.Fatalf("GetTransferGraph: %v", err)
 	}
@@ -256,5 +257,176 @@ func TestCallerGraphUntilEndsTheWindowOnThatDay(t *testing.T) {
 	}
 	if len(now.Edges) != 3 {
 		t.Fatalf("edges until today = %d, want 3", len(now.Edges))
+	}
+}
+
+// seedNeighbourhood is a small transfer graph with a known shape around g1ego:
+//
+//	g1ego -> g1a (100), g1b -> g1ego (50)        hop 1
+//	g1a -> g1c (70), g1b -> g1f (10)             hop 2
+//	g1a -> g1b (5)                               between two hop-1 nodes
+//	g1c -> g1d (40)                              hop 3
+func seedNeighbourhood(t *testing.T) *DB {
+	t.Helper()
+	db := NewTestDB(t)
+	day := time.Now().UTC().Format("2006-01-02")
+	var rows []TransferEdgeRow
+	for _, e := range []struct {
+		from, to string
+		v        int64
+	}{
+		{"g1ego", "g1a", 100}, {"g1b", "g1ego", 50},
+		{"g1a", "g1c", 70}, {"g1b", "g1f", 10},
+		{"g1a", "g1b", 5},
+		{"g1c", "g1d", 40},
+	} {
+		rows = append(rows, TransferEdgeRow{FromAddress: e.from, ToAddress: e.to, Day: day, TotalValue: e.v, TxCount: 1, LastHeight: 1})
+	}
+	if err := db.UpsertTransferEdges("live", rows); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+// hops=1 is what ego answered before hops existed, and stays on that code
+// path. The neighbourhood walk has to agree with it at one hop anyway, or the
+// two halves of the feature disagree about what a hop is.
+func TestEgoNeighbourhoodAtOneHopIsTheEgoGraph(t *testing.T) {
+	db := seedNeighbourhood(t)
+	start := time.Now().UTC().AddDate(0, 0, -7).Format("2006-01-02")
+
+	old, err := db.egoTransferGraph("live", start, "g1ego", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	walk, err := db.egoTransferNeighbourhood("live", start, "g1ego", 0, 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(old, walk) {
+		t.Fatalf("one-hop walk disagrees with the ego graph:\n ego  %+v\n walk %+v", old, walk)
+	}
+	viaAPI, err := db.GetTransferGraph("live", 7, 0, 0, "g1ego", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(old, viaAPI) {
+		t.Fatalf("hops=1 is not the ego graph:\n ego   %+v\n hops1 %+v", old, viaAPI)
+	}
+}
+
+func TestEgoNeighbourhood(t *testing.T) {
+	db := seedNeighbourhood(t)
+
+	tests := []struct {
+		name        string
+		hops, topN  int
+		wantNodes   []string // ego first, then by volume
+		wantEdges   int
+		wantDropped int
+		wantStopped int
+	}{
+		{"one hop is the counterparties only", 1, 0, []string{"g1ego", "g1a", "g1b"}, 2, 0, 0},
+		// a->b joins two hop-1 nodes and appears once a is a frontier node.
+		// Volume is the sum of returned edges: a is 100+70+5, c 70, b 50+10+5.
+		{"two hops reaches c and f", 2, 0, []string{"g1ego", "g1a", "g1c", "g1b", "g1f"}, 5, 0, 0},
+		{"three hops reaches d", 3, 0, []string{"g1ego", "g1a", "g1c", "g1b", "g1d", "g1f"}, 6, 0, 0},
+		{"five hops on a smaller graph stops when the frontier is empty", 5, 0, []string{"g1ego", "g1a", "g1c", "g1b", "g1d", "g1f"}, 6, 0, 0},
+		// Budget 4: hop 1 keeps 3, one place left, c (70) beats f (10). The
+		// radius is reached, so the walk did not stop early.
+		{"topN cuts the ring and counts the cut", 2, 4, []string{"g1ego", "g1a", "g1c", "g1b"}, 4, 1, 0},
+		// The budget is spent at hop 2 of 3: the walk stops and says so rather
+		// than running a third query to count what it may not draw.
+		{"a spent budget stops the walk and says where", 3, 4, []string{"g1ego", "g1a", "g1c", "g1b"}, 4, 1, 2},
+		// Hop 1 is never cut, so a budget below it still returns all of hop 1,
+		// and the walk stops there: hop 2's frontier would be over budget.
+		{"hop one is never cut, and an over-budget hop one is where it stops", 2, 1, []string{"g1ego", "g1a", "g1b"}, 2, 0, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, err := db.GetTransferGraph("live", 7, tt.topN, 0, "g1ego", tt.hops)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, n := range g.Nodes {
+				ids = append(ids, n.ID)
+			}
+			if !reflect.DeepEqual(ids, tt.wantNodes) {
+				t.Errorf("nodes = %v, want %v", ids, tt.wantNodes)
+			}
+			if len(g.Edges) != tt.wantEdges {
+				t.Errorf("edges = %+v, want %d of them", g.Edges, tt.wantEdges)
+			}
+			if g.Dropped != tt.wantDropped {
+				t.Errorf("dropped = %d, want %d", g.Dropped, tt.wantDropped)
+			}
+			if g.StoppedAt != tt.wantStopped {
+				t.Errorf("stopped at hop %d, want %d", g.StoppedAt, tt.wantStopped)
+			}
+			for _, e := range g.Edges {
+				if e.From == "g1c" && e.To == "g1d" && tt.hops < 3 {
+					t.Errorf("edge c->d is outside a %d-hop radius", tt.hops)
+				}
+			}
+		})
+	}
+}
+
+func TestCallerEgoGraph(t *testing.T) {
+	db := NewTestDB(t)
+	day := time.Now().UTC().Format("2006-01-02")
+	if err := db.UpsertCallerEdges("live", []CallerEdgeRow{
+		{Caller: "g1a", PkgPath: "gno.land/r/x", Day: day, Calls: 5, LastHeight: 1},
+		{Caller: "g1a", PkgPath: "gno.land/r/y", Day: day, Calls: 3, LastHeight: 1},
+		{Caller: "g1b", PkgPath: "gno.land/r/x", Day: day, Calls: 9, LastHeight: 1},
+		{Caller: "g1c", PkgPath: "gno.land/r/x", Day: day, Calls: 1, LastHeight: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertCallerEdges("other", []CallerEdgeRow{
+		{Caller: "g1a", PkgPath: "gno.land/r/z", Day: day, Calls: 50, LastHeight: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		ego         string
+		topN        int
+		want        []CallerGraphNode
+		wantDropped int
+	}{
+		{"an address fans out to the realms it called", "g1a", 0, []CallerGraphNode{
+			{ID: "g1a", Type: "caller", Calls: 8},
+			{ID: "gno.land/r/x", Type: "realm", Calls: 5},
+			{ID: "gno.land/r/y", Type: "realm", Calls: 3},
+		}, 0},
+		// The ego's count is all of its calls, the dropped neighbour's included.
+		{"a realm fans out to its callers, cut at topN", "gno.land/r/x", 2, []CallerGraphNode{
+			{ID: "gno.land/r/x", Type: "realm", Calls: 15},
+			{ID: "g1b", Type: "caller", Calls: 9},
+			{ID: "g1a", Type: "caller", Calls: 5},
+		}, 1},
+		{"an unknown ego is drawn alone", "g1nobody", 0, []CallerGraphNode{
+			{ID: "g1nobody", Type: "caller", Calls: 0},
+		}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, err := db.GetCallerEgoGraph("live", 7, time.Time{}, tt.ego, tt.topN, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(g.Nodes, tt.want) {
+				t.Errorf("nodes = %+v, want %+v", g.Nodes, tt.want)
+			}
+			if len(g.Edges) != len(tt.want)-1 {
+				t.Errorf("edges = %+v, want one per neighbour", g.Edges)
+			}
+			if g.Dropped != tt.wantDropped {
+				t.Errorf("dropped = %d, want %d", g.Dropped, tt.wantDropped)
+			}
+		})
 	}
 }

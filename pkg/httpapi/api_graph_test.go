@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/gnoverse/gnoscope/pkg/store"
 )
 
 type activeResponse struct {
@@ -171,5 +175,228 @@ func TestHandleDepsReverseDepth(t *testing.T) {
 				t.Errorf("app present = %v, want %v: %v", ok, tt.wantApp, graph)
 			}
 		})
+	}
+}
+
+// seedGraphAPI writes one transfer edge and one caller edge on alpha, and
+// stores alpha's newest block, so every graph endpoint has something to stamp.
+func seedGraphAPI(t *testing.T, db *store.DB) {
+	t.Helper()
+	day := time.Now().UTC().Format("2006-01-02")
+	if err := db.UpsertTransferEdges("alpha", []store.TransferEdgeRow{
+		{FromAddress: "g1ego", ToAddress: "g1a", Day: day, TotalValue: 100, TxCount: 1, LastHeight: 41},
+		{FromAddress: "g1a", ToAddress: "g1b", Day: day, TotalValue: 30, TxCount: 1, LastHeight: 41},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertCallerEdges("alpha", []store.CallerEdgeRow{
+		{Caller: "g1ego", PkgPath: "gno.land/r/demo/x", Day: day, Calls: 3, LastHeight: 41},
+		{Caller: "g1a", PkgPath: "gno.land/r/demo/x", Day: day, Calls: 2, LastHeight: 41},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertBlock("alpha", 42, "2026-10-26T10:00:00Z", 0, 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withLiveTip stands in for a live feed that has polled alpha, and puts the
+// map back afterwards: liveFeeds is a package global.
+func withLiveTip(t *testing.T, network string, height int, at time.Time) {
+	t.Helper()
+	prev, had := liveFeeds[network]
+	liveFeeds[network] = &liveFeed{networkID: network, lastBlock: height, checkedAt: at}
+	t.Cleanup(func() {
+		if had {
+			liveFeeds[network] = prev
+		} else {
+			delete(liveFeeds, network)
+		}
+	})
+}
+
+type stampedResponse struct {
+	Network       string `json:"network"`
+	ChainID       string `json:"chain_id"`
+	IndexedHeight int    `json:"indexed_height"`
+	IndexedTime   string `json:"indexed_time"`
+	LiveTipHeight int    `json:"live_tip_height"`
+	LiveTipAt     string `json:"live_tip_checked_at"`
+
+	Days        int    `json:"days"`
+	Window      string `json:"window"`
+	Granularity string `json:"granularity"`
+	TopN        int    `json:"top_n"`
+	Ego         string `json:"ego"`
+	Hops        int    `json:"hops"`
+	Dropped     *int   `json:"dropped"`
+	StoppedAt   int    `json:"stopped_at_hop"`
+	Until       string `json:"until"`
+	MinCalls    *int   `json:"min_calls"`
+	MinValue    *int64 `json:"min_value"`
+
+	Nodes []json.RawMessage `json:"nodes"`
+	Edges []json.RawMessage `json:"edges"`
+}
+
+// Every graph payload says what it is and when it is true: the chain, the
+// height it was computed at, the live tip as the header's feed last saw it,
+// and every parameter the handler read, defaults included.
+func TestGraphPayloadsDeclareTheirProvenance(t *testing.T) {
+	api, db := newTestAPI(t)
+	seedGraphAPI(t, db)
+	seedContractsAPI(t, db)
+	api.setChainID("alpha", "alpha-1")
+	checked := time.Date(2026, 10, 26, 10, 0, 5, 0, time.UTC)
+	withLiveTip(t, "alpha", 45, checked)
+
+	endpoints := []struct {
+		name string
+		h    http.HandlerFunc
+		url  string
+	}{
+		{"transfers", api.HandleGraphTransfers, "/api/graph/transfers?network=alpha"},
+		{"callers", api.HandleGraphCallers, "/api/graph/callers?network=alpha"},
+		{"contracts map", api.HandleContractsMap, "/api/contracts/map?network=alpha"},
+		{"contracts edges", api.HandleContractsEdges, "/api/contracts/edges?network=alpha"},
+	}
+	for _, ep := range endpoints {
+		t.Run(ep.name, func(t *testing.T) {
+			var got stampedResponse
+			getJSON(t, ep.h, ep.url, &got)
+			if got.Network != "alpha" || got.ChainID != "alpha-1" {
+				t.Errorf("network, chain_id = %q, %q; want alpha, alpha-1", got.Network, got.ChainID)
+			}
+			if got.IndexedHeight != 42 || got.IndexedTime != "2026-10-26T10:00:00Z" {
+				t.Errorf("indexed = %d at %q, want 42 at the stored block's time", got.IndexedHeight, got.IndexedTime)
+			}
+			if got.LiveTipHeight != 45 || got.LiveTipAt != checked.Format(time.RFC3339) {
+				t.Errorf("live tip = %d checked %q, want the feed's 45 checked %s", got.LiveTipHeight, got.LiveTipAt, checked.Format(time.RFC3339))
+			}
+		})
+	}
+
+	t.Run("transfers echo their defaults", func(t *testing.T) {
+		var got stampedResponse
+		getJSON(t, api.HandleGraphTransfers, "/api/graph/transfers?network=alpha", &got)
+		if got.Days != 30 || got.Granularity != "daily" || got.TopN != 100 || got.MinValue == nil || *got.MinValue != 0 {
+			t.Errorf("echo = days %d, granularity %q, top_n %d, min_value %v; want 30, daily, 100, 0", got.Days, got.Granularity, got.TopN, got.MinValue)
+		}
+		// Without an ego there is no radius and no frontier to report.
+		if got.Hops != 0 || got.Dropped != nil {
+			t.Errorf("hops %d, dropped %v without an ego; want both absent", got.Hops, got.Dropped)
+		}
+	})
+
+	t.Run("an ego echoes its radius and what it dropped", func(t *testing.T) {
+		var got stampedResponse
+		getJSON(t, api.HandleGraphTransfers, "/api/graph/transfers?network=alpha&ego=g1ego&hops=2", &got)
+		if got.Ego != "g1ego" || got.Hops != 2 || got.Dropped == nil || *got.Dropped != 0 {
+			t.Errorf("ego %q hops %d dropped %v; want g1ego, 2, 0", got.Ego, got.Hops, got.Dropped)
+		}
+		if len(got.Nodes) != 3 {
+			t.Errorf("two hops from g1ego = %d nodes, want 3", len(got.Nodes))
+		}
+	})
+
+	// A budget of one is spent by hop 1, so a two-hop walk stops there and
+	// the payload says so rather than looking like a complete neighbourhood.
+	t.Run("a walk the budget stopped says where", func(t *testing.T) {
+		var got stampedResponse
+		getJSON(t, api.HandleGraphTransfers, "/api/graph/transfers?network=alpha&ego=g1ego&hops=2&topN=1", &got)
+		if got.StoppedAt != 1 || len(got.Nodes) != 2 {
+			t.Errorf("stopped_at_hop %d with %d nodes; want 1 and the ego with its one counterparty", got.StoppedAt, len(got.Nodes))
+		}
+	})
+
+	t.Run("an ego with no hops is one hop", func(t *testing.T) {
+		var got stampedResponse
+		getJSON(t, api.HandleGraphTransfers, "/api/graph/transfers?network=alpha&ego=g1ego", &got)
+		if got.Hops != 1 || len(got.Nodes) != 2 {
+			t.Errorf("hops %d with %d nodes; want 1 and 2", got.Hops, len(got.Nodes))
+		}
+	})
+
+	t.Run("callers echo until as the day the window ended", func(t *testing.T) {
+		var got stampedResponse
+		getJSON(t, api.HandleGraphCallers, "/api/graph/callers?network=alpha&days=3650", &got)
+		if got.Until != time.Now().UTC().Format("2006-01-02") {
+			t.Errorf("until = %q, want today", got.Until)
+		}
+		// 3650 days at the default daily granularity is capped, and the echo
+		// is where a caller finds that out.
+		if got.Days != 365 || got.TopN != 200 || got.MinCalls == nil {
+			t.Errorf("echo = days %d top_n %d min_calls %v; want 365, 200, 0", got.Days, got.TopN, got.MinCalls)
+		}
+	})
+
+	t.Run("a caller ego carries ego and dropped", func(t *testing.T) {
+		var got stampedResponse
+		getJSON(t, api.HandleGraphCallers, "/api/graph/callers?network=alpha&ego=gno.land/r/demo/x&topN=1", &got)
+		if got.Ego != "gno.land/r/demo/x" || got.Dropped == nil || *got.Dropped != 1 || len(got.Nodes) != 2 {
+			t.Errorf("ego %q dropped %v nodes %d; want the realm, 1 dropped, 2 nodes", got.Ego, got.Dropped, len(got.Nodes))
+		}
+	})
+}
+
+// Unknown is absent, not zero: a cold feed has no tip and a fresh database
+// has no stored block, and a 0 in either field would read as block zero.
+func TestGraphProvenanceOmitsWhatItDoesNotKnow(t *testing.T) {
+	api, _ := newTestAPI(t)
+	rec := getJSON(t, api.HandleGraphTransfers, "/api/graph/transfers?network=beta", nil)
+	for _, key := range []string{"indexed_height", "live_tip_height", "live_tip_checked_at", "chain_id"} {
+		if strings.Contains(rec.Body.String(), `"`+key+`"`) {
+			t.Errorf("%s present with nothing to report: %s", key, rec.Body.String())
+		}
+	}
+}
+
+// hops is refused outside 1..5 rather than clamped, the way until refuses a
+// malformed date: a neighbourhood quietly answered at another radius looks
+// exactly like the one asked for.
+func TestGraphTransfersRejectsHopsOutOfRange(t *testing.T) {
+	api, db := newTestAPI(t)
+	seedGraphAPI(t, db)
+
+	tests := []struct {
+		hops string
+		want int
+	}{
+		{"1", http.StatusOK},
+		{"5", http.StatusOK},
+		{"0", http.StatusBadRequest},
+		{"6", http.StatusBadRequest},
+		{"-1", http.StatusBadRequest},
+		{"two", http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run("hops="+tt.hops, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			api.HandleGraphTransfers(rec, httptest.NewRequest(http.MethodGet,
+				"/api/graph/transfers?network=alpha&ego=g1ego&hops="+tt.hops, nil))
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tt.want, rec.Body.String())
+			}
+			if tt.want == http.StatusBadRequest && !strings.Contains(rec.Body.String(), "1 to 5") {
+				t.Errorf("400 does not state the range: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// The graph keys every existing reader depends on come first and unchanged:
+// a payload that gained fields still opens with nodes then edges.
+func TestGraphTransfersEgoKeepsItsGraphBytes(t *testing.T) {
+	api, db := newTestAPI(t)
+	seedGraphAPI(t, db)
+
+	plain := getJSON(t, api.HandleGraphTransfers, "/api/graph/transfers?network=alpha&ego=g1ego", nil).Body.String()
+	one := getJSON(t, api.HandleGraphTransfers, "/api/graph/transfers?network=alpha&ego=g1ego&hops=1", nil).Body.String()
+	if plain != one {
+		t.Fatalf("ego and ego&hops=1 differ:\n%s\n%s", plain, one)
+	}
+	const want = `{"nodes":[{"id":"g1ego","volume":100},{"id":"g1a","volume":100}],"edges":[{"from":"g1ego","to":"g1a","value":100,"tx_count":1}],`
+	if !strings.HasPrefix(plain, want) {
+		t.Fatalf("payload does not open with the pre-hops graph:\n got %s\nwant %s...", plain, want)
 	}
 }
