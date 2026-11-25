@@ -442,3 +442,85 @@ func TestRefoldStatsLeavesAnUnfoldedCardAlone(t *testing.T) {
 		t.Errorf("an unfolded card was rewritten: %+v", plain)
 	}
 }
+
+// Folding is only allowed to move a realm, never to lose one: every realm that
+// went into the pipeline has to come out of it as a card, a part or a previous
+// generation, and the folded card has to count all of them.
+//
+// Two ways it lost them, both found reviewing the GnoRadio card. A covered
+// realm with a generation behind it went in as a part with its Previous nilled,
+// so the older generation vanished from the page and from folded_realms. And a
+// covering card that stopped being the newest of its own family took its
+// `covers` into Previous with it, so the survivor covered nothing and every
+// part was a card again.
+func TestFoldKeepsEveryRealmOfAFamily(t *testing.T) {
+	const radio = "gno.land/r/nym-alexiscolin000/gnoradio/"
+	const swap = "gno.land/r/gnoswap/"
+	type realm struct {
+		path, deployed string
+		covers         []string
+	}
+	tests := []struct {
+		name   string
+		realms []realm
+		head   string
+	}{
+		{"a part with a generation behind it", []realm{
+			{radio + "home/v1", "2026-10-01", nil},
+			{radio + "home/v2", "2026-10-20", []string{radio + "*"}},
+			{radio + "catalog/v1", "2026-10-01", nil},
+			{radio + "catalog/v2", "2026-10-20", nil},
+			{radio + "radio/v1", "2026-10-01", nil},
+			{radio + "radio/v2", "2026-10-20", nil},
+			{radio + "data/v1", "2026-10-01", nil},
+		}, radio + "home/v2"},
+		{"a covering card that is no longer the newest", []realm{
+			{radio + "home/v2", "2026-10-20", []string{radio + "*"}},
+			{radio + "home/v3", "2026-11-01", nil},
+			{radio + "catalog/v2", "2026-10-20", nil},
+			{radio + "data/v1", "2026-10-01", nil},
+		}, radio + "home/v3"},
+		{"gnoswap one deploy later", []realm{
+			{swap + "router", "2026-06-01", []string{swap + "*"}},
+			{swap + "staker", "2026-06-01", nil},
+			{swap + "position", "2026-06-01", nil},
+			{swap + "v2/router", "2026-11-01", nil},
+		}, swap + "v2/router"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, _ := newTestAPI(t)
+			cards := make([]*AppCard, 0, len(tt.realms))
+			for _, r := range tt.realms {
+				cards = append(cards, &AppCard{Path: r.path, Name: r.path, DeployedAt: r.deployed, Covers: r.covers})
+			}
+			deriveGenerations(cards)
+			kept := foldCovered(collapseSuperseded(cards))
+			api.refoldStats(kept, "alpha", "")
+
+			if len(kept) != 1 || kept[0].Path != tt.head {
+				paths := []string{}
+				for _, c := range kept {
+					paths = append(paths, c.Path)
+				}
+				t.Fatalf("kept %v, want one card for one app at %s", paths, tt.head)
+			}
+			head := kept[0]
+			seen := map[string]int{head.Path: 1}
+			for _, p := range head.Parts {
+				seen[p.Path]++
+			}
+			for _, p := range head.Previous {
+				seen[p.Path]++
+			}
+			for _, r := range tt.realms {
+				if seen[r.path] != 1 {
+					t.Errorf("%s is reachable %d times from the card, want once", r.path, seen[r.path])
+				}
+			}
+			if head.FoldedRealms != len(tt.realms) {
+				t.Errorf("folded_realms = %d over a family of %d", head.FoldedRealms, len(tt.realms))
+			}
+		})
+	}
+}
